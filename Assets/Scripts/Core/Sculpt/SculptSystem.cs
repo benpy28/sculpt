@@ -147,6 +147,7 @@ namespace Sculpt.Core
                     c.Destination = top;
                     if (top.Y < Config.MinCellY) return Fail(c, SculptResult.OutOfHeightRange);
                     if (!IsSculptable(top)) return Fail(c, SculptResult.NotSculptable);
+                    if (a.Reinforce && !IsSculptable(top + Int3.Down)) return Fail(c, SculptResult.NothingToReinforce);
                     break;
                 }
                 case SculptActionType.Shape:
@@ -281,24 +282,43 @@ namespace Sculpt.Core
                 if (!hitsGrown && !hitsExtra) continue;
 
                 Vec3d pos = p.Position;
-                if (a.Type == SculptActionType.Move && hitsGrown)
+                bool placed = false;
+
+                // Lift onto the new surface (raise, shape, and a moved ramp sliding under someone on its slope).
+                // Repeated because lifting onto one changed cell can meet the other (e.g. a raised ramp column).
+                if (a.Type != SculptActionType.Move || grownBlock.IsRamp)
                 {
-                    // Minimal horizontal shove that clears the destination cell, never more than one cell.
+                    Vec3d lifted = pos;
+                    for (int iter = 0; iter < 3; iter++)
+                    {
+                        Aabb lb = p.BoundsAt(lifted);
+                        double top = lifted.Y;
+                        if (VoxelGeometry.BoxOverlapsBlock(grownBlock, grownCell, lb)) top = Math.Max(top, SurfaceUnderBox(grownBlock, grownCell, lb));
+                        if (hasExtra && VoxelGeometry.BoxOverlapsBlock(extraBlock, extraCell, lb)) top = Math.Max(top, SurfaceUnderBox(extraBlock, extraCell, lb));
+                        if (top <= lifted.Y) break;
+                        lifted = new Vec3d(lifted.X, top, lifted.Z);
+                    }
+                    bool withinCell = lifted.Y - pos.Y <= VoxelGrid.BlockSize + 1e-6;
+                    if (withinCell && !VoxelGeometry.BoxOverlapsSolid(Grid, p.BoundsAt(lifted), overrides))
+                    {
+                        pos = lifted;
+                        placed = true;
+                    }
+                    else if (a.Type != SculptActionType.Move) return false;
+                }
+
+                if (!placed)
+                {
+                    // Minimal horizontal shove that clears the destination cell. Capped at one cell.
+                    double d;
                     switch (a.Direction)
                     {
-                        case Dir.East: pos = new Vec3d(pos.X + (cellBox.Max.X - box.Min.X), pos.Y, pos.Z); break;
-                        case Dir.West: pos = new Vec3d(pos.X + (cellBox.Min.X - box.Max.X), pos.Y, pos.Z); break;
-                        case Dir.North: pos = new Vec3d(pos.X, pos.Y, pos.Z + (cellBox.Max.Z - box.Min.Z)); break;
-                        case Dir.South: pos = new Vec3d(pos.X, pos.Y, pos.Z + (cellBox.Min.Z - box.Max.Z)); break;
+                        case Dir.East: d = cellBox.Max.X - box.Min.X; pos = new Vec3d(pos.X + d, pos.Y, pos.Z); break;
+                        case Dir.West: d = box.Max.X - cellBox.Min.X; pos = new Vec3d(pos.X - d, pos.Y, pos.Z); break;
+                        case Dir.North: d = cellBox.Max.Z - box.Min.Z; pos = new Vec3d(pos.X, pos.Y, pos.Z + d); break;
+                        default: d = box.Max.Z - cellBox.Min.Z; pos = new Vec3d(pos.X, pos.Y, pos.Z - d); break;
                     }
-                }
-                else
-                {
-                    // Lift: raise the feet onto the new surface under the box.
-                    double top = box.Min.Y;
-                    if (hitsGrown) top = Math.Max(top, SurfaceUnderBox(grownBlock, grownCell, box));
-                    if (hitsExtra) top = Math.Max(top, SurfaceUnderBox(extraBlock, extraCell, box));
-                    pos = new Vec3d(pos.X, top, pos.Z);
+                    if (d > VoxelGrid.BlockSize + 1e-6) return false;
                 }
 
                 if (VoxelGeometry.BoxOverlapsSolid(Grid, p.BoundsAt(pos), overrides)) return false;
@@ -524,16 +544,17 @@ namespace Sculpt.Core
             {
                 if (Grid.Get(x, y, z).IsEmpty) { y++; continue; }
                 int bottom = y;
-                bool hasAnchor = false;
+                int lowestAnchor = int.MaxValue;
                 while (y < maxY && !Grid.Get(x, y, z).IsEmpty)
                 {
-                    if (Grid.Get(x, y, z).Kind == BlockKind.Anchor) hasAnchor = true;
+                    if (Grid.Get(x, y, z).Kind == BlockKind.Anchor && lowestAnchor == int.MaxValue) lowestAnchor = y;
                     y++;
                 }
-                int top = y - 1;
+                // An anchor holds what is on top of it, never what hangs under it.
+                int top = lowestAnchor == int.MaxValue ? y - 1 : lowestAnchor - 1;
                 var bottomCell = new Int3(x, bottom, z);
 
-                if (bottom == Grid.MinY || hasAnchor)
+                if (bottom == Grid.MinY || top < bottom)
                 {
                     _fallTimers.Remove(bottomCell);
                     continue;
@@ -553,7 +574,11 @@ namespace Sculpt.Core
                 }
 
                 Int3 landing = new Int3(x, bottom - 1, z);
-                if (AnyPlayerOverlaps(Grid.Get(bottomCell), landing))
+                Int3 under = landing + Int3.Down;
+                Block underB = Grid.Get(under);
+                bool flattensRamp = underB.IsRamp && Grid.InBounds(under);
+                if (flattensRamp) underB.MakeFlat();
+                if (AnyPlayerOverlaps(Grid.Get(bottomCell), landing) || (flattensRamp && AnyPlayerOverlaps(underB, under)))
                 {
                     // Never crush: wait above the player until the cell is clear.
                     _fallTimers[bottomCell] = t;

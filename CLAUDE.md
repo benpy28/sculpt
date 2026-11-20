@@ -16,7 +16,8 @@ This file is the source of truth for every thread. Update it whenever Ben change
 ## Working rules
 
 - Work milestone by milestone, one branch each. Current plan from Ben (2026-11-20): run M0, M1 and M2 back to back, then STOP after M2 with a short report and a play-test checklist (in chat, not a separate doc) so Ben can test feel. After that, stop at the end of each milestone unless Ben says otherwise. Do not start a milestone past the agreed stop point until Ben says so.
-- If a thread's context gets heavy, hand over to a fresh thread: update this file and the project memory first so nothing is lost.
+  - Update 2026-11-20 (Ben, in his words): "ima be away so just keep going with the roadmap indefinitely". Still post a report and play-test checklist at the end of every milestone.
+- Hand over to a fresh thread at the end of every milestone, or sooner if context gets heavy. Update this file and the project memory first so nothing is lost.
 - If anything in the spec is ambiguous or contradictory, ask Ben. Never guess on gameplay rules. Record open questions at the bottom of this file.
 - NEVER hand-edit `.unity`, `.prefab`, `.asset`, `.mat` or any other Unity YAML file. If Editor work is needed, give Ben exact click-by-click Editor steps.
 - Minimise Editor work: one bootstrap scene with a single bootstrap object. Everything else (world, players, UI, cameras, lights) is created from code and ScriptableObjects.
@@ -152,6 +153,15 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 17. Air control: 15% of ground acceleration.
 18. Fall damage: 10 per level beyond 6.
 
+### Rejection philosophy (Ben, 2026-11-20)
+- Rejections must be clear: the ghost and feedback go RED, never purple (purple means sculptable only).
+- Make rejections as rare as possible. Prefer a sensible outcome over a refusal; reject only for true dead ends (e.g. bedrock, anchors, no headroom).
+
+### Rule calls from Ben after the hardening suite (2026-11-20)
+- Shove is capped at one cell. A player on a moved ramp's slope is lifted onto the moved slope if that stays within one cell, otherwise shoved horizontally at most one cell, otherwise the action is invalid.
+- A reinforced sink with nothing sculptable left underneath is rejected (NothingToReinforce), at no cost.
+- Fixed in the same batch: a block landing on a ramp waits if flattening the ramp would overlap a player; an anchor holds what is on top of it but not what hangs under it; lifting re-checks both changed cells so a raised ramp column carries a crouched player on its lip.
+
 ### Smaller calls made by Claude in M1 (tell Ben; change if he disagrees)
 - A falling block never enters a cell overlapping a player: it waits above until the cell is clear.
 - A stack with empty space under it falls together as one unit.
@@ -161,6 +171,15 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 - If anything writes to a locked cell during windup (e.g. a falling block), the action cancels at resolution and refunds.
 - Pushing a block horizontally does not drag a player standing on it; they fall through movement gravity.
 - Sculpt tint fades over 10 s (cosmetic, tunable).
+
+### Smaller calls made by Claude in M2 (tell Ben; change if he disagrees)
+- FOV setting is horizontal degrees defined at 16:9 (Hor+ on wider screens). Default 95.
+- Feel helpers: 5-tick coyote time and 6-tick jump buffer. Jump on an upward ramp adds the ramp's upward speed.
+- Air mantle: pressing jump while touching a ledge 0.3 to 2.45 m above your feet mantles (forgiving catch).
+- Slide needs to start from a sprint at 5 m/s or more. Steering while sliding is 1.6 rad/s; pressing back does not steer.
+- After a vault you're briefly airborne, so holding crouch through it turns into a slide-land.
+- Mouse look is applied every rendered frame (not per tick) for lowest latency; vsync off by default.
+- Rendering is unlit with baked per-axis shading and thin dark block edges (custom URP shader `SCULPT/Voxel`).
 
 ## Open questions
 - (none)

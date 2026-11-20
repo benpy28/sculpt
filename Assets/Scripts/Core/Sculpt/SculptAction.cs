@@ -53,6 +53,7 @@ namespace Sculpt.Core
         NotEnoughBar,
         PlayerBlocked,       // a player would have to be shoved into geometry
         Disturbed,           // the cells changed during windup (resolution only)
+        NothingToReinforce,  // reinforced sink with no sculptable block left underneath
     }
 
     /// <summary>Everything the client needs to draw the ghost, and the server needs to start the windup.</summary>

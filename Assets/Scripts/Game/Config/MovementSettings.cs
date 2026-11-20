@@ -1,0 +1,87 @@
+using Sculpt.Core;
+using UnityEngine;
+
+namespace Sculpt.Game.Config
+{
+    /// <summary>
+    /// Tunable movement numbers. Create one with Assets > Create > SCULPT > Movement Settings and assign it to
+    /// the Bootstrap object. Edits apply live in Play mode. Defaults match CLAUDE.md.
+    /// </summary>
+    [CreateAssetMenu(menuName = "SCULPT/Movement Settings", fileName = "MovementSettings")]
+    public sealed class MovementSettings : ScriptableObject
+    {
+        [Header("Speeds (m/s)")]
+        public float runSpeed = 6f;
+        public float sprintSpeed = 8.5f;
+        public float crouchSpeed = 3f;
+
+        [Header("Acceleration (m/s^2)")]
+        public float groundAccel = 60f;
+        public float groundDecel = 50f;
+        public float overspeedDecel = 30f;
+        [Range(0, 1)] public float airAccelFraction = 0.15f;
+
+        [Header("Jump and gravity")]
+        public float gravity = 30f;
+        public float jumpApex = 1.3f;
+        public float maxFallSpeed = 40f;
+        public int coyoteTicks = 5;
+        public int jumpBufferTicks = 6;
+
+        [Header("Slide")]
+        public float slideBoostSpeed = 10f;
+        public float slideFriction = 7f;
+        public float slideMaxSpeed = 14f;
+        public float slideEndSpeed = 3f;
+        public float slideMinStartSpeed = 5f;
+        public float slideTurnRate = 1.6f;
+        public int slideBoostCooldownTicks = 90;
+        public int slideLandWindowTicks = 9;
+        public float slideLandMinSpeed = 5f;
+
+        [Header("Vault and mantle")]
+        public int vaultTicks = 8;
+        public float vaultMinSpeed = 5f;
+        public int mantleRiseTicks = 16;
+        public int mantleForwardTicks = 8;
+        public float mantleExitSpeedFraction = 0.5f;
+
+        [Header("Other")]
+        public int sprintToAimTicks = 9;
+        public float fallDamageFreeLevels = 6f;
+        public float fallDamagePerLevel = 10f;
+
+        public void ApplyTo(MovementConfig c)
+        {
+            c.RunSpeed = runSpeed;
+            c.SprintSpeed = sprintSpeed;
+            c.CrouchSpeed = crouchSpeed;
+            c.GroundAccel = groundAccel;
+            c.GroundDecel = groundDecel;
+            c.OverspeedDecel = overspeedDecel;
+            c.AirAccelFraction = airAccelFraction;
+            c.Gravity = gravity;
+            c.JumpApex = jumpApex;
+            c.MaxFallSpeed = maxFallSpeed;
+            c.CoyoteTicks = coyoteTicks;
+            c.JumpBufferTicks = jumpBufferTicks;
+            c.SlideBoostSpeed = slideBoostSpeed;
+            c.SlideFriction = slideFriction;
+            c.SlideMaxSpeed = slideMaxSpeed;
+            c.SlideEndSpeed = slideEndSpeed;
+            c.SlideMinStartSpeed = slideMinStartSpeed;
+            c.SlideTurnRate = slideTurnRate;
+            c.SlideBoostCooldownTicks = slideBoostCooldownTicks;
+            c.SlideLandWindowTicks = slideLandWindowTicks;
+            c.SlideLandMinSpeed = slideLandMinSpeed;
+            c.VaultTicks = vaultTicks;
+            c.VaultMinSpeed = vaultMinSpeed;
+            c.MantleRiseTicks = mantleRiseTicks;
+            c.MantleForwardTicks = mantleForwardTicks;
+            c.MantleExitSpeedFraction = mantleExitSpeedFraction;
+            c.SprintToAimTicks = sprintToAimTicks;
+            c.FallDamageFreeLevels = fallDamageFreeLevels;
+            c.FallDamagePerLevel = fallDamagePerLevel;
+        }
+    }
+}
