@@ -51,7 +51,13 @@ namespace Sculpt.Game.Player
         private MovementSettings _settingsAsset;
         private GameInput _input;
         private ClientSettings _client;
-        private bool _jumpLatch, _crouchLatch, _respawnLatch, _toggleLatch, _fireLatch;
+        private bool _jumpLatch, _crouchLatch, _respawnLatch, _toggleLatch, _fireLatch, _reloadLatch;
+        private bool _sprintOn, _crouchOn, _zoomOn;
+        private Weapon _lastHeld = Weapon.Pump, _prevHeld = Weapon.Smg;
+
+        /// <summary>Right mouse zoom (hold or toggle) while a gun is out. The camera scales the FOV by the gun's AimFovScale.</summary>
+        public bool Zoomed { get; private set; }
+        public GameInput Input => _input;
 
         /// <summary>Recoil offset of the aim (degrees, x = up, y = right), interpolated for drawing. The camera includes it,
         /// so the crosshair always sits exactly where the next bullet goes (before spread).</summary>
@@ -121,10 +127,15 @@ namespace Sculpt.Game.Player
             if (InputBlocked || !CursorLocked) return;
             if (_input.Jump.WasPressedThisFrame()) _jumpLatch = true;
             if (_input.Crouch.WasPressedThisFrame()) _crouchLatch = true;
-            if (_input.Respawn.WasPressedThisFrame()) _respawnLatch = true;
+            if (GameInput.DevBuild && _input.DevRespawn.WasPressedThisFrame()) _respawnLatch = true;
             if (_input.SculptToggle.WasPressedThisFrame()) _toggleLatch = true;
             for (int i = 0; i < 4; i++) if (_input.Hotbar[i].WasPressedThisFrame()) _weaponLatch = (byte)(i + 1);
+            if (_input.LastWeapon.WasPressedThisFrame()) _weaponLatch = (byte)((int)_prevHeld + 1);
             if (!InSculptMode && !clickToLock && _input.Fire.WasPressedThisFrame()) _fireLatch = true;
+            if (!InSculptMode && _input.Reload.WasPressedThisFrame()) _reloadLatch = true;
+            if (_client.SprintToggle && _input.Sprint.WasPressedThisFrame()) _sprintOn = !_sprintOn;
+            if (_client.CrouchToggle && _input.Crouch.WasPressedThisFrame()) _crouchOn = !_crouchOn;
+            if (_client.ZoomToggle && !InSculptMode && _input.Aim.WasPressedThisFrame()) _zoomOn = !_zoomOn;
 
             if (!InSculptMode || clickToLock) return;
             // The direction press IS the confirm, with this frame's aim. The newest press in a frame wins.
@@ -170,6 +181,14 @@ namespace Sculpt.Game.Player
             bool active = CursorLocked && !InputBlocked;
             Vector2 move = active ? _input.Move.ReadValue<Vector2>() : Vector2.zero;
             bool sculpting = State.Hand.InSculptMode;
+            HandState h0 = State.Hand;
+            if (h0.Held != _lastHeld) { _prevHeld = _lastHeld; _lastHeld = h0.Held; _zoomOn = false; }
+            if (sculpting) _zoomOn = false;
+            if (move.sqrMagnitude < 0.01f) _sprintOn = false; // a toggled sprint ends when you stop
+            bool sprintHeld = active && (_client.SprintToggle ? _sprintOn : _input.Sprint.IsPressed());
+            bool crouchHeld = active && (_client.CrouchToggle ? _crouchOn : _input.Crouch.IsPressed());
+            bool aimHeld = active && !sculpting && (_client.ZoomToggle ? _zoomOn : _input.Aim.IsPressed());
+            Zoomed = aimHeld && h0.Mode == HandMode.Weapon;
             var mi = new MoveInput
             {
                 MoveX = move.x,
@@ -178,15 +197,16 @@ namespace Sculpt.Game.Player
                 JumpPressed = _jumpLatch && active,
                 JumpHeld = active && _input.Jump.IsPressed(),
                 CrouchPressed = _crouchLatch && active,
-                CrouchHeld = active && _input.Crouch.IsPressed(),
-                SprintHeld = active && _input.Sprint.IsPressed(),
+                CrouchHeld = crouchHeld,
+                SprintHeld = sprintHeld,
                 // In sculpt mode the mouse buttons sculpt; they never stop your sprint.
-                WantsToShoot = active && !sculpting && (_input.Fire.IsPressed() || _input.Aim.IsPressed()),
+                WantsToShoot = active && !sculpting && (_input.Fire.IsPressed() || aimHeld),
                 FireHeld = active && !sculpting && _input.Fire.IsPressed(),
                 FirePressed = active && !sculpting && _fireLatch,
             };
             _fireLatch = false;
-            var hand = new HandInput { SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0 };
+            var hand = new HandInput { SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0, Reload = _reloadLatch && active };
+            _reloadLatch = false;
             bool respawn = _respawnLatch;
             bool confirm = _confirmLatch && active;
             SculptAction action = _confirmAction;

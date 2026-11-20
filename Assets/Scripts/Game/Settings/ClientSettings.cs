@@ -17,6 +17,8 @@ namespace Sculpt.Game.Settings
         public bool SpeedLines = true;
         /// <summary>Master volume 0..1.</summary>
         public float MasterVolume = 0.8f;
+        /// <summary>Hold (default) or toggle, per the keybind table.</summary>
+        public bool SprintToggle, CrouchToggle, ZoomToggle;
 
         public const float MinFov = 60f, MaxFov = 120f;
         public const float MinSensitivity = 0.05f, MaxSensitivity = 10f;
@@ -35,6 +37,9 @@ namespace Sculpt.Game.Settings
                 ViewmodelSize = PlayerPrefs.GetFloat("sculpt.vmsize", 1f),
                 SpeedLines = PlayerPrefs.GetInt("sculpt.speedlines", 1) == 1,
                 MasterVolume = PlayerPrefs.GetFloat("sculpt.volume", 0.8f),
+                SprintToggle = PlayerPrefs.GetInt("sculpt.sprintToggle", 0) == 1,
+                CrouchToggle = PlayerPrefs.GetInt("sculpt.crouchToggle", 0) == 1,
+                ZoomToggle = PlayerPrefs.GetInt("sculpt.zoomToggle", 0) == 1,
             }.Clamped();
         }
 
@@ -57,6 +62,9 @@ namespace Sculpt.Game.Settings
             PlayerPrefs.SetFloat("sculpt.vmsize", ViewmodelSize);
             PlayerPrefs.SetInt("sculpt.speedlines", SpeedLines ? 1 : 0);
             PlayerPrefs.SetFloat("sculpt.volume", MasterVolume);
+            PlayerPrefs.SetInt("sculpt.sprintToggle", SprintToggle ? 1 : 0);
+            PlayerPrefs.SetInt("sculpt.crouchToggle", CrouchToggle ? 1 : 0);
+            PlayerPrefs.SetInt("sculpt.zoomToggle", ZoomToggle ? 1 : 0);
             PlayerPrefs.Save();
         }
     }

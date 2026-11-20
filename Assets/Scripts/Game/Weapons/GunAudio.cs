@@ -58,6 +58,20 @@ namespace Sculpt.Game.Weapons
         public static AudioClip Rack => _rack ? _rack : _rack = Make("gun-rack", 0.42f, (t, n) =>
             Clack(t, 0.0f, 1.0f, n) + Clack(t, 0.035f, 0.5f, n) + Clack(t, 0.2f, 0.9f, n));
 
+        private static AudioClip _magOut, _magIn, _shellIn;
+
+        /// <summary>Magazine out: a release click, then the mag scraping free.</summary>
+        public static AudioClip MagOut => _magOut ? _magOut : _magOut = Make("gun-mag-out", 0.3f, (t, n) =>
+            0.7f * Clack(t, 0.0f, 0.8f, n) + 0.35f * Noise(n * 5 + 3) * Mathf.Exp(-Mathf.Pow((t - 0.09f) / 0.05f, 2f)));
+
+        /// <summary>Magazine in: a heavy seat and a latch click (the reload's main beat).</summary>
+        public static AudioClip MagIn => _magIn ? _magIn : _magIn = Make("gun-mag-in", 0.32f, (t, n) =>
+            Clack(t, 0.0f, 1.1f, n) + 0.45f * Mathf.Sin(2 * Mathf.PI * 95 * t) * Mathf.Exp(-t * 30f) + Clack(t, 0.11f, 0.55f, n + 17));
+
+        /// <summary>One shell pushed into the pump tube.</summary>
+        public static AudioClip ShellIn => _shellIn ? _shellIn : _shellIn = Make("gun-shell-in", 0.16f, (t, n) =>
+            0.8f * Clack(t, 0.0f, 0.7f, n) + 0.3f * Mathf.Sin(2 * Mathf.PI * 420 * t) * Mathf.Exp(-t * 45f));
+
         public static AudioClip HitTick => _hit ? _hit : _hit = Make("hit-body", 0.05f, (t, n) =>
             0.5f * Mathf.Sin(2 * Mathf.PI * 2600 * t) * Mathf.Exp(-t * 90f));
 

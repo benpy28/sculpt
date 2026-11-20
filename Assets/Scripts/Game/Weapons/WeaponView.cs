@@ -59,6 +59,10 @@ namespace Sculpt.Game.Weapons
         // Viewmodel springs (camera-local).
         private Vector3 _kickPos, _kickPosVel, _kickRot, _kickRotVel;
         private float _lower = 1f, _sprint, _bobPhase, _slideTilt;
+        // Reload: pose blend, and what the last frame saw (to fire the sounds on the right beats).
+        private float _reload, _shellBob;
+        private bool _wasReloading;
+        private readonly int[] _lastAmmo = { -1, -1, -1, -1 };
         private Vector2 _sway;
         private float _lastShotTime = -10f;
         private Weapon _shownWeapon;
@@ -151,6 +155,30 @@ namespace Sculpt.Game.Weapons
 
         // ================================================================ Frame
 
+        /// <summary>Reload beats from the predicted gun state: mag out when it starts, mag in when the rounds arrive,
+        /// one shell sound per pump shell. Instant from prediction, like your own shots.</summary>
+        private void ReloadSounds()
+        {
+            MotorState s = _player.State;
+            WeaponsConfig cfg = _mc.Weapons;
+            Vector3 at = _rig.Camera.transform.position;
+            bool reloading = s.Weapon.Reloading && !s.Dead;
+            Weapon held = s.Hand.Held;
+            if (reloading && !_wasReloading && !cfg.Of(held).ShellReload)
+                GunAudio.Play(GunAudio.MagOut, at, 0.7f, Random.Range(0.97f, 1.03f), false);
+            _wasReloading = reloading;
+            for (int i = 0; i < 4; i++)
+            {
+                int ammo = s.Weapon.AmmoOf((Weapon)i, cfg);
+                if (_lastAmmo[i] >= 0 && ammo > _lastAmmo[i] && !s.Dead && (int)held == i)
+                {
+                    if (cfg.Of((Weapon)i).ShellReload) { GunAudio.Play(GunAudio.ShellIn, at, 0.7f, Random.Range(0.95f, 1.05f), false); _shellBob = 1f; }
+                    else GunAudio.Play(GunAudio.MagIn, at, 0.8f, Random.Range(0.97f, 1.03f), false);
+                }
+                _lastAmmo[i] = ammo;
+            }
+        }
+
         public void PreCamera(float dt)
         {
             NetClient net = _session.Client;
@@ -169,6 +197,8 @@ namespace Sculpt.Game.Weapons
                 GunAudio.Play(GunAudio.Rack, _rig.Camera.transform.position, 0.7f, Random.Range(0.97f, 1.03f), false);
                 _rackAt.RemoveAt(i);
             }
+
+            ReloadSounds();
 
             // Springs (critically-ish damped), camera roll and FOV punch decay.
             Weapon w = _player.State.Hand.Held;
@@ -466,6 +496,22 @@ namespace Sculpt.Game.Weapons
             Vector3 pos = basePos + _kickPos + bob + new Vector3(0, -0.3f, -0.06f) * ease + new Vector3(-0.04f, -0.035f, -0.03f) * _sprint;
             Vector3 rot = _kickRot + new Vector3(32f * ease + 14f * _sprint + _sway.y, -24f * _sprint + _sway.x, 7f * _slideTilt - _sway.x * 0.4f);
             if (hand.Mode == HandMode.Disarmed) rot += new Vector3(Mathf.Sin(Time.time * 37f) * 3f, Mathf.Sin(Time.time * 29f) * 3f, 0);
+
+            // Reload: the gun tips toward you and rolls (magazine guns), or dips to the loading port per shell (pump).
+            bool shells = _mc.Weapons.Of(held).ShellReload;
+            _reload = Mathf.MoveTowards(_reload, s.Weapon.Reloading ? 1f : 0f, dt * 7f);
+            _shellBob = Mathf.MoveTowards(_shellBob, 0f, dt * 6f);
+            float re = _reload * _reload * (3 - 2 * _reload);
+            if (shells)
+            {
+                pos += new Vector3(-0.02f, -0.03f, 0) * re + new Vector3(0, -0.015f, 0.01f) * _shellBob;
+                rot += new Vector3(8f, 0, -28f) * re + new Vector3(-4f, 0, 0) * _shellBob;
+            }
+            else
+            {
+                pos += new Vector3(-0.03f, -0.05f, -0.02f) * re;
+                rot += new Vector3(18f, 10f, 32f) * re;
+            }
 
             _vmRoot.localPosition = pos * size;
             _vmRoot.localRotation = Quaternion.Euler(rot);

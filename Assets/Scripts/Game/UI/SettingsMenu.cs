@@ -24,7 +24,7 @@ namespace Sculpt.Game.UI
         private InputAction _rebindAction;
         private int _rebindIndex;
         private int _rebindEndedFrame = -10;
-        private GUIStyle _title, _label, _value, _button, _bindButton, _header;
+        private GUIStyle _title, _label, _value, _button, _bindButton, _header, _sub, _warn;
         private Texture2D _panel;
 
         private struct Row
@@ -32,9 +32,16 @@ namespace Sculpt.Game.UI
             public InputAction Action;
             public int Index;
             public string Label;
+            public string Header; // a section header row when set
         }
 
         private readonly List<Row> _rows = new List<Row>();
+
+        // Duplicate-bind warning: the bind just set (A) is also used by B in a context that can be live at the same time.
+        private string _rebindOldPath;
+        private InputAction _clashA, _clashB;
+        private int _clashAIndex, _clashBIndex;
+        private string _clashOldPathA;
 
         public bool IsOpen => _open;
 
@@ -50,17 +57,60 @@ namespace Sculpt.Game.UI
         private void BuildRows()
         {
             _rows.Clear();
+            string section = null;
             foreach (InputAction a in _input.Player.actions)
             {
                 if (a == _input.Look) continue; // the mouse is the mouse
-                for (int i = 0; i < a.bindings.Count; i++)
-                {
-                    InputBinding b = a.bindings[i];
-                    if (b.isComposite) continue;
-                    string label = b.isPartOfComposite ? $"{a.name} {Nice(b.name)}" : a.name;
-                    _rows.Add(new Row { Action = a, Index = i, Label = label });
-                }
+                string s = SectionOf(_input.ContextOf(a));
+                if (s != section) { section = s; _rows.Add(new Row { Header = s }); }
+                AddRows(a);
             }
+            if (GameInput.DevBuild)
+            {
+                _rows.Add(new Row { Header = "Dev keys (dev builds only)" });
+                foreach (InputAction a in _input.Dev.actions) AddRows(a);
+            }
+        }
+
+        private static string SectionOf(GameInput.Context c) =>
+            c == GameInput.Context.Gun ? "Guns" : c == GameInput.Context.Sculpt ? "Sculpt mode" : "Movement and modes";
+
+        private void AddRows(InputAction a)
+        {
+            int second = 0;
+            for (int i = 0; i < a.bindings.Count; i++)
+            {
+                InputBinding b = a.bindings[i];
+                if (b.isComposite) continue;
+                string label = b.isPartOfComposite ? $"{a.name} {Nice(b.name)}" : (second++ == 0 ? a.name : $"{a.name} (second)");
+                _rows.Add(new Row { Action = a, Index = i, Label = label });
+            }
+        }
+
+        /// <summary>After a bind changed: is its key also bound to another action that can be live at the same time?</summary>
+        private void CheckClash(InputAction a, int index, string oldPath)
+        {
+            _clashA = null;
+            string path = a.bindings[index].effectivePath;
+            if (string.IsNullOrEmpty(path)) return;
+            GameInput.Context ca = _input.ContextOf(a);
+            foreach (Row r in _rows)
+            {
+                if (r.Header != null || (r.Action == a && r.Index == index)) continue;
+                if (r.Action == a) continue; // a second bind on the same action is fine
+                if (!GameInput.Clashes(ca, _input.ContextOf(r.Action))) continue;
+                if (!string.Equals(r.Action.bindings[r.Index].effectivePath, path, System.StringComparison.OrdinalIgnoreCase)) continue;
+                _clashA = a; _clashAIndex = index; _clashB = r.Action; _clashBIndex = r.Index; _clashOldPathA = oldPath;
+                return;
+            }
+        }
+
+        private void SwapClash()
+        {
+            if (_clashA == null) return;
+            _clashB.ApplyBindingOverride(_clashBIndex, string.IsNullOrEmpty(_clashOldPathA) ? "" : _clashOldPathA);
+            _clashA = null;
+            _input.SaveOverrides();
         }
 
         private static string Nice(string part) => part.Length == 0 ? part : char.ToUpperInvariant(part[0]) + part.Substring(1);
@@ -111,7 +161,8 @@ namespace Sculpt.Game.UI
             CancelRebind();
             _rebindAction = action;
             _rebindIndex = index;
-            bool wasEnabled = action.enabled;
+            _rebindOldPath = action.bindings[index].effectivePath;
+            _clashA = null;
             action.Disable();
             _rebind = action.PerformInteractiveRebinding(index)
                 .WithControlsExcluding("<Mouse>/position")
@@ -129,21 +180,28 @@ namespace Sculpt.Game.UI
         {
             InputAction a = _rebindAction;
             int i = _rebindIndex;
+            string old = _rebindOldPath;
             CancelRebind();
             if (a == null) return;
             a.ApplyBindingOverride(i, path);
             _input.SaveOverrides();
+            CheckClash(a, i, old);
         }
 
         private void EndRebind(bool saved)
         {
             InputAction a = _rebindAction;
+            int index = _rebindIndex;
             _rebind?.Dispose();
             _rebind = null;
             _rebindAction = null;
             _rebindEndedFrame = Time.frameCount;
             a?.Enable();
-            if (saved) _input.SaveOverrides();
+            if (saved && a != null)
+            {
+                _input.SaveOverrides();
+                CheckClash(a, index, _rebindOldPath);
+            }
         }
 
         private void CancelRebind()
@@ -158,6 +216,8 @@ namespace Sculpt.Game.UI
         {
             CancelRebind();
             _input.Player.RemoveAllBindingOverrides();
+            _input.Dev.RemoveAllBindingOverrides();
+            _clashA = null;
             _input.SaveOverrides();
         }
 
@@ -178,6 +238,20 @@ namespace Sculpt.Game.UI
             _value = new GUIStyle(_label) { alignment = TextAnchor.MiddleRight };
             _button = new GUIStyle(GUI.skin.button) { fontSize = 14 };
             _bindButton = new GUIStyle(GUI.skin.button) { fontSize = 13 };
+            _sub = new GUIStyle(_label) { fontStyle = FontStyle.Bold };
+            _sub.normal.textColor = new Color(0.75f, 0.8f, 0.85f);
+            _warn = new GUIStyle(_label) { fontStyle = FontStyle.Bold, wordWrap = true };
+            _warn.normal.textColor = new Color(1f, 0.72f, 0.2f);
+        }
+
+        private bool HoldToggle(string name, bool toggle)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(name, _label, GUILayout.Width(300));
+            if (GUILayout.Toggle(!toggle, " Hold", GUILayout.Width(80)) && toggle) toggle = false;
+            if (GUILayout.Toggle(toggle, " Toggle", GUILayout.Width(90)) && !toggle) toggle = true;
+            GUILayout.EndHorizontal();
+            return toggle;
         }
 
         private void OnGUI()
@@ -206,6 +280,11 @@ namespace Sculpt.Game.UI
             GUILayout.Space(6);
             GUILayout.Label("Audio", _header);
             _settings.MasterVolume = Slider("Master volume", _settings.MasterVolume, 0f, 1f, "0%", 100f);
+            GUILayout.Space(6);
+            GUILayout.Label("Controls", _header);
+            _settings.SprintToggle = HoldToggle("Sprint", _settings.SprintToggle);
+            _settings.CrouchToggle = HoldToggle("Crouch", _settings.CrouchToggle);
+            _settings.ZoomToggle = HoldToggle("Zoom (right mouse, AR and pistol)", _settings.ZoomToggle);
 
             GUILayout.Space(10);
             GUILayout.BeginHorizontal();
@@ -214,10 +293,26 @@ namespace Sculpt.Game.UI
             if (GUILayout.Button("Reset all binds", _button, GUILayout.Width(150))) ResetBinds();
             GUILayout.EndHorizontal();
             GUILayout.Label(_rebind != null ? "Press a key or mouse button for the highlighted bind (Esc cancels)." : "Click a bind to change it.", _label);
+            if (_clashA != null)
+            {
+                string key = _clashA.GetBindingDisplayString(_clashAIndex);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"{key} is also bound to {_clashB.name}.", _warn, GUILayout.Width(380));
+                string was = string.IsNullOrEmpty(_clashOldPathA) ? "nothing" : InputControlPath.ToHumanReadableString(_clashOldPathA, InputControlPath.HumanReadableStringOptions.OmitDevice);
+                if (GUILayout.Button($"Swap ({_clashB.name} gets {was})", _button)) SwapClash();
+                if (GUILayout.Button("Keep both", _button, GUILayout.Width(110))) _clashA = null;
+                GUILayout.EndHorizontal();
+            }
 
             _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
             foreach (Row r in _rows)
             {
+                if (r.Header != null)
+                {
+                    GUILayout.Space(6);
+                    GUILayout.Label(r.Header, _sub);
+                    continue;
+                }
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(r.Label, _label, GUILayout.Width(300));
                 bool waiting = _rebind != null && _rebindAction == r.Action && _rebindIndex == r.Index;

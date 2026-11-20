@@ -4,6 +4,7 @@ using Sculpt.Game.Net;
 using Sculpt.Game.Player;
 using Sculpt.Game.Sculpting;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace Sculpt.Game.UI
 {
@@ -59,6 +60,33 @@ namespace Sculpt.Game.UI
             float cx = Screen.width / 2f, cy = Screen.height / 2f;
             HandState hand = _player.State.Hand;
 
+            // What a left click does right now and what it costs, or why it can't happen (live while you aim), as a
+            // chip under the crosshair; the sculpt binds as key caps above the hotbar while in sculpt mode.
+            string label = null, cost = null;
+            Color col = HudDraw.Text;
+            bool red = false;
+            bool refusedRecently = Time.time - _view.RejectTime < 0.9f;
+            if (hand.Mode == HandMode.Disarmed) { label = "DISARMED"; red = true; }
+            else if (refusedRecently) { label = Reason(_view.LastReject).ToUpperInvariant(); red = true; }
+            else if (hand.Mode == HandMode.SculptEnter) label = "SCULPT";
+            else if (hand.Mode == HandMode.Sculpt)
+            {
+                if (!_player.Target.Valid) { label = "AIM AT ROCK WITHIN 6 M"; col = HudDraw.Dim; }
+                else if (_player.HasHover)
+                {
+                    SculptCheck c = _player.HoverCheck;
+                    string what = "PUSH " + DirName(_player.HoverAction.Direction).ToUpperInvariant() + (_player.ReinforceHeld ? "  +  REINFORCE" : "");
+                    if (c.IsValid) { label = what; cost = Mathf.RoundToInt(c.Cost * 100f / SculptConfig.BarMax) + "%"; }
+                    else { label = what + "  ·  " + Reason(c.Result).ToUpperInvariant(); red = true; }
+                }
+            }
+            else if (hand.Mode == HandMode.SculptExit || hand.Mode == HandMode.Drawing) { label = WeaponName(hand.Held).ToUpperInvariant(); col = HudDraw.Dim; }
+            if (hand.InSculptMode && hand.SculptLockUntil > net.Tick) label = (label ?? "SCULPT") + "  ·  GUN LOCKED";
+            if (red) col = HudDraw.Red;
+            string chip = label == null ? null : cost != null ? label + "     " + cost : label;
+            float chipW = chip == null ? 0 : 28f + chip.Length * 7.6f;
+            string[] caps = hand.InSculptMode ? Caps() : null;
+
             if (Event.current.type == EventType.Repaint)
             {
                 _gl.SetPass(0);
@@ -69,43 +97,99 @@ namespace Sculpt.Game.UI
                     DrawBar(sc, cx, Screen.height - cy, hand);
                     DrawWarnings(sc);
                     DrawHitMarker(cx, Screen.height - cy);
+                    if (chip != null)
+                    {
+                        float gy = Screen.height - cy - 66;
+                        if (red) HudDraw.RoundRect(cx - chipW / 2f - 1, gy - 1, chipW + 2, 28, 9, HudDraw.A(HudDraw.Red, 0.6f));
+                        HudDraw.RoundRect(cx - chipW / 2f, gy, chipW, 26, 8, HudDraw.Panel);
+                    }
+                    if (caps != null) DrawCaps(caps, cx, false);
                 }
                 finally { GL.PopMatrix(); } // an exception must never leave the matrix stack pushed
             }
 
-            // Text under the crosshair: what a left click does right now and what it costs, or why it can't happen
-            // (shown live while you aim, not only after a refused click), plus the binds while in sculpt mode.
-            string label = null, detail = null;
-            Color col = Color.white;
-            bool refusedRecently = Time.time - _view.RejectTime < 0.9f;
-            if (hand.Mode == HandMode.Disarmed) { label = "DISARMED"; col = Red; }
-            else if (refusedRecently) { label = "REFUSED: " + Reason(_view.LastReject); col = Red; }
-            else if (hand.Mode == HandMode.SculptEnter) label = "SCULPT MODE...";
-            else if (hand.Mode == HandMode.Sculpt)
+            if (chip != null)
             {
-                if (!_player.Target.Valid) { label = "SCULPT MODE: aim at rock within 6 m"; col = new Color(1, 1, 1, 0.75f); }
-                else if (_player.HasHover)
+                Rect r = new Rect(cx - chipW / 2f, cy + 40, chipW, 26);
+                if (cost != null)
                 {
-                    SculptCheck c = _player.HoverCheck;
-                    int pct = Mathf.RoundToInt(c.Cost * 100f / SculptConfig.BarMax);
-                    string what = "LMB push " + DirName(_player.HoverAction.Direction) + (_player.ReinforceHeld ? " + reinforce" : "");
-                    if (c.IsValid) label = $"{what}   {pct}%";
-                    else { label = $"{what}: can't, {Reason(c.Result)}"; col = Red; }
+                    HudDraw.Label(new Rect(r.x + 14, r.y, r.width - 28, r.height), label, 12, col, TextAnchor.MiddleLeft, true);
+                    HudDraw.Label(new Rect(r.x + 14, r.y, r.width - 28, r.height), cost, 12, HudDraw.Dim, TextAnchor.MiddleRight, true);
                 }
+                else HudDraw.Label(r, label, 12, col, TextAnchor.MiddleCenter, true);
             }
-            else if (hand.Mode == HandMode.SculptExit || hand.Mode == HandMode.Drawing) label = WeaponName(hand.Held) + "...";
-            if (hand.InSculptMode && hand.SculptLockUntil > net.Tick) label = (label ?? "SCULPT") + "  (gun locked)";
-            if (hand.InSculptMode) detail = "LMB push   RMB pull   wheel up raise   wheel down sink   E throw   hold Alt reinforce   Q back to gun";
-            if (label != null) Label(new Rect(cx - 260, cy + 38, 520, 22), label, col, 15);
-            if (detail != null) Label(new Rect(cx - 360, cy + 60, 720, 20), detail, new Color(1, 1, 1, 0.6f), 12);
-            if (Time.time - _view.HurtTime < 0.6f)
+            if (caps != null) DrawCaps(caps, cx, true);
+            if (hand.InSculptMode)
             {
-                string hurt = $"-{_view.LastHurt}";
-                GUI.Label(new Rect(cx - 60, cy + 58, 120, 20), hurt, _shadow);
-                _small.normal.textColor = Red;
-                GUI.Label(new Rect(cx - 61, cy + 57, 120, 20), hurt, _small);
-                _small.normal.textColor = Color.white;
+                // Bar percentage beside the arc.
+                int pct = Mathf.RoundToInt(sc.DisplayBar * 100f / SculptConfig.BarMax);
+                HudDraw.Label(new Rect(cx + 34, cy + 14, 60, 18), pct + "%", 11, HudDraw.Dim, TextAnchor.MiddleLeft, true);
             }
+            if (Time.time - _view.HurtTime < 0.6f)
+                HudDraw.Label(new Rect(cx - 60, cy + 70, 120, 20), $"-{_view.LastHurt}", 14, HudDraw.Red, TextAnchor.MiddleCenter, true);
+        }
+
+        // ---------------------------------------------------------------- Key caps
+
+        private string[] _caps;
+        private float _capsAt = -10f;
+
+        /// <summary>"key|action" pairs from the live binds (refreshed twice a second, so rebinds show).</summary>
+        private string[] Caps()
+        {
+            if (_caps != null && Time.unscaledTime - _capsAt < 0.5f) return _caps;
+            _capsAt = Time.unscaledTime;
+            var inp = _player.Input;
+            if (inp == null) return _caps = System.Array.Empty<string>();
+            _caps = new[]
+            {
+                Key(inp.SculptPush) + "|PUSH", Key(inp.SculptPull) + "|PULL", Key(inp.SculptRaise) + "|RAISE", Key(inp.SculptSink) + "|SINK",
+                Key(inp.SculptThrow) + "|THROW", Key(inp.SculptReinforce) + "|REINFORCE", Key(inp.SculptToggle) + "|GUN",
+            };
+            return _caps;
+        }
+
+        private static string Key(UnityEngine.InputSystem.InputAction a)
+        {
+            string s = a.GetBindingDisplayString(0);
+            if (string.IsNullOrEmpty(s)) return "—";
+            s = s.Replace("Left Button", "LMB").Replace("Right Button", "RMB").Replace("Back", "M4").Replace("Forward", "M5")
+                 .Replace("Scroll Up", "WHEEL ▲").Replace("Scroll/Up", "WHEEL ▲").Replace("Scroll Down", "WHEEL ▼").Replace("Scroll/Down", "WHEEL ▼");
+            return s.ToUpperInvariant();
+        }
+
+        /// <summary>Key caps in a row above the hotbar: GL pass draws the caps, the GUI pass the text.</summary>
+        private static void DrawCaps(string[] caps, float cx, bool text)
+        {
+            const float y = 78f, h = 22f, gap = 14f;
+            float total = 0;
+            foreach (var c in caps) total += CapWidth(c) + gap;
+            total -= gap;
+            float x = cx - total / 2f;
+            foreach (var c in caps)
+            {
+                int bar = c.IndexOf('|');
+                string key = c.Substring(0, bar), act = c.Substring(bar + 1);
+                float kw = 12f + key.Length * 7f, w = CapWidth(c);
+                if (!text)
+                {
+                    HudDraw.RoundRect(x, y, w, h, 6, new Color(0.05f, 0.06f, 0.08f, 0.45f));
+                    HudDraw.RoundRect(x + 3, y + 3, kw, h - 6, 4, new Color(1, 1, 1, 0.16f));
+                }
+                else
+                {
+                    Rect kr = HudDraw.ToGui(x + 3, y + 3, kw, h - 6);
+                    HudDraw.Label(kr, key, 10, HudDraw.Text, TextAnchor.MiddleCenter, true);
+                    HudDraw.Label(HudDraw.ToGui(x + kw + 8, y, w - kw - 8, h), act, 10, HudDraw.Dim, TextAnchor.MiddleLeft, true);
+                }
+                x += w + gap;
+            }
+        }
+
+        private static float CapWidth(string c)
+        {
+            int bar = c.IndexOf('|');
+            return 12f + bar * 7f + 14f + (c.Length - bar - 1) * 6.6f;
         }
 
         private void Label(Rect r, string text, Color col, int size)

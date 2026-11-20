@@ -60,6 +60,9 @@ namespace Sculpt.Game.Cameras
         private float _bobPhase;
         private float _bobAmount;
         private float _fovKick;
+        private float _zoom = 1f;
+        /// <summary>Current zoom factor (1 = none), for sensitivity scaling and the HUD.</summary>
+        public float Zoom => _zoom;
         public readonly CameraShake Shake = new CameraShake();
 
         public FirstPersonMode(LocalPlayer player, ClientSettings settings)
@@ -92,7 +95,13 @@ namespace Sculpt.Game.Cameras
             float over = Mathf.InverseLerp((float)c.SprintSpeed + 0.2f, (float)c.SlideMaxSpeed, speed);
             float kickTarget = _settings.SpeedFovKick ? over * 8f : 0f;
             _fovKick = Mathf.Lerp(_fovKick, kickTarget, 1f - Mathf.Exp(-8f * dt));
-            horizontalFov = _settings.Fov + _fovKick + Shake.FovPunch;
+            // Light zoom on right mouse (AR, pistol): scales the view by the gun's AimFovScale, eased in about 80 ms.
+            float zoomTarget = 1f;
+            if (_player.Zoomed) zoomTarget = (float)c.Weapons.Of(s.Hand.Held).AimFovScale;
+            _zoom = Mathf.Lerp(_zoom, zoomTarget, 1f - Mathf.Exp(-28f * dt));
+            float baseFov = _settings.Fov + _fovKick * _zoom;
+            float half = Mathf.Atan(Mathf.Tan(baseFov * 0.5f * Mathf.Deg2Rad) * _zoom) * Mathf.Rad2Deg;
+            horizontalFov = 2f * half + Shake.FovPunch;
         }
     }
 }

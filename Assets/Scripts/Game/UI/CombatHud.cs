@@ -67,37 +67,66 @@ namespace Sculpt.Game.UI
                     if (!s.Dead) DrawCrosshair(s, cfg, w / 2f, h / 2f);
                     DrawHitMarker(w / 2f, h / 2f);
                     DrawHurt(w, h);
+                    if (s.Dead) HudDraw.RoundRect(w / 2f - 220, h * 0.64f - 110, 440, 120, 12, new Color(0.05f, 0.06f, 0.08f, 0.6f));
                     DrawHealthBar(s, cfg);
+                    DrawAmmo(s, cfg, net.Tick, w);
                     DrawHotbar(s, net.Tick, w);
+                    DrawFeedPanels(net, w, h);
                 }
                 finally { GL.PopMatrix(); } // an exception must never leave the matrix stack pushed
             }
 
-            // Health number.
+            // Health (bottom left).
             int hp = s.Health(cfg);
-            Text(new Rect(24, h - 78, 120, 40), hp.ToString(), _big, hp <= cfg.MaxHealth / 3 ? Red : Color.white, TextAnchor.MiddleLeft);
-            // Hotbar labels.
+            bool low = hp <= cfg.MaxHealth / 3;
+            HudDraw.Label(HudDraw.ToGui(HealthX + 16, Margin + 20, 120, 40), hp.ToString(), 30, low ? HudDraw.Red : HudDraw.Text, TextAnchor.MiddleLeft, true);
+            HudDraw.Label(HudDraw.ToGui(HealthX + 80, Margin + 24, 60, 30), "HP", 12, HudDraw.Dim, TextAnchor.MiddleLeft, true);
+
+            // Gun and ammo (bottom right).
+            if (!s.Dead)
+            {
+                Weapon held = s.Hand.Held;
+                WeaponStats st = cfg.Of(held);
+                int ammo = s.Weapon.AmmoOf(held, cfg);
+                float px = w - Margin - PanelW;
+                bool reloading = s.Weapon.Reloading && s.Weapon.ReloadGun == held;
+                Color ammoCol = ammo == 0 ? HudDraw.Red : ammo <= st.MagSize / 4 ? HudDraw.Amber : HudDraw.Text;
+                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), Names[(int)held].ToUpperInvariant(), 13, HudDraw.Dim, TextAnchor.MiddleLeft, true);
+                HudDraw.Label(HudDraw.ToGui(px + PanelW - 96, Margin + 16, 50, 40), ammo.ToString(), 30, ammoCol, TextAnchor.MiddleRight, true);
+                HudDraw.Label(HudDraw.ToGui(px + PanelW - 44, Margin + 18, 40, 30), "/ " + st.MagSize, 13, HudDraw.Dim, TextAnchor.MiddleLeft);
+                string hint = reloading ? "RELOADING" : ammo == 0 ? "EMPTY" : ammo <= st.MagSize / 4 ? "R  RELOAD" : null;
+                if (hint != null && s.Hand.Mode == HandMode.Weapon)
+                    HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 14, 150, 20), hint, 11, reloading ? HudDraw.Text : ammoCol, TextAnchor.MiddleLeft, true);
+            }
+
+            // Hotbar keys and names.
             for (int i = 0; i < 5; i++)
             {
-                Rect r = SlotRect(i, w, h);
-                string n = i < 4 ? $"{i + 1}  {Names[i]}" : "5  —";
-                Text(new Rect(r.x, h - r.yMax, r.width, r.height), n, _label, i < 4 && i == (int)s.Hand.Held ? Color.white : new Color(1, 1, 1, 0.55f), TextAnchor.MiddleCenter);
+                UnityEngine.Rect r = SlotRect(i, w, h);
+                bool held = i < 4 && i == (int)s.Hand.Held;
+                Color tc = i == 4 ? HudDraw.A(HudDraw.Dim, 0.5f) : held ? HudDraw.Text : HudDraw.Dim;
+                HudDraw.Label(HudDraw.ToGui(r.x + 7, r.y + r.height - 15, 20, 12), (i + 1).ToString(), 10, HudDraw.A(tc, 0.8f), TextAnchor.MiddleLeft, true);
+                HudDraw.Label(HudDraw.ToGui(r.x, r.y + 3, r.width, r.height - 8), i < 4 ? Names[i] : "—", 12, tc, TextAnchor.MiddleCenter, held);
             }
-            // Damage dealt by the last hit, under the crosshair.
+
+            // Damage dealt by the last hit, next to the crosshair.
             if (Time.time - _view.HitTime < 0.5f)
-                Text(new Rect(w / 2f + 18, h / 2f + 10, 80, 20), _view.LastHitDamage.ToString(), _label,
-                     Time.time - _view.HeadHitTime < 0.5f ? Amber : Color.white, TextAnchor.MiddleLeft);
+                HudDraw.Label(new Rect(w / 2f + 20, h / 2f + 8, 80, 20), _view.LastHitDamage.ToString(), 14,
+                     Time.time - _view.HeadHitTime < 0.5f ? HudDraw.Amber : HudDraw.Text, TextAnchor.MiddleLeft, true);
 
             DrawFeed(net, w);
 
             if (s.Dead)
             {
                 float left = Mathf.Max(0, (s.RespawnTick - net.Tick) / (float)SimTime.TicksPerSecond);
-                string by = _view.KilledBy != 0 && _view.KilledBy != net.PlayerId ? $"ELIMINATED by P{_view.KilledBy}  [{SourceName(_view.KilledWith)}]" : "ELIMINATED";
-                Text(new Rect(0, h * 0.38f, w, 40), by, _big, Red, TextAnchor.MiddleCenter);
-                Text(new Rect(0, h * 0.38f + 44, w, 24), $"respawning in {left:0.0} s", _label, Color.white, TextAnchor.MiddleCenter);
+                string by = _view.KilledBy != 0 && _view.KilledBy != net.PlayerId ? $"by P{_view.KilledBy}  ·  {SourceName(_view.KilledWith)}" : SourceName(_view.KilledWith);
+                HudDraw.Label(new Rect(0, h * 0.36f, w, 40), "ELIMINATED", 30, HudDraw.Red, TextAnchor.MiddleCenter, true);
+                HudDraw.Label(new Rect(0, h * 0.36f + 38, w, 22), by, 15, HudDraw.Text, TextAnchor.MiddleCenter);
+                HudDraw.Label(new Rect(0, h * 0.36f + 64, w, 22), $"respawning in {left:0.0} s", 13, HudDraw.Dim, TextAnchor.MiddleCenter);
             }
         }
+
+        private const float Margin = 24f, PanelW = 240f, PanelH = 64f, HealthX = 24f;
 
         private void Text(Rect r, string t, GUIStyle st, Color c, TextAnchor a)
         {
@@ -264,19 +293,47 @@ namespace Sculpt.Game.UI
         private void DrawHealthBar(in MotorState s, WeaponsConfig cfg)
         {
             float k = Mathf.Clamp01(s.Health(cfg) / (float)cfg.MaxHealth);
-            const float x = 24, y = 26, bw = 220, bh = 8;
-            Rect(x - 1, y - 1, bw + 2, bh + 2, new Color(0, 0, 0, 0.55f));
-            Color c = k <= 1f / 3f ? Red : new Color(0.92f, 0.94f, 0.95f, 0.95f);
-            if (Time.time - _view.HurtTime < 0.15f) c = Color.Lerp(c, Red, 0.7f);
-            Rect(x, y, bw * k, bh, c);
+            HudDraw.PanelRect(HealthX, Margin, PanelW, PanelH);
+            Color c = k <= 1f / 3f ? HudDraw.Red : HudDraw.Text;
+            if (Time.time - _view.HurtTime < 0.15f) c = Color.Lerp(c, HudDraw.Red, 0.7f);
+            float bx = HealthX + 16, bw = PanelW - 32, by = Margin + 12;
+            HudDraw.Bar(bx, by, bw, 5, k, c);
+            // Quarter marks so you can read 150 at a glance.
+            for (int q = 1; q < 4; q++) HudDraw.RoundRect(bx + bw * q / 4f - 0.5f, by, 1, 5, 0, new Color(0, 0, 0, 0.45f));
+        }
+
+        private void DrawAmmo(in MotorState s, WeaponsConfig cfg, int tick, float w)
+        {
+            if (s.Dead) return;
+            float px = w - Margin - PanelW;
+            HudDraw.PanelRect(px, Margin, PanelW, PanelH);
+            Weapon held = s.Hand.Held;
+            WeaponStats st = cfg.Of(held);
+            int ammo = s.Weapon.AmmoOf(held, cfg);
+            float bx = px + 16, bw = PanelW - 32, by = Margin + 12;
+            if (s.Weapon.Reloading && s.Weapon.ReloadGun == held)
+            {
+                // Progress of the magazine (or of the next shell for the pump).
+                int total = st.ShellReload ? st.ShellTicks : st.ReloadTicks;
+                float k = Mathf.Clamp01(1f - (s.Weapon.ReloadTick - tick) / (float)Mathf.Max(1, total));
+                HudDraw.Bar(bx, by, bw, 5, k, HudDraw.Text);
+            }
+            else
+            {
+                // One pip per round (thin segments; the pump's 5 shells read as shells).
+                int n = st.MagSize;
+                float gap = n > 20 ? 1.5f : 3f, pw = (bw - gap * (n - 1)) / n;
+                for (int i = 0; i < n; i++)
+                    HudDraw.RoundRect(bx + i * (pw + gap), by, pw, 5, n > 20 ? 0 : 1.5f, i < ammo ? HudDraw.A(HudDraw.Text, 0.9f) : new Color(1, 1, 1, 0.12f));
+            }
         }
 
         private static UnityEngine.Rect SlotRect(int i, float w, float h)
         {
-            const float sw = 96, sh = 30, gap = 6;
+            const float sw = 74, sh = 38, gap = 6;
             float total = 5 * sw + 4 * gap;
             float x = (w - total) / 2f + i * (sw + gap);
-            return new UnityEngine.Rect(x, 22, sw, sh); // GL space: y up from the bottom
+            return new UnityEngine.Rect(x, Margin, sw, sh); // GL space: y up from the bottom
         }
 
         private void DrawHotbar(in MotorState s, int tick, float w)
@@ -285,29 +342,57 @@ namespace Sculpt.Game.UI
             {
                 UnityEngine.Rect r = SlotRect(i, w, Screen.height);
                 bool held = i < 4 && i == (int)s.Hand.Held;
-                Rect(r.x, r.y, r.width, r.height, new Color(0, 0, 0, held ? 0.55f : 0.3f));
-                if (held) Rect(r.x, r.y, r.width, 2, Color.white);
+                HudDraw.RoundRect(r.x, r.y, r.width, r.height, 7, held ? new Color(0.05f, 0.06f, 0.08f, 0.72f) : new Color(0.05f, 0.06f, 0.08f, i == 4 ? 0.25f : 0.42f));
+                if (held) HudDraw.RoundRect(r.x + 14, r.y + 3, r.width - 28, 2, 1, HudDraw.Text);
                 if (i == (int)Weapon.Pump)
                 {
                     float k = Mathf.Clamp01(1f - (s.Weapon.NextPump - tick * 1000L) / (float)_player.Config.Weapons.Of(Weapon.Pump).FireIntervalMilliTicks);
-                    if (k < 1f) Rect(r.x, r.y + r.height - 3, r.width * k, 3, new Color(1, 1, 1, 0.6f));
+                    if (k < 1f) HudDraw.RoundRect(r.x + 6, r.y + r.height - 4, (r.width - 12) * k, 2, 1, HudDraw.A(HudDraw.Text, 0.6f));
                 }
             }
         }
 
-        private void DrawFeed(NetClient net, float w)
+        private string FeedText(NetClient net, in WeaponView.FeedLine f)
         {
-            float y = 14;
+            string killer = f.Killer == 0 || f.Killer == f.Victim ? "" : Name(net, f.Killer) + "   ";
+            return $"{killer}{SourceName(f.Source).ToUpperInvariant()}{(f.Head ? " · HEAD" : "")}   {Name(net, f.Victim)}";
+        }
+
+        private float FeedWidth(string line) => 22f + line.Length * 7.4f;
+
+        /// <summary>Kill feed (top right): one rounded chip per kill, yours outlined in amber. GL part.</summary>
+        private void DrawFeedPanels(NetClient net, float w, float h)
+        {
+            float y = 16;
             for (int i = _view.Feed.Count - 1; i >= 0; i--)
             {
                 var f = _view.Feed[i];
                 float age = Time.time - f.Time;
                 if (age > 6f) continue;
-                string killer = f.Killer == 0 || f.Killer == f.Victim ? "" : Name(net, f.Killer) + "  ";
-                string line = $"{killer}[{SourceName(f.Source)}{(f.Head ? " HS" : "")}]  {Name(net, f.Victim)}";
+                float a = Mathf.Clamp01((6f - age) / 0.5f);
+                float fw = FeedWidth(FeedText(net, f));
                 bool mine = f.Killer == net.PlayerId || f.Victim == net.PlayerId;
-                Text(new Rect(w - 420, y, 400, 22), line, _label, mine ? Amber : Color.white, TextAnchor.MiddleRight);
-                y += 22;
+                float gy = h - y - 24;
+                if (mine) HudDraw.RoundRect(w - Margin - fw - 1, gy - 1, fw + 2, 26, 7, HudDraw.A(HudDraw.Amber, 0.55f * a));
+                HudDraw.RoundRect(w - Margin - fw, gy, fw, 24, 6, HudDraw.A(HudDraw.Panel, a));
+                y += 30;
+            }
+        }
+
+        private void DrawFeed(NetClient net, float w)
+        {
+            float y = 16;
+            for (int i = _view.Feed.Count - 1; i >= 0; i--)
+            {
+                var f = _view.Feed[i];
+                float age = Time.time - f.Time;
+                if (age > 6f) continue;
+                float a = Mathf.Clamp01((6f - age) / 0.5f);
+                string line = FeedText(net, f);
+                float fw = FeedWidth(line);
+                bool mine = f.Killer == net.PlayerId || f.Victim == net.PlayerId;
+                HudDraw.Label(new Rect(w - Margin - fw, y, fw, 24), line, 12, HudDraw.A(mine ? HudDraw.Amber : HudDraw.Text, a), TextAnchor.MiddleCenter, true);
+                y += 30;
             }
         }
 

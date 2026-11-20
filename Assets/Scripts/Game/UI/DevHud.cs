@@ -58,28 +58,28 @@ namespace Sculpt.Game.UI
             return steps[0];
         }
 
-        private void NetKeys(Keyboard kb)
+        private void NetKeys(Sculpt.Game.Input.GameInput input)
         {
             if (_joinBox) return; // typing an address
-            if (kb.f8Key.wasPressedThisFrame) SetSimPing(Next(PingSteps, v => v == SimPingMs));
-            if (kb.f9Key.wasPressedThisFrame)
+            if (input.DevSimPing.WasPressedThisFrame()) SetSimPing(Next(PingSteps, v => v == SimPingMs));
+            if (input.DevSimLoss.WasPressedThisFrame())
             {
                 float l = Next(LossSteps, v => Mathf.Approximately(v, (float)_session.SimUp.LossPercent));
                 _session.SimUp.LossPercent = l;
                 _session.SimDown.LossPercent = l;
             }
-            if (kb.f10Key.wasPressedThisFrame)
+            if (input.DevSimJitter.WasPressedThisFrame())
             {
                 int j = Next(JitterSteps, v => v == (int)_session.SimUp.JitterMs);
                 _session.SimUp.JitterMs = j;
                 _session.SimDown.JitterMs = j;
             }
-            if (kb.f11Key.wasPressedThisFrame)
+            if (input.DevHost.WasPressedThisFrame())
             {
                 if (_session.Mode == NetMode.Offline) _session.StartHost(_session.Port);
                 else _session.StartOffline();
             }
-            if (kb.f12Key.wasPressedThisFrame)
+            if (input.DevJoin.WasPressedThisFrame())
             {
                 _joinBox = true;
                 _player.InputBlocked = true;
@@ -89,19 +89,11 @@ namespace Sculpt.Game.UI
         private void Update()
         {
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(1e-4f, Time.unscaledDeltaTime), 0.05f);
-            var kb = Keyboard.current;
-            if (kb == null || _settings == null) return;
+            var input = _player.Input;
+            if (input == null || _settings == null || !Sculpt.Game.Input.GameInput.DevBuild) { _show = false; return; }
             if (_player.InputBlocked) return; // the settings menu or the join box has the keyboard
-            bool changed = false;
-            if (kb.f1Key.wasPressedThisFrame) _show = !_show;
-            if (kb.f2Key.wasPressedThisFrame) { _settings.Fov = Mathf.Clamp(_settings.Fov - 5, 60, 120); changed = true; }
-            if (kb.f3Key.wasPressedThisFrame) { _settings.Fov = Mathf.Clamp(_settings.Fov + 5, 60, 120); changed = true; }
-            if (kb.f4Key.wasPressedThisFrame) { _settings.Sensitivity = Mathf.Max(0.1f, _settings.Sensitivity - 0.1f); changed = true; }
-            if (kb.f5Key.wasPressedThisFrame) { _settings.Sensitivity = Mathf.Min(10f, _settings.Sensitivity + 0.1f); changed = true; }
-            if (kb.f6Key.wasPressedThisFrame) { _settings.HeadBob = !_settings.HeadBob; changed = true; }
-            if (kb.f7Key.wasPressedThisFrame) { _settings.SpeedFovKick = !_settings.SpeedFovKick; changed = true; }
-            if (changed) _settings.Save();
-            NetKeys(kb);
+            if (input.DevHud.WasPressedThisFrame()) _show = !_show;
+            NetKeys(input);
         }
 
         private void LateUpdate()
@@ -145,10 +137,7 @@ namespace Sculpt.Game.UI
                 $"Height {s.Position.Y / SubGrid.TileSize:0.00} levels   FPS {_fps:0}\n" +
                 (Time.time - _lastEventTime < 1.5f ? $">> {_lastEvent}\n" : "\n") +
                 (_lastDamage > 0 ? $"Last fall damage {_lastDamage}\n" : "") +
-                $"\nFOV {_settings.Fov:0} (F2/F3)   Sens {_settings.Sensitivity:0.0} (F4/F5)\n" +
-                $"Head bob {(_settings.HeadBob ? "on" : "off")} (F6)   Speed FOV kick {(_settings.SpeedFovKick ? "on" : "off")} (F7)\n" +
-                "Q sculpt (LMB push, RMB pull, wheel raise/sink, hold Alt reinforce, E throw)   1-4 weapons\n" +
-                "R respawn   Esc settings menu (FOV, sensitivity, binds, volume)   F1 hide\n\n" + NetText();
+                "\nF1 respawn   F2 hide this   Esc settings (FOV, sensitivity, binds, volume)\n\n" + NetText();
             var r = new Rect(12, 10, 640, 480);
             var shadow = new GUIStyle(_style);
             shadow.normal.textColor = new Color(0, 0, 0, 0.8f);
