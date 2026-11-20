@@ -197,7 +197,7 @@ namespace Sculpt.Core.Tests.Fuzz
             var r = new Rng(seed);
             VoxelGrid g = RandomBlocks(r);
             const double step = 0.001, maxDist = 8.0;
-            int checkedHits = 0;
+            int checkedHits = 0, grazes = 0;
 
             for (int i = 0; i < 300; i++)
             {
@@ -209,28 +209,31 @@ namespace Sculpt.Core.Tests.Fuzz
                 VoxelHit hit = VoxelGeometry.Raycast(g, o, d, maxDist);
 
                 double tRef = -1;
+                Int3 refCell = default;
                 for (double t = 0; t <= maxDist; t += step)
                 {
                     Vec3d p = o + d * t;
                     Int3 c = VoxelGrid.CellAt(p);
                     if (!g.InBounds(c)) break; // outside the grid the ray reads anchors; keep to the interior
-                    if (Inspect.PointInBlock(g.Get(c), c, p)) { tRef = t; break; }
+                    if (Inspect.PointInBlock(g.Get(c), c, p)) { tRef = t; refCell = c; break; }
                 }
-                if (tRef < 0)
-                {
-                    // March left the grid or found nothing: a hit must then be at least as far as the march got.
-                    continue;
-                }
+                // Any hit Raycast reports must be a real surface point of the reported block...
+                if (hit.Hit)
+                    Assert.That(Inspect.PointInBlock(g.Get(hit.Cell), hit.Cell, hit.Point, 1e-7), Is.True,
+                        $"seed {seed} ray {i}: hit point {SculptFuzzScenario.Fmt(hit.Point)} is not on {hit.Cell} {g.Get(hit.Cell)}");
+                if (tRef < 0) continue; // march left the grid or found nothing
 
+                // ...and it may never be later than the first solid point the march found. It may be a little
+                // earlier: the ray can clip an edge sliver thinner than the march step.
                 checkedHits++;
                 Assert.That(hit.Hit, Is.True, $"seed {seed} ray {i}: march hit at {tRef:0.000} m, Raycast missed (o {o}, d {d})");
-                Assert.That(hit.Distance, Is.EqualTo(tRef).Within(step + 1e-6), $"seed {seed} ray {i}: distance");
-                Assert.That(Inspect.PointInBlock(g.Get(hit.Cell), hit.Cell, hit.Point + d * 1e-4) || Inspect.PointInBlock(g.Get(hit.Cell), hit.Cell, hit.Point),
-                    Is.True, $"seed {seed} ray {i}: hit point is on the reported cell's block");
+                Assert.That(hit.Distance, Is.LessThanOrEqualTo(tRef + 1e-6), $"seed {seed} ray {i}: Raycast passed through a block. o {SculptFuzzScenario.Fmt(o)} d {SculptFuzzScenario.Fmt(d)}; march {tRef:R} in {refCell} {g.Get(refCell)}; raycast {hit.Distance:R} in {hit.Cell} {g.Get(hit.Cell)}");
+                if (hit.Distance < tRef - step - 1e-6) grazes++;
                 Assert.That(hit.Normal.Dot(d), Is.LessThanOrEqualTo(1e-9), "normal faces the ray");
                 Assert.That(hit.Normal.Length, Is.EqualTo(1.0).Within(1e-9), "unit normal");
             }
             Assert.That(checkedHits, Is.GreaterThan(50), "the random rays actually hit things");
+            Assert.That(grazes, Is.LessThan(checkedHits / 20 + 2), "edge grazes are rare; many would mean Raycast hits air");
         }
 
         /// <summary>A ray straight down lands exactly on SurfaceHeight, for flat blocks and every ramp facing.</summary>

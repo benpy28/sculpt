@@ -121,11 +121,11 @@ namespace Sculpt.Core.Tests.Fuzz
         public static bool IsInsideTerrain(VoxelGrid g, PlayerBody p) => VoxelGeometry.BoxOverlapsSolid(g, p.Bounds);
 
         /// <summary>Exact point-in-block test written independently of VoxelGeometry (closed cell, wedge for ramps).</summary>
-        public static bool PointInBlock(Block b, Int3 cell, Vec3d p)
+        public static bool PointInBlock(Block b, Int3 cell, Vec3d p, double tol = 0)
         {
             if (b.IsEmpty) return false;
             Aabb c = VoxelGrid.CellBounds(cell);
-            if (p.X < c.Min.X || p.X > c.Max.X || p.Y < c.Min.Y || p.Y > c.Max.Y || p.Z < c.Min.Z || p.Z > c.Max.Z) return false;
+            if (p.X < c.Min.X - tol || p.X > c.Max.X + tol || p.Y < c.Min.Y - tol || p.Y > c.Max.Y + tol || p.Z < c.Min.Z - tol || p.Z > c.Max.Z + tol) return false;
             if (!b.IsRamp) return true;
             double s; // metres from the high edge toward the low edge
             switch (b.RampLow)
@@ -135,7 +135,7 @@ namespace Sculpt.Core.Tests.Fuzz
                 case Dir.North: s = p.Z - c.Min.Z; break;
                 default: s = c.Max.Z - p.Z; break;
             }
-            return (p.Y - c.Min.Y) + s <= B;
+            return (p.Y - c.Min.Y) + s <= B + tol * 2;
         }
     }
 }

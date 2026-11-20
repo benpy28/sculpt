@@ -166,7 +166,6 @@ namespace Sculpt.Core.Tests.Fuzz
             int raises = 0, sinks = 0;
             var shoved = new HashSet<int>();
             var shoveBy = new Dictionary<int, string>();
-            var shoveRamp = new HashSet<int>();
             for (int ei = stepEventsFrom; ei < Sculpt.Events.Count; ei++)
             {
                 SculptEvent e = Sculpt.Events[ei];
@@ -195,7 +194,6 @@ namespace Sculpt.Core.Tests.Fuzz
                     case SculptEventType.PlayerShoved:
                         Shoves++;
                         shoved.Add(e.PlayerId);
-                        if (e.Action.Type == SculptActionType.Move && Grid.Get(e.Check.Destination).IsRamp) shoveRamp.Add(e.PlayerId);
                         shoveBy[e.PlayerId] = $"{e.Action.Type} target {e.Action.Target} dir {e.Action.Direction}, src {e.Check.Source} dst {e.Check.Destination}, src block now {Grid.Get(e.Check.Source)}, dst block now {Grid.Get(e.Check.Destination)}";
                         break;
                     case SculptEventType.BlockFell:
@@ -222,10 +220,7 @@ namespace Sculpt.Core.Tests.Fuzz
                 }
                 if (CheckShoveDistance)
                 {
-                    // ISSUE-2 (see KnownIssueTests): a pushed ramp can shove a rider on its slope up to
-                    // B + box width. Tolerated here until Ben decides the fix, everything else is held to one cell.
-                    double maxShove = shoveRamp.Contains(p.Id) ? B + 2 * p.HalfWidth : B;
-                    Assert.That(d.HorizontalLength, Is.LessThanOrEqualTo(maxShove + 1e-5), Ctx($"player {p.Id} (h {p.Height}) shoved more than one cell: from {Fmt(before[p.Id])} by {Fmt(d)}; {shoveBy[p.Id]}"));
+                    Assert.That(d.HorizontalLength, Is.LessThanOrEqualTo(B + 1e-5), Ctx($"player {p.Id} (h {p.Height}) shoved more than one cell: from {Fmt(before[p.Id])} by {Fmt(d)}; {shoveBy[p.Id]}"));
                     Assert.That(d.Y, Is.GreaterThanOrEqualTo(-1e-5), Ctx($"player {p.Id} shoved downward by {Fmt(d)}; {shoveBy[p.Id]}"));
                     Assert.That(d.Y, Is.LessThanOrEqualTo(B + 1e-5), Ctx($"player {p.Id} (h {p.Height}) lifted more than one cell: from {Fmt(before[p.Id])} by {Fmt(d)}; {shoveBy[p.Id]}"));
                 }
