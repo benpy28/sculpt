@@ -90,7 +90,7 @@ namespace Sculpt.Core
 
             bool pressed = input.FirePressed || (input.FireHeld && !w.TriggerWasHeld);
             w.TriggerWasHeld = input.FireHeld;
-            if (pressed) w.BufferedPressTick = tick;
+            if (pressed && !s.Hand.InSculptMode) w.BufferedPressTick = tick; // a sculpt click is never a buffered shot
 
             if (s.Dead || !s.Hand.CanFire || !s.CanShoot) return;
 

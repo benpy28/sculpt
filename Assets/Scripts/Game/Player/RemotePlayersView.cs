@@ -29,7 +29,8 @@ namespace Sculpt.Game.Player
         private sealed class Avatar
         {
             public GameObject Root;
-            public Transform Body, Head, Visor;
+            public Transform Body, Head, Visor, Gun;
+            public Weapon GunShown = (Weapon)255;
             public int Team = -1;
             public MeshRenderer BodyR, HeadR;
             public MaterialPropertyBlock Block;
@@ -70,20 +71,39 @@ namespace Sculpt.Game.Player
                     _avatars[id] = a;
                 }
                 if (a.Team != v.Team) SetTeam(a, v.Team);
+                // The dead are gone from view (and from hit checks) until they respawn.
+                if (a.Root.activeSelf == v.Dead) a.Root.SetActive(!v.Dead);
+                if (v.Dead) continue;
 
                 float h = (float)(v.Crouched ? _cfg.CrouchHeight : _cfg.StandHeight);
                 float eye = (float)(v.Crouched ? _cfg.CrouchEye : _cfg.StandEye);
                 float w = (float)(_cfg.HalfWidth * 2);
                 a.Root.transform.SetPositionAndRotation(v.Position.ToUnity(), Quaternion.Euler(0, (float)(v.Yaw * Mathf.Rad2Deg), 0));
-                // Body below the head, head 0.36 m cube around the eye. Together they fill the collision box.
-                float headH = Mathf.Min(0.36f, h * 0.3f);
+                // Body below the head; the head is exactly the headshot zone (top of the box, full width), so what you see
+                // is what you hit. Together they fill the collision box.
+                float headH = (float)_cfg.Weapons.HeadZone(h);
                 a.Body.localScale = new Vector3(w, h - headH, w);
                 a.Body.localPosition = Vector3.zero;
-                a.Head.localScale = new Vector3(w * 0.8f, headH, w * 0.8f);
+                a.Head.localScale = new Vector3(w, headH, w);
                 a.Head.localPosition = new Vector3(0, h - headH, 0);
                 a.Head.localRotation = Quaternion.identity;
                 a.Visor.localPosition = new Vector3(0, eye - 0.05f, w * 0.4f);
                 a.Visor.localRotation = Quaternion.Euler((float)v.Pitch, 0, 0);
+
+                // Their gun: held at the right side, along their aim; lowered out of sight in sculpt mode (a tell).
+                bool gunOut = v.Hand == HandMode.Weapon || v.Hand == HandMode.Drawing;
+                if (a.Gun.gameObject.activeSelf != gunOut) a.Gun.gameObject.SetActive(gunOut);
+                if (gunOut)
+                {
+                    if (a.GunShown != v.Held)
+                    {
+                        a.GunShown = v.Held;
+                        float len = v.Held == Weapon.Pump ? 0.95f : v.Held == Weapon.Ar ? 0.9f : v.Held == Weapon.Smg ? 0.55f : 0.25f;
+                        a.Gun.localScale = new Vector3(0.07f, 0.11f, len);
+                    }
+                    a.Gun.localPosition = new Vector3(w * 0.5f + 0.02f, eye - 0.28f, 0.1f);
+                    a.Gun.localRotation = Quaternion.Euler((float)v.Pitch, 0, 0);
+                }
             }
         }
 
@@ -96,6 +116,8 @@ namespace Sculpt.Game.Player
             a.Visor = Part(a.Root.transform, "Visor", out MeshRenderer visorR);
             a.Visor.localScale = new Vector3(0.42f, 0.1f, 0.08f);
             a.Visor.GetComponent<MeshFilter>().sharedMesh = BuildBox(new Color(0.08f, 0.08f, 0.1f), centred: true);
+            a.Gun = Part(a.Root.transform, "Gun", out _);
+            a.Gun.GetComponent<MeshFilter>().sharedMesh = GunBox();
             return a;
         }
 
@@ -117,6 +139,19 @@ namespace Sculpt.Game.Player
             Mesh m = BuildBox(c, centred: false);
             a.Body.GetComponent<MeshFilter>().sharedMesh = m;
             a.Head.GetComponent<MeshFilter>().sharedMesh = BuildBox(Color.Lerp(c, Color.white, 0.25f), centred: false);
+        }
+
+        private Mesh _gunBox;
+        /// <summary>A unit box whose back face sits at z 0 (it extends forward along the aim).</summary>
+        private Mesh GunBox()
+        {
+            if (_gunBox != null) return _gunBox;
+            _gunBox = BuildBox(new Color(0.16f, 0.16f, 0.17f), centred: true);
+            var v = _gunBox.vertices;
+            for (int i = 0; i < v.Length; i++) v[i].z += 0.5f;
+            _gunBox.vertices = v;
+            _gunBox.RecalculateBounds();
+            return _gunBox;
         }
 
         /// <summary>Unit box (bottom-centred unless centred) with per-face shading baked into vertex colours.</summary>

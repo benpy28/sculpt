@@ -43,6 +43,14 @@ namespace Sculpt.Game.Cameras
         }
     }
 
+    /// <summary>Cosmetic camera shake from guns and hits: roll, a few millimetres of offset and an FOV punch. Never pitch/yaw.</summary>
+    public sealed class CameraShake
+    {
+        public float Roll;
+        public Vector3 Offset;
+        public float FovPunch;
+    }
+
     /// <summary>First person view: interpolated feet + smoothed eye height, minimal head bob, speed FOV kick.</summary>
     public sealed class FirstPersonMode : ICameraMode
     {
@@ -52,6 +60,7 @@ namespace Sculpt.Game.Cameras
         private float _bobPhase;
         private float _bobAmount;
         private float _fovKick;
+        public readonly CameraShake Shake = new CameraShake();
 
         public FirstPersonMode(LocalPlayer player, ClientSettings settings)
         {
@@ -73,13 +82,17 @@ namespace Sculpt.Game.Cameras
             float bob = Mathf.Sin(_bobPhase * 2f) * 0.012f * _bobAmount; // minimal: 1.2 cm
 
             position = _player.RenderFeet + new Vector3(0, _eye + bob, 0);
-            rotation = Quaternion.Euler(_player.Pitch, _player.Yaw, 0);
+            // Recoil is part of the real aim (Core), so the camera follows it exactly; Shake is cosmetic roll only and never
+            // moves the crosshair off the bullet's line.
+            Vector2 recoil = _player.RenderRecoil;
+            rotation = Quaternion.Euler(_player.Pitch - recoil.x, _player.Yaw + recoil.y, Shake.Roll);
+            position += Shake.Offset;
 
             MovementConfig c = _player.Config;
             float over = Mathf.InverseLerp((float)c.SprintSpeed + 0.2f, (float)c.SlideMaxSpeed, speed);
             float kickTarget = _settings.SpeedFovKick ? over * 8f : 0f;
             _fovKick = Mathf.Lerp(_fovKick, kickTarget, 1f - Mathf.Exp(-8f * dt));
-            horizontalFov = _settings.Fov + _fovKick;
+            horizontalFov = _settings.Fov + _fovKick + Shake.FovPunch;
         }
     }
 }

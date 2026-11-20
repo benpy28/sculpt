@@ -125,8 +125,7 @@ namespace Sculpt.Game.UI
         private void OnGUI()
         {
             if (_player == null) return;
-            DrawCrosshair();
-            if (!_show) return;
+            if (!_show) return; // the crosshair lives in CombatHud now (it shows the real spread)
 
             if (_style == null)
             {
@@ -211,25 +210,6 @@ namespace Sculpt.Game.UI
         {
             _joinBox = false;
             _player.InputBlocked = false;
-        }
-
-        private void DrawCrosshair()
-        {
-            float cx = Screen.width / 2f, cy = Screen.height / 2f;
-            const float len = 7, gap = 4, th = 2;
-            var outline = new Color(0, 0, 0, 0.7f);
-            void Bar(float x, float y, float w, float h)
-            {
-                GUI.color = outline;
-                GUI.DrawTexture(new Rect(x - 1, y - 1, w + 2, h + 2), _white);
-                GUI.color = Color.white;
-                GUI.DrawTexture(new Rect(x, y, w, h), _white);
-            }
-            Bar(cx - gap - len, cy - th / 2, len, th);
-            Bar(cx + gap, cy - th / 2, len, th);
-            Bar(cx - th / 2, cy - gap - len, th, len);
-            Bar(cx - th / 2, cy + gap, th, len);
-            GUI.color = Color.white;
         }
     }
 }

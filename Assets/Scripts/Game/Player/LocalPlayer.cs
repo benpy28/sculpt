@@ -51,7 +51,13 @@ namespace Sculpt.Game.Player
         private MovementSettings _settingsAsset;
         private GameInput _input;
         private ClientSettings _client;
-        private bool _jumpLatch, _crouchLatch, _respawnLatch, _toggleLatch;
+        private bool _jumpLatch, _crouchLatch, _respawnLatch, _toggleLatch, _fireLatch;
+
+        /// <summary>Recoil offset of the aim (degrees, x = up, y = right), interpolated for drawing. The camera includes it,
+        /// so the crosshair always sits exactly where the next bullet goes (before spread).</summary>
+        public Vector2 RenderRecoil { get; private set; }
+        /// <summary>Mouse movement this frame in degrees (viewmodel sway).</summary>
+        public Vector2 LookDelta { get; private set; }
         private byte _weaponLatch;
         private bool _confirmLatch;
         private SculptAction _confirmAction;
@@ -107,7 +113,9 @@ namespace Sculpt.Game.Player
                 float k = _client.DegreesPerCount;
                 Yaw = Mathf.Repeat(Yaw + d.x * k + 180f, 360f) - 180f;
                 Pitch = Mathf.Clamp(Pitch - d.y * k, -89f, 89f);
+                LookDelta = new Vector2(d.x * k, d.y * k);
             }
+            else LookDelta = Vector2.zero;
 
             UpdateSculptAim();
 
@@ -117,6 +125,7 @@ namespace Sculpt.Game.Player
             if (_input.Respawn.WasPressedThisFrame()) _respawnLatch = true;
             if (_input.SculptToggle.WasPressedThisFrame()) _toggleLatch = true;
             for (int i = 0; i < 4; i++) if (_input.Hotbar[i].WasPressedThisFrame()) _weaponLatch = (byte)(i + 1);
+            if (!InSculptMode && !clickToLock && _input.Fire.WasPressedThisFrame()) _fireLatch = true;
 
             if (!InSculptMode || clickToLock) return;
             // The direction press IS the confirm, with this frame's aim. The newest press in a frame wins.
@@ -174,7 +183,10 @@ namespace Sculpt.Game.Player
                 SprintHeld = active && _input.Sprint.IsPressed(),
                 // In sculpt mode the mouse buttons sculpt; they never stop your sprint.
                 WantsToShoot = active && !sculpting && (_input.Fire.IsPressed() || _input.Aim.IsPressed()),
+                FireHeld = active && !sculpting && _input.Fire.IsPressed(),
+                FirePressed = active && !sculpting && _fireLatch,
             };
+            _fireLatch = false;
             var hand = new HandInput { SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0 };
             bool respawn = _respawnLatch;
             bool confirm = _confirmLatch && active;
@@ -198,6 +210,10 @@ namespace Sculpt.Game.Player
             MotorState prev = Net.PreviousPredicted, cur = Net.Predicted;
             RenderFeet = Vector3.Lerp(prev.Position.ToUnity(), cur.Position.ToUnity(), alpha) + Net.CorrectionOffset.ToUnity();
             RenderSpeed = Mathf.Lerp((float)prev.HorizontalSpeed, (float)cur.HorizontalSpeed, alpha);
+            // Recoil kicks are instant (no lerp from the previous tick's value when it rose), recovery is smooth.
+            float pp = (float)prev.Weapon.RecoilPitch, cp = (float)cur.Weapon.RecoilPitch;
+            float py = (float)prev.Weapon.RecoilYaw, cy = (float)cur.Weapon.RecoilYaw;
+            RenderRecoil = cp > pp ? new Vector2(cp, cy) : new Vector2(Mathf.Lerp(pp, cp, alpha), Mathf.Lerp(py, cy, alpha));
         }
 
         public float TargetEyeHeight => (float)PlayerMovement.EyeOf(State, _cfg);

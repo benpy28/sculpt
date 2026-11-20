@@ -9,6 +9,7 @@ using Sculpt.Game.Player;
 using Sculpt.Game.Sculpting;
 using Sculpt.Game.Settings;
 using Sculpt.Game.UI;
+using Sculpt.Game.Weapons;
 using Sculpt.Game.World;
 using UnityEngine;
 
@@ -22,6 +23,8 @@ namespace Sculpt.Game.Bootstrap
     {
         [Tooltip("Optional. Assets > Create > SCULPT > Movement Settings. Edits apply live in Play mode.")]
         [SerializeField] private MovementSettings movementSettings;
+        [Tooltip("Optional. Assets > Create > SCULPT > Weapon Settings. Edits apply live in Play mode.")]
+        [SerializeField] private WeaponSettings weaponSettings;
 
         public enum MapKind { Arena, MovementCourse }
 
@@ -35,6 +38,9 @@ namespace Sculpt.Game.Bootstrap
         private CameraRig _rig;
         private GameInput _input;
         private NetSession _session;
+        private WeaponView _weapons;
+        private MovementConfig _movement;
+
         private void Awake()
         {
             Time.fixedDeltaTime = 1f / SimTime.TicksPerSecond;
@@ -45,6 +51,8 @@ namespace Sculpt.Game.Bootstrap
 
             var sculptConfig = new SculptConfig();
             var movement = new MovementConfig();
+            _movement = movement;
+            if (weaponSettings != null) weaponSettings.ApplyTo(movement.Weapons);
             // The client's own copy of the map (what it draws and predicts against). The server builds its own.
             Vec3d[][] spawns;
             double[] yaw;
@@ -93,13 +101,18 @@ namespace Sculpt.Game.Bootstrap
 
             _rig = new GameObject("Camera Rig").AddComponent<CameraRig>();
             _rig.Init();
-            _rig.Mode = new FirstPersonMode(_player, client);
+            var firstPerson = new FirstPersonMode(_player, client);
+            _rig.Mode = firstPerson;
+
+            _weapons = new GameObject("Weapon View").AddComponent<WeaponView>();
+            _weapons.Init(_player, _session, _rig, firstPerson, client, movement);
 
             gameObject.AddComponent<DevHud>().Init(_player, client, _session);
 
             var sculptView = new GameObject("Sculpt View").AddComponent<SculptView>();
             sculptView.Init(_player, _session, _rig, _world);
             gameObject.AddComponent<SculptHud>().Init(_player, _session, sculptView, _rig.Camera);
+            gameObject.AddComponent<CombatHud>().Init(_player, _session, _weapons, _rig.Camera);
 
             ApplyCommandLine();
 
@@ -109,6 +122,9 @@ namespace Sculpt.Game.Bootstrap
         private void Update()
         {
             double dt = Math.Min(Time.unscaledDeltaTime, 0.25f);
+#if UNITY_EDITOR
+            if (weaponSettings != null) weaponSettings.ApplyTo(_movement.Weapons); // live tuning in Play mode
+#endif
             _session.BeginFrame(dt);       // read network, run server ticks (offline/host), deliver snapshots
             _player.SampleFrame();
 
@@ -119,7 +135,9 @@ namespace Sculpt.Game.Bootstrap
 
             net.UpdateVisual(dt);
             _player.Render((float)net.Alpha);
+            _weapons.PreCamera(Time.unscaledDeltaTime);  // this frame's shots kick the view before it is placed
             _rig.Apply(Time.unscaledDeltaTime);
+            _weapons.PostCamera(Time.unscaledDeltaTime); // tracers from the muzzle as drawn this frame
             _world.RebuildDirty();
         }
 
