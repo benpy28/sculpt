@@ -43,6 +43,70 @@ namespace Sculpt.Core.Tests
             Assert.That(g.AllocatedChunks, Is.LessThan(g.ChunkCount), "uniform chunks stay sparse");
         }
 
+        [TestCase(1)]
+        [TestCase(2)]
+        [TestCase(42)]
+        [TestCase(1234)]
+        public void TreesAreSolidSymmetricAndLeaveHeadroom(int seed)
+        {
+            var g = MapGen.Generate(seed, out MapInfo info);
+            int n = g.SizeX;
+            TestContext.WriteLine($"seed {seed}: {info.Trees.Count} trees");
+            Assert.That(info.Trees.Count, Is.GreaterThanOrEqualTo(8), "a light forest, not a lone tree");
+            Assert.That(info.Trees.Count % 2, Is.Zero, "every tree has its rotated twin");
+
+            var treeCells = new HashSet<Int3>();
+            foreach (var t in info.Trees)
+            {
+                Assert.That(t.Wood.Count, Is.GreaterThan(0));
+                Assert.That(t.Leaves.Count, Is.GreaterThan(50));
+                foreach (var c in t.Wood) treeCells.Add(c);
+                foreach (var c in t.Leaves) treeCells.Add(c);
+            }
+            foreach (var c in treeCells)
+            {
+                // Solid and unsculptable: collides and stops bullets, so what you see is what you hit.
+                Assert.That(g.Get(c), Is.EqualTo(SubId.Anchor), $"tree cell {c} is an anchor");
+                Assert.That(treeCells.Contains(new Int3(n - 1 - c.X, c.Y, n - 1 - c.Z)), Is.True, $"tree cell {c} has a twin");
+            }
+
+            foreach (var t in info.Trees)
+                foreach (var c in t.Leaves)
+                {
+                    // Headroom: below every leaf, the first non-tree terrain is at least 2.7 m down.
+                    int y = c.Y - 1;
+                    while (y > g.MinY && (g.Get(c.X, y, c.Z) == SubId.Empty || treeCells.Contains(new Int3(c.X, y, c.Z)))) y--;
+                    Assert.That(c.Y - (y + 1), Is.GreaterThanOrEqualTo(9), $"leaf {c} too low over the ground");
+                }
+
+            // Away from spawns and the plaza.
+            foreach (var team in info.TeamSpawns)
+                foreach (var s in team)
+                    foreach (var t in info.Trees)
+                    {
+                        double dx = (t.X + t.Width * 0.5) * SubGrid.SubSize - s.X, dz = (t.Z + t.Width * 0.5) * SubGrid.SubSize - s.Z;
+                        Assert.That(dx * dx + dz * dz, Is.GreaterThan(5.0 * 5.0), "tree clear of spawn");
+                    }
+        }
+
+        [Test]
+        public void OnlyTreesAndPillarsRiseAboveTheBorderWall()
+        {
+            // Above 4 levels the only solids are the landmark pillars and the listed tree cells (no stray anchors).
+            var g = MapGen.Generate(5, out MapInfo info);
+            var treeCells = new HashSet<Int3>();
+            foreach (var t in info.Trees) { foreach (var c in t.Wood) treeCells.Add(c); foreach (var c in t.Leaves) treeCells.Add(c); }
+            int n = g.SizeX;
+            for (int z = 2; z < n - 2; z++)
+                for (int x = 2; x < n - 2; x++)
+                    for (int y = 8 * SubGrid.TileSubs / 2; y < g.MaxYExclusive; y++)
+                    {
+                        ushort id = g.Get(x, y, z);
+                        if (id == SubId.Anchor && y < 6 * SubGrid.TileSubs) continue; // pillars
+                        if (id != SubId.Empty) Assert.That(treeCells.Contains(new Int3(x, y, z)), Is.True, $"unexpected solid at {x},{y},{z}");
+                    }
+        }
+
         [Test]
         public void NothingFallsAtMapStart()
         {
