@@ -139,7 +139,7 @@ namespace Sculpt.Game.UI
                 $"Speed {s.HorizontalSpeed:0.00} m/s   vY {s.Velocity.Y:0.00}\n" +
                 $"Mode {s.Mode}{(s.Crouched ? " (crouched)" : "")}{(s.Sprinting ? " sprint" : "")}   Grounded {s.Grounded}\n" +
                 $"Can shoot {s.CanShoot}   Slide boost ready {(s.Tick - s.LastSlideBoostTick >= _player.Config.SlideBoostCooldownTicks ? "yes" : "no")}\n" +
-                $"Height {s.Position.Y / VoxelGrid.BlockSize:0.00} levels   FPS {_fps:0}\n" +
+                $"Height {s.Position.Y / SubGrid.TileSize:0.00} levels   FPS {_fps:0}\n" +
                 (Time.time - _lastEventTime < 1.5f ? $">> {_lastEvent}\n" : "\n") +
                 (_lastDamage > 0 ? $"Last fall damage {_lastDamage}\n" : "") +
                 $"\nFOV {_settings.Fov:0} (F2/F3)   Sens {_settings.Sensitivity:0.0} (F4/F5)\n" +

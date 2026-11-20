@@ -4,19 +4,19 @@ using UnityEngine;
 
 namespace Sculpt.Game.World
 {
-    /// <summary>Owns one GameObject + mesh per chunk and rebuilds only chunks the grid marks dirty.</summary>
+    /// <summary>Owns one GameObject + mesh per sub-cell chunk and rebuilds only chunks the grid marks dirty.</summary>
     public sealed class WorldView : MonoBehaviour
     {
-        private VoxelGrid _grid;
+        private SubGrid _grid;
         private ChunkMesher _mesher;
         private Material _material;
         private Mesh[] _meshes;
         private readonly List<int> _dirty = new List<int>();
 
-        public void Init(VoxelGrid grid, SculptConfig sculpt)
+        public void Init(SubGrid grid, SculptConfig sculpt)
         {
             _grid = grid;
-            _mesher = new ChunkMesher(sculpt);
+            _mesher = new ChunkMesher();
 
             Shader shader = Shader.Find("SCULPT/Voxel");
             if (shader == null)
@@ -24,7 +24,7 @@ namespace Sculpt.Game.World
                 Debug.LogError("[SCULPT] Shader SCULPT/Voxel not found; falling back to URP Unlit.");
                 shader = Shader.Find("Universal Render Pipeline/Unlit");
             }
-            _material = new Material(shader) { name = "Voxel (runtime)" };
+            _material = new Material(shader) { name = "Terrain (runtime)" };
 
             _meshes = new Mesh[grid.ChunkCount];
             for (int i = 0; i < grid.ChunkCount; i++)
@@ -32,7 +32,7 @@ namespace Sculpt.Game.World
                 Int3 cc = grid.ChunkCoordFromIndex(i);
                 var go = new GameObject($"Chunk {cc.X},{cc.Y},{cc.Z}");
                 go.transform.SetParent(transform, false);
-                go.transform.localPosition = grid.ChunkOrigin(cc).ToUnity() * (float)VoxelGrid.BlockSize;
+                go.transform.localPosition = grid.ChunkOrigin(cc).ToUnity() * (float)SubGrid.SubSize;
                 var mf = go.AddComponent<MeshFilter>();
                 var mr = go.AddComponent<MeshRenderer>();
                 mr.sharedMaterial = _material;

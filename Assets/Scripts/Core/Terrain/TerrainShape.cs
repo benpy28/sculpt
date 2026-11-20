@@ -95,6 +95,29 @@ namespace Sculpt.Core
             return c;
         }
 
+        /// <summary>
+        /// Should this face be drawn? Faces inside the cell always; a face on the cell's boundary only where the
+        /// neighbour cell's cross-section on that plane differs (otherwise the two cancel and it's inside the rock).
+        /// The mesher draws exactly these, so the drawn surface is the collision surface.
+        /// </summary>
+        public static bool IsFaceVisible(ISubCells g, int vx, int vy, int vz, Poly p, Face f)
+        {
+            if (!f.OnBoundary) return true;
+            int nx = vx, ny = vy, nz = vz;
+            switch (f.Side)
+            {
+                case 0: nx++; break;
+                case 1: nx--; break;
+                case 2: ny++; break;
+                case 3: ny--; break;
+                case 4: nz++; break;
+                default: nz--; break;
+            }
+            int ncfg = ConfigAt(g, nx, ny, nz);
+            if (ncfg == 0) return true;
+            return Get(ncfg).SideSig[f.Side ^ 1] != p.SideSig[f.Side];
+        }
+
         /// <summary>World position of the minimum corner of the dual cell at a lattice vertex.</summary>
         public static Vec3d CellMin(int vx, int vy, int vz) =>
             new Vec3d(vx * SubGrid.SubSize - H, vy * SubGrid.SubSize - H, vz * SubGrid.SubSize - H);

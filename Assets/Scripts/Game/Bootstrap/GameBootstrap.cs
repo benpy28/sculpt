@@ -22,7 +22,13 @@ namespace Sculpt.Game.Bootstrap
         [Tooltip("Optional. Assets > Create > SCULPT > Movement Settings. Edits apply live in Play mode.")]
         [SerializeField] private MovementSettings movementSettings;
 
-        private VoxelGrid _grid;
+        public enum MapKind { Arena, MovementCourse }
+
+        [Tooltip("Arena: the seeded 5v5 test arena. Movement Course: the M2 movement test map.")]
+        [SerializeField] private MapKind map = MapKind.Arena;
+        [SerializeField] private int mapSeed = 1;
+
+        private SubGrid _grid;
         private WorldView _world;
         private LocalPlayer _player;
         private CameraRig _rig;
@@ -39,9 +45,26 @@ namespace Sculpt.Game.Bootstrap
             var sculptConfig = new SculptConfig();
             var movement = new MovementConfig();
             // The client's own copy of the map (what it draws and predicts against). The server builds its own.
-            _grid = TestMaps.BuildM2(out Vec3d spawn, out double spawnYaw);
-            Vec3d[] spawns = SpawnPads(spawn);
-            _session = new NetSession(() => TestMaps.BuildM2(out _, out _), _grid, movement, new NetConfig(), sculptConfig, spawns, spawnYaw);
+            Vec3d[][] spawns;
+            double[] yaw;
+            Func<SubGrid> build;
+            if (map == MapKind.Arena)
+            {
+                int seed = mapSeed;
+                build = () => MapGen.Generate(seed, out _);
+                _grid = MapGen.Generate(seed, out MapInfo info);
+                spawns = new[] { info.TeamSpawns[0].ToArray(), info.TeamSpawns[1].ToArray() };
+                yaw = info.SpawnYaw;
+            }
+            else
+            {
+                build = () => TestMaps.BuildM2(out _, out _);
+                _grid = TestMaps.BuildM2(out Vec3d spawn, out double spawnYaw);
+                Vec3d[] pads = SpawnPads(spawn);
+                spawns = new[] { pads, pads };
+                yaw = new[] { spawnYaw, spawnYaw };
+            }
+            _session = new NetSession(build, _grid, movement, new NetConfig(), sculptConfig, spawns, yaw);
 
             _world = new GameObject("World").AddComponent<WorldView>();
             _world.Init(_grid, sculptConfig);
@@ -73,7 +96,7 @@ namespace Sculpt.Game.Bootstrap
 
             ApplyCommandLine();
 
-            Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {_grid.SizeX}x{_grid.SizeZ} cells, {_grid.ChunkCount} chunks.");
+            Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {map} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
         }
 
         private void Update()
@@ -96,7 +119,7 @@ namespace Sculpt.Game.Bootstrap
         /// <summary>Spawn spots on the 3x3 spawn pad, centre first.</summary>
         private static Vec3d[] SpawnPads(Vec3d centre)
         {
-            double b = VoxelGrid.BlockSize;
+            double b = SubGrid.TileSize;
             return new[]
             {
                 centre,

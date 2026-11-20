@@ -36,13 +36,13 @@ namespace Sculpt.Game.Net
         /// <summary>Raised when Client is replaced (joining or leaving a server). The local player re-reads it.</summary>
         public event Action ClientChanged;
 
-        private readonly Func<VoxelGrid> _makeGrid;
-        private readonly VoxelGrid _clientGrid;
+        private readonly Func<SubGrid> _makeGrid;
+        private readonly SubGrid _clientGrid;
         private readonly MovementConfig _movement;
         private readonly NetConfig _config;
         private readonly SculptConfig _sculptConfig;
-        private readonly Vec3d[] _spawns;
-        private readonly double _spawnYaw;
+        private readonly Vec3d[][] _teamSpawns;
+        private readonly double[] _teamYaw;
         private int _nextSpawn;
 
         private SimulatedLink _up, _down;
@@ -52,15 +52,16 @@ namespace Sculpt.Game.Net
         private bool _pendingOffline;
         private const double TickSeconds = 1.0 / SimTime.TicksPerSecond;
 
-        public NetSession(Func<VoxelGrid> makeGrid, VoxelGrid clientGrid, MovementConfig movement, NetConfig config, SculptConfig sculpt, Vec3d[] spawns, double spawnYaw)
+        /// <summary>teamSpawns[0] / teamYaw[0] are team 1's spawn spots and facing; [1] team 2's.</summary>
+        public NetSession(Func<SubGrid> makeGrid, SubGrid clientGrid, MovementConfig movement, NetConfig config, SculptConfig sculpt, Vec3d[][] teamSpawns, double[] teamYaw)
         {
             _makeGrid = makeGrid;
             _clientGrid = clientGrid;
             _movement = movement;
             _config = config;
             _sculptConfig = sculpt;
-            _spawns = spawns;
-            _spawnYaw = spawnYaw;
+            _teamSpawns = teamSpawns;
+            _teamYaw = teamYaw;
             StartOffline();
         }
 
@@ -108,8 +109,9 @@ namespace Sculpt.Game.Net
         private void CreateLocalServer()
         {
             NewLocalLinks();
-            Server = new NetServer(_makeGrid(), _movement, _config, SendFromServer);
-            ServerSculpt = new SculptSystem(Server.Grid, _sculptConfig);
+            SubGrid serverGrid = _makeGrid();
+            Server = new NetServer(serverGrid, _movement, _config, SendFromServer);
+            ServerSculpt = new SculptSystem(serverGrid, _sculptConfig);
             Server.Sculpt = ServerSculpt;
             _serverAccum = 0;
             _nextSpawn = 0;
@@ -127,9 +129,10 @@ namespace Sculpt.Game.Net
         private void AddServerPlayer(int connectionId)
         {
             int k = _nextSpawn++;
-            Vec3d spawn = _spawns[k % _spawns.Length];
             int team = 1 + (k % 2);
-            Server.AddPlayer(connectionId, team, spawn, _spawnYaw);
+            Vec3d[] spots = _teamSpawns[team - 1];
+            Vec3d spawn = spots[(k / 2) % spots.Length];
+            Server.AddPlayer(connectionId, team, spawn, _teamYaw[team - 1]);
         }
 
         private void SendFromServer(int connectionId, byte[] data, bool reliable)
