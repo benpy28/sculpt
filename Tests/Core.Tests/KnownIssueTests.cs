@@ -26,7 +26,6 @@ namespace Sculpt.Core.Tests
         /// player on the low lip of the ramp ends up inside the now-full cube.
         /// </summary>
         [Test]
-        [Ignore("ISSUE-1: gravity flattening a ramp can trap a crouched player inside it")]
         public void BlockLandingOnRampNeverTrapsPlayerOnTheRampLip()
         {
             var w = new TestWorld();
@@ -54,7 +53,6 @@ namespace Sculpt.Core.Tests
         /// The right fix is a design call for Ben: cap at one cell, or lift the player onto the moved slope.
         /// </summary>
         [Test]
-        [Ignore("ISSUE-2: pushing a ramp can shove a player on its slope more than one cell")]
         public void PushingARampNeverShovesMoreThanOneCell()
         {
             var w = new TestWorld();
@@ -81,7 +79,6 @@ namespace Sculpt.Core.Tests
         /// a block is held up only by the block directly below it.
         /// </summary>
         [Test]
-        [Ignore("ISSUE-3: a block pushed under a floating anchor hangs instead of falling")]
         public void BlockPushedUnderFloatingAnchorStillFalls()
         {
             var w = new TestWorld();
@@ -106,7 +103,6 @@ namespace Sculpt.Core.Tests
         /// new ramp in the way, instead of lifting the player onto the new slope like a standing player.
         /// </summary>
         [Test]
-        [Ignore("ISSUE-4: raise on a ramp column is wrongly blocked by a crouched player on the ramp lip")]
         public void RaiseOnRampCarriesCrouchedPlayerOnTheLip()
         {
             var w = new TestWorld();

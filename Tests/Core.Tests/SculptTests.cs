@@ -562,6 +562,19 @@ namespace Sculpt.Core.Tests
             Assert.That(_w.At(7, 0, 5).ReinforceTeam, Is.EqualTo(1));
         }
 
+        [Test]
+        public void ReinforcedSinkWithNothingUnderneathIsRejectedForFree()
+        {
+            // Column (6,*,5) sunk to -2: the block under the top is bedrock, so there is nothing to reinforce.
+            _w.Grid.Set(6, -1, 5, Block.Empty);
+            var p = Hover(2, 1, 6, 5, 1.0);
+            var top = new Int3(6, -2, 5);
+            SculptCheck c = _w.Sculpt.TryBegin(p, SculptAction.Sink(top, TopOf(top), true));
+            Assert.That(c.Result, Is.EqualTo(SculptResult.NothingToReinforce));
+            Assert.That(_w.Sculpt.BarOf(2).Value, Is.EqualTo(SculptConfig.BarMax));
+            Assert.That(_w.Sculpt.Evaluate(p, SculptAction.Sink(top, TopOf(top))).Result, Is.EqualTo(SculptResult.Valid), "plain sink is fine");
+        }
+
         // ---------- Shape / ramps ----------
 
         [Test]
