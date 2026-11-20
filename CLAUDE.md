@@ -126,10 +126,10 @@ Ben's constraint: "it cannot become a cube fighting game, its meant to feel prop
 Riot shield + pistol (frontal block, no sprint or mantle, hip-fire pistol); special objects (bounce pad, mirror block, bridge segment, heavy block) using the same six directions plus Shape; lag compensation; replay/kill-cam and free spectator camera; matchmaking.
 
 ## Milestones
-- **M0** Repo and scaffolding: git, .gitignore, .gitattributes + LFS, CLAUDE.md, folders, Core asmdef, Core.Tests with one trivial test, bootstrap scene steps, push to private GitHub. **(current)**
+- **M0** Repo and scaffolding: git, .gitignore, .gitattributes + LFS, CLAUDE.md, folders, Core asmdef, Core.Tests with one trivial test, bootstrap scene steps, push to private GitHub. (done)
 - **M1** Core grid and sculpt rules: chunked storage, block types (empty, solid, ramp with facing, anchor), reinforcement state and decay, all sculpt actions and validation, gravity, shove/carry, sculpt bar economy, windup and tile locks. Thorough tests.
 - **M2** Core movement + offline playable: box-vs-grid collision incl. ramps, all movement states and tech, tests. Unity: chunk meshing with per-axis shading, test map (flat, raised blocks, ramps, 1/2/3-level walls), first-person controller driven by Core.
-- **M3** Networking: FishNet, server-authoritative, prediction/reconciliation, host mode, two players same machine or LAN, simulated latency and packet loss. Smooth at 100 ms simulated ping.
+- **M3** Networking: FishNet, server-authoritative, prediction/reconciliation, host mode, two players same machine or LAN, simulated latency and packet loss. Smooth at 100 ms simulated ping. (done on branch m3-networking; needs Ben's Unity check)
 - **M3.5** Terrain v2 (after M3, before M4): A) sub-cell storage, piece finder, surface kernel, geometry (box, ray, ground), tests; B) movement on a terrain query interface, port movement tests via a whole-tile map builder; C) sculpt system on pieces (port SculptTests/RulesTable/fuzz invariants, rewrite ramp tests, new piece/support/scaling tests); D) throw; E) Unity mesher, materials, debris.
 - **M4** Sculpt mode networked: inputs, visuals, ghost, windup and locks, bar UI, targeted warnings, server validation, delta sync.
 - **M5** Weapons networked: loadout, swaps, damage, falloff, accuracy states, health, death/respawn, hit markers.
@@ -142,6 +142,7 @@ Assets/Scripts/Core/               Sculpt.Core asmdef, pure C#
 Assets/Scripts/Game/               Sculpt.Game asmdef, Unity layer
 Tests/Core.Tests/                  NUnit tests, dotnet test
 Tests/Core.Check/                  netstandard2.1 compile check of Core
+Tests/Game.Check/                  compile-only check of Game + Core + FishNet against the Editor DLLs (dotnet build Tests/Game.Check)
 ```
 
 ## Machine notes
@@ -196,6 +197,19 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 - After a vault you're briefly airborne, so holding crouch through it turns into a slide-land.
 - Mouse look is applied every rendered frame (not per tick) for lowest latency; vsync off by default.
 - Rendering is unlit with baked per-axis shading and thin dark block edges (custom URP shader `SCULPT/Voxel`).
+
+### Netcode design and smaller calls made by Claude in M3 (tell Ben; change if he disagrees)
+- FishNet (free, 4.7.4, UPM git URL pinned to the tag) is used only as the transport: connections plus opaque byte packets over Tugboat UDP. No NetworkObjects or prefabs. All netcode is pure Core (`Assets/Scripts/Core/Net`) and unit-tested over a simulated lossy link.
+- Tick-aligned: a client command is tagged with the server tick it is for. The client clock runs ahead so commands arrive ~2 ticks early (server reports the worst lead over 1 s; client speeds up or slows down by up to 3%, or jumps when far off).
+- Each input packet repeats the newest 8 commands, so lost packets cost nothing. A missing command is replaced by the previous one with presses cleared; a press that arrives late is applied on the next tick, never dropped.
+- The client predicts with exactly the quantized command it sends and the server sends the full motor state every tick; any bitwise difference rewinds to the server state and replays. Only the drawn position is smoothed (80 ms); corrections over 2 m snap.
+- Remote players are drawn 3 ticks (50 ms) behind the newest snapshot, interpolated; at most 6 ticks of horizontal extrapolation when snapshots stop. A jump over 4 m (respawn) is never interpolated.
+- Server keeps 64 ticks of every player's position, and each command carries the tick the client was drawing others at, ready for lag compensation in M5.
+- Offline play runs a real local server too, so every mode uses the same prediction path. Host = that plus a FishNet server. Sim ping/loss/jitter apply to the local player's link in every mode (F8/F9/F10).
+- Respawn (R) is a command: the server applies it, the client predicts it. Falling below -30 m respawns on both sides.
+- Spawns: the 3x3 spawn pad, centre first; teams alternate 1, 2. Remote players are team-coloured boxes the size of their collision box (blue, orange; never purple) with a dark visor showing look direction.
+- Movement config is not synced yet: all players must run the same build. Live tuning in the Editor only affects that Editor's server and client.
+- Terrain is not networked in M3 (each side builds the same map). Sculpt/piece deltas come in M4 on top of terrain v2.
 
 ## Open questions
 - (none)

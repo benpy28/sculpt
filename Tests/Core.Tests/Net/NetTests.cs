@@ -214,6 +214,31 @@ namespace Sculpt.Core.Tests.Net
         }
 
         [Test]
+        public void M3Target_100msRoundTrip_IsSmooth()
+        {
+            // The milestone bar: 100 ms round trip, a little jitter and loss, busy movement on the real map.
+            var h = NetHarness.M2Map(out _);
+            var a = h.AddClient(NetHarness.Lag(50, 5, 2), NetHarness.Lag(50, 5, 2), 1000.0 / 144.0, seed: 21);
+            var b = h.AddClient(NetHarness.Lag(50, 5, 2), NetHarness.Lag(50, 5, 2), 1000.0 / 120.0, seed: 22);
+            a.Script = Scripts.Wander;
+            b.Script = t => Scripts.Wander(t + 400);
+            h.RunSeconds(4);
+            int ca = a.Client.Corrections, cb = b.Client.Corrections;
+            int extrap = 0, samples = 0;
+            b.OnFrame = peer =>
+            {
+                if (!peer.Client.TryGetRemote(a.ServerSide.Id, out RemoteView v)) return;
+                samples++;
+                if (v.Extrapolated) extrap++;
+            };
+            h.RunSeconds(30);
+            double perSecA = (a.Client.Corrections - ca) / 30.0, perSecB = (b.Client.Corrections - cb) / 30.0;
+            Assert.That(perSecA, Is.LessThan(0.2), $"A corrections/s {perSecA:0.00}");
+            Assert.That(perSecB, Is.LessThan(0.2), $"B corrections/s {perSecB:0.00}");
+            Assert.That(extrap / (double)samples, Is.LessThan(0.02), "remote player drawn from real data almost always");
+        }
+
+        [Test]
         public void JumpPresses_AreNotLost_UnderLoss()
         {
             var h = NetHarness.Flat();
