@@ -41,7 +41,6 @@ namespace Sculpt.Core.Tests
         /// Expectation: a throw moves nobody except via its rider kick.
         /// </summary>
         [Test]
-        [Ignore("ISSUE-6: throw resolution replays a stale shove plan and teleports bystanders")]
         public void ThrowNeverReplaysSomeoneElsesShovePlan()
         {
             var w = new Pieces.SculptWorld();
@@ -75,19 +74,25 @@ namespace Sculpt.Core.Tests
         /// Expectation: if a box overlaps, every box containing it overlaps.
         /// </summary>
         [Test]
-        [Ignore("ISSUE-7: crouching at rest can test as inside rock (box overlap flips at the contact epsilon)")]
         public void ShorterBoxAtTheSameFeetNeverOverlapsWhenTheTallerOneDoesNot()
         {
             SubGrid g = MapGen.Generate(1047323, out _, 32);
             var feet = new Vec3d(23.726735578766785, -0.12673699298034644, 20.798992102116515); // where movement left a player
-            Aabb Box(double h) => new Aabb(new Vec3d(feet.X - 0.35, feet.Y, feet.Z - 0.35), new Vec3d(feet.X + 0.35, feet.Y + h, feet.Z + 0.35));
-            Assert.That(g.BoxOverlapsSolid(Box(1.8)), Is.False, "setup: standing there is clear");
-            Assert.That(g.BoxOverlapsSolid(Box(1.1)), Is.False, "crouching in the same spot must be clear too");
+            // Scan the contact zone around the spot (the exact old resting height depended on the old rounding).
+            int clearTall = 0;
+            for (int k = -200; k <= 200; k++)
+            {
+                double y = feet.Y + k * 1e-9;
+                Aabb Box(double h) => new Aabb(new Vec3d(feet.X - 0.35, y, feet.Z - 0.35), new Vec3d(feet.X + 0.35, y + h, feet.Z + 0.35));
+                if (g.BoxOverlapsSolid(Box(1.8))) continue;
+                clearTall++;
+                Assert.That(g.BoxOverlapsSolid(Box(1.1)), Is.False, $"crouching must be clear where standing is (k {k})");
+            }
+            Assert.That(clearTall, Is.GreaterThan(0), "setup: the scan reaches clear heights");
         }
 
         /// <summary>ISSUE-7, as a property over random resting spots on generated arenas.</summary>
         [Test]
-        [Ignore("ISSUE-7: crouching at rest can test as inside rock (box overlap flips at the contact epsilon)")]
         public void BoxOverlapIsMonotoneForRestingBoxes()
         {
             int violations = 0, samples = 0;
