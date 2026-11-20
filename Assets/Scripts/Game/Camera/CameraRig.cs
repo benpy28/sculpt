@@ -25,7 +25,8 @@ namespace Sculpt.Game.Cameras
             go.tag = "MainCamera";
             go.transform.SetParent(transform, false);
             Camera = go.AddComponent<Camera>();
-            Camera.clearFlags = CameraClearFlags.SolidColor;
+            // Procedural sky when the scenery set one (World/Scenery), else a flat colour.
+            Camera.clearFlags = RenderSettings.skybox != null ? CameraClearFlags.Skybox : CameraClearFlags.SolidColor;
             Camera.backgroundColor = Sky;
             Camera.nearClipPlane = 0.05f;
             Camera.farClipPlane = 400f;

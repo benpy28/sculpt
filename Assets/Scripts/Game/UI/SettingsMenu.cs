@@ -280,6 +280,7 @@ namespace Sculpt.Game.UI
             GUILayout.Space(6);
             GUILayout.Label("Audio", _header);
             _settings.MasterVolume = Slider("Master volume", _settings.MasterVolume, 0f, 1f, "0%", 100f);
+            _settings.AmbienceVolume = Slider("Ambience (wind, birds)", _settings.AmbienceVolume, 0f, 1f, "0%", 100f);
             GUILayout.Space(6);
             GUILayout.Label("Controls", _header);
             _settings.SprintToggle = HoldToggle("Sprint", _settings.SprintToggle);

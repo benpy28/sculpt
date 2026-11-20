@@ -1,6 +1,7 @@
 using System;
 using Sculpt.Core;
 using Sculpt.Core.Net;
+using Sculpt.Game.Audio;
 using Sculpt.Game.Net;
 using Sculpt.Game.Cameras;
 using Sculpt.Game.Config;
@@ -57,11 +58,13 @@ namespace Sculpt.Game.Bootstrap
             Vec3d[][] spawns;
             double[] yaw;
             Func<SubGrid> build;
+            MapInfo mapInfo = null;
             if (map == MapKind.Arena)
             {
                 int seed = mapSeed;
                 build = () => MapGen.Generate(seed, out _);
                 _grid = MapGen.Generate(seed, out MapInfo info);
+                mapInfo = info;
                 spawns = new[] { info.TeamSpawns[0].ToArray(), info.TeamSpawns[1].ToArray() };
                 yaw = info.SpawnYaw;
             }
@@ -76,26 +79,20 @@ namespace Sculpt.Game.Bootstrap
             _session = new NetSession(build, _grid, movement, new NetConfig(), sculptConfig, spawns, yaw);
 
             _world = new GameObject("World").AddComponent<WorldView>();
-            _world.Init(_grid, sculptConfig);
+            _world.Init(_grid, sculptConfig, mapInfo);
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
 
-            RenderSettings.fog = true;
-            RenderSettings.fogMode = FogMode.Linear;
-            RenderSettings.fogColor = CameraRig.Sky;
-            RenderSettings.fogStartDistance = 70f;
-            RenderSettings.fogEndDistance = 220f;
-
-            var sun = new GameObject("Sun").AddComponent<Light>();
-            sun.type = LightType.Directional;
-            sun.transform.rotation = Quaternion.Euler(55f, -35f, 0f); // fixed sun direction
-            sun.intensity = 1.1f;
+            // Sky, haze, fixed sun and the distant hills around the arena.
+            float half = (float)(_grid.SizeX * SubGrid.SubSize * 0.5);
+            Scenery.Build(half, (float)(_grid.SizeZ * SubGrid.SubSize * 0.5));
 
             _input = new GameInput();
             var client = ClientSettings.Load();
 
             _player = new GameObject("Local Player").AddComponent<LocalPlayer>();
             _player.Init(_session, movement, movementSettings, _input, client);
+            _world.TrackPlayers(_player, _session);
 
             new GameObject("Remote Players").AddComponent<RemotePlayersView>().Init(_session, movement);
 
@@ -109,6 +106,7 @@ namespace Sculpt.Game.Bootstrap
 
             gameObject.AddComponent<DevHud>().Init(_player, client, _session);
             _player.gameObject.AddComponent<MovementAudio>().Init(_player);
+            gameObject.AddComponent<AmbientAudio>().Init(client, Perches(mapInfo));
 
             var sculptView = new GameObject("Sculpt View").AddComponent<SculptView>();
             sculptView.Init(_player, _session, _rig, _world, firstPerson.Shake);
@@ -143,6 +141,17 @@ namespace Sculpt.Game.Bootstrap
             _rig.Apply(Time.unscaledDeltaTime);
             _weapons.PostCamera(Time.unscaledDeltaTime); // tracers from the muzzle as drawn this frame
             _world.RebuildDirty();
+        }
+
+        /// <summary>Points in the tree canopies where birds sing (none on the movement course).</summary>
+        private static System.Collections.Generic.List<Vector3> Perches(MapInfo info)
+        {
+            var list = new System.Collections.Generic.List<Vector3>();
+            if (info == null) return list;
+            foreach (TreeInfo t in info.Trees)
+                if (t.Leaves.Count > 0)
+                    list.Add((t.Leaves[t.Leaves.Count / 2].ToUnity() + Vector3.one * 0.5f) * (float)SubGrid.SubSize);
+            return list;
         }
 
         /// <summary>Spawn spots on the 3x3 spawn pad, centre first.</summary>
