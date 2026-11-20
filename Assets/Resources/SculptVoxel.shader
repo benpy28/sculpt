@@ -40,6 +40,7 @@ Shader "SCULPT/Voxel"
             #pragma fragment frag
             #pragma multi_compile_fog
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "SculptNature.hlsl"
 
             CBUFFER_START(UnityPerMaterial)
                 float _Detail;
@@ -103,6 +104,7 @@ Shader "SCULPT/Voxel"
                 float4 positionOS : POSITION;
                 float4 color : COLOR;
                 float3 uv : TEXCOORD0;
+                float2 uv1 : TEXCOORD1; // x = material kind (0 stone, 1 ground, 2 bark, 3 leaves), y = depth below column top
                 float3 normalOS : NORMAL;
             };
 
@@ -114,17 +116,20 @@ Shader "SCULPT/Voxel"
                 float fogFactor : TEXCOORD1;
                 float3 positionWS : TEXCOORD2;
                 float3 normalWS : TEXCOORD3;
+                float2 kind : TEXCOORD4;
             };
 
             Varyings vert(Attributes i)
             {
                 Varyings o;
-                VertexPositionInputs p = GetVertexPositionInputs(i.positionOS.xyz);
-                o.positionCS = p.positionCS;
+                float3 ws = TransformObjectToWorld(i.positionOS.xyz);
+                if (i.uv1.x > 2.5) ws = NatureLeafSway(ws);
+                o.positionCS = TransformWorldToHClip(ws);
                 o.color = i.color;
                 o.uv = i.uv;
-                o.fogFactor = ComputeFogFactor(p.positionCS.z);
-                o.positionWS = p.positionWS;
+                o.kind = i.uv1;
+                o.fogFactor = ComputeFogFactor(o.positionCS.z);
+                o.positionWS = ws;
                 o.normalWS = TransformObjectToWorldNormal(i.normalOS);
                 return o;
             }
@@ -142,6 +147,16 @@ Shader "SCULPT/Voxel"
                 half3 drift = half3(1.0 + macro * 0.6, 1.0, 1.0 - macro * 0.6);
                 half3 c = i.color.rgb * (1.0 + _Detail * (1.0 - 0.6 * crystal) * (n - 0.5) * 2.0 - _Strata * strata * (1.0 - crystal))
                           * (1.0 - _SeamDarken * seam) * lerp(1.0 + macro * 2.0 * _Macro, 1.0, crystal) * lerp(drift, 1.0, crystal * 0.5 + 0.5);
+
+                // Nature (plains biome): natural ground, bark and leaves take their colour from SculptNature.hlsl; the
+                // vertex colour carries the fixed-sun shade and ambient occlusion only.
+                if (i.kind.x > 0.5 && crystal < 0.001)
+                {
+                    float3 Nn = normalize(i.normalWS);
+                    half3 pal = i.kind.x < 1.5 ? NatureGround(i.positionWS, Nn, i.kind.y)
+                              : i.kind.x < 2.5 ? NatureBark(i.positionWS, Nn) : NatureLeaves(i.positionWS, Nn);
+                    c = pal * i.color.rgb * (1.0 - _SeamDarken * seam);
+                }
 
                 // Sculpted pieces: amethyst crystal. Irregular facets (each tilts the light a little), glossy highlights
                 // and a soft fresnel rim from a fixed sun, brighter chamfered edges, and a slow inner glow. Opaque and
@@ -225,13 +240,17 @@ Shader "SCULPT/Voxel"
             #pragma fragment frag
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
-            struct Attributes { float4 positionOS : POSITION; };
+            #include "SculptNature.hlsl"
+
+            struct Attributes { float4 positionOS : POSITION; float2 uv1 : TEXCOORD1; };
             struct Varyings { float4 positionCS : SV_POSITION; };
 
             Varyings vert(Attributes i)
             {
                 Varyings o;
-                o.positionCS = TransformObjectToHClip(i.positionOS.xyz);
+                float3 ws = TransformObjectToWorld(i.positionOS.xyz);
+                if (i.uv1.x > 2.5) ws = NatureLeafSway(ws); // same sway as the colour pass, so depth matches
+                o.positionCS = TransformWorldToHClip(ws);
                 return o;
             }
 

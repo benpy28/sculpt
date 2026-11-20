@@ -52,9 +52,19 @@ namespace Sculpt.Game.World
         /// </summary>
         public ushort OnlyId;
 
+        /// <summary>Material kinds in uv1.x: the shader paints each its own way. Purely visual.</summary>
+        public const float KindStone = 0f, KindGround = 1f, KindWood = 2f, KindLeaves = 3f;
+
+        /// <summary>
+        /// Optional: anchor sub-cells drawn as bark (<see cref="KindWood"/>) or foliage (<see cref="KindLeaves"/>), from
+        /// the map's tree list. They stay anchors in Core: solid, unsculptable, bullet-stopping.
+        /// </summary>
+        public Dictionary<Int3, byte> Decor;
+
         private readonly List<Vector3> _verts = new List<Vector3>(16384);
         private readonly List<Color> _colors = new List<Color>(16384);
         private readonly List<Vector3> _uvs = new List<Vector3>(16384);
+        private readonly List<Vector2> _uv1 = new List<Vector2>(16384);
         private readonly List<Vector3> _normals = new List<Vector3>(16384);
         private readonly List<int> _tris = new List<int>(24576);
         // Read lazily: Unity forbids QualitySettings in constructors, and meshers are created from field initializers.
@@ -73,6 +83,7 @@ namespace Sculpt.Game.World
             _verts.Clear();
             _colors.Clear();
             _uvs.Clear();
+            _uv1.Clear();
             _normals.Clear();
             _tris.Clear();
 
@@ -103,6 +114,7 @@ namespace Sculpt.Game.World
             mesh.SetNormals(_normals);
             mesh.SetColors(_colors);
             mesh.SetUVs(0, _uvs);
+            mesh.SetUVs(1, _uv1);
             mesh.SetTriangles(_tris, 0, false);
             mesh.RecalculateBounds();
         }
@@ -122,7 +134,18 @@ namespace Sculpt.Game.World
             if (Hidden != null && Hidden.Count > 0 && Hidden.Contains(owner)) return;
             ushort ownerId = g.Get(owner);
             if (OnlyId != 0 && ownerId != OnlyId) return;
-            Color albedo = Lin(Albedo(ownerId, owner)) * Shade(f.Normal);
+            float kind = KindStone;
+            if (OnlyId == 0)
+            {
+                if (ownerId == SubId.Natural) kind = KindGround;
+                else if (ownerId == SubId.Anchor && Decor != null && Decor.TryGetValue(owner, out byte dk)) kind = dk;
+            }
+            // Ground and trees take their colour from the shader's palette; the vertex colour carries shade and AO only.
+            Color albedo = (kind != KindStone ? Color.white : Lin(Albedo(ownerId, owner))) * Shade(f.Normal);
+            // Ground: how far below the column's top this face's rock sits (grass lip, then soil, then rock).
+            int topY = owner.Y + 1;
+            if (kind == KindGround)
+                while (topY < owner.Y + 8 && g.Get(owner.X, topY, owner.Z) != SubId.Empty) topY++;
             albedo.a = 1f - (PieceReinforce != null && SubId.IsPiece(ownerId) ? Mathf.Clamp01(PieceReinforce(ownerId)) : 0f);
             // uv.y: 1 on sculptable rock (the shader draws the faint purple edge glow and the sculpt-mode overlay there).
             float sculptable = SubId.IsSculptable(ownerId) && owner.Y >= SubGrid.SculptMinY && owner.Y < 4 * SubGrid.TileSubs ? 1f : 0f;
@@ -146,6 +169,8 @@ namespace Sculpt.Game.World
                 ushort nid = g.Get(near);
                 float seam = nid != ownerId && (SubId.IsPiece(nid) || SubId.IsPiece(ownerId)) ? 1f : 0f;
                 _uvs.Add(new Vector3(seam, sculptable, crystal));
+                float depth = kind == KindGround ? Mathf.Clamp((float)(topY * SubGrid.SubSize - wv.Y), 0f, 2.4f) : 0f;
+                _uv1.Add(new Vector2(kind, depth));
             }
             // Core orders vertices so Cross(v1 - v0, v2 - v0) points outward, which is what Unity treats as front facing
             // (same axes, same cross product; the old mesher enforced the same rule).
