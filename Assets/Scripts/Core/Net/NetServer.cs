@@ -20,7 +20,13 @@ namespace Sculpt.Core.Net
         internal readonly InputCmd[] Ring;
         internal readonly bool[] Has;
         internal int NewestReceived = int.MinValue;
-        internal bool CarryJump, CarryCrouch, CarryRespawn;
+        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryToggle, CarrySculpt;
+        internal byte CarryWeapon;
+        internal InputCmd CarrySculptCmd;
+
+        // Sculpt confirm bookkeeping (client sequence numbers echoed in world events).
+        internal int PendingSeq = -1, BufferedSeq = -1;
+        internal int DeferredLock = int.MinValue;
 
         // Lead feedback: worst lead in the window.
         internal readonly int[] LeadByTick;
@@ -65,7 +71,24 @@ namespace Sculpt.Core.Net
         public IReadOnlyList<ServerPlayer> Players => _players;
 
         /// <summary>Optional: sculpt system whose bodies are kept in sync (shoves move them between ticks).</summary>
-        public SculptSystem Sculpt;
+        public SculptSystem Sculpt
+        {
+            get => _sculpt;
+            set
+            {
+                _sculpt = value;
+                if (value == null) return;
+                value.SetTick(Tick); // one clock: sculpt tick T is server tick T
+                foreach (var p in _players) value.AddPlayer(p.Body);
+                _opsSent = value.Pieces.Ops.Count;
+            }
+        }
+        private SculptSystem _sculpt;
+        private int _opsSent;
+        private int _eventsSeen;
+        private readonly List<WorldEvent> _worldEvents = new List<WorldEvent>();
+        private readonly List<PieceOp> _opsScratch = new List<PieceOp>();
+        private readonly List<WorldEvent> _leftEvents = new List<WorldEvent>();
 
         private readonly SendFn _send;
         private readonly List<ServerPlayer> _players = new List<ServerPlayer>();
@@ -125,6 +148,7 @@ namespace Sculpt.Core.Net
                 SpawnYaw = spawnYaw,
             });
             _send(connectionId, _w.ToArray(), true);
+            if (Sculpt != null) SendJoinState(p);
             return p;
         }
 
@@ -133,7 +157,12 @@ namespace Sculpt.Core.Net
             if (!_byConn.TryGetValue(connectionId, out var p)) return;
             _byConn.Remove(connectionId);
             _players.Remove(p);
-            Sculpt?.RemovePlayer(p.Id);
+            if (Sculpt != null)
+            {
+                if (p.PendingSeq >= 0 || Sculpt.PendingOf(p.Id) != null)
+                    _leftEvents.Add(new WorldEvent { Type = WorldEventType.Cancelled, PlayerId = p.Id, Seq = (byte)Math.Max(0, p.PendingSeq), Result = SculptResult.NoTarget, Piece = Sculpt.PendingOf(p.Id)?.Check.PieceId ?? 0 });
+                Sculpt.RemovePlayer(p.Id);
+            }
         }
 
         /// <summary>Handles one packet from a client. Malformed packets are dropped and counted, never thrown.</summary>
@@ -177,6 +206,9 @@ namespace Sculpt.Core.Net
                         if (c.Move.JumpPressed) p.CarryJump = true;
                         if (c.Move.CrouchPressed) p.CarryCrouch = true;
                         if (c.Respawn) p.CarryRespawn = true;
+                        if (c.Hand.SculptToggle) p.CarryToggle = true;
+                        if (c.Hand.WeaponKey != 0) p.CarryWeapon = c.Hand.WeaponKey;
+                        if (c.HasSculpt) { p.CarrySculpt = true; p.CarrySculptCmd = c; }
                         // Mark so redundant copies are not counted again.
                         p.Ring[idx] = c;
                         p.Has[idx] = true;
@@ -223,10 +255,29 @@ namespace Sculpt.Core.Net
             return any ? worst : Protocol.NoLead;
         }
 
-        /// <summary>Advances the world by one tick and sends snapshots.</summary>
+        /// <summary>
+        /// Advances the world by one tick and sends world deltas and snapshots. Order inside tick T (the client predicts
+        /// the same order): sculpt resolution, buffered confirms, flights and falls; then each player's hand and movement;
+        /// then that player's new sculpt confirm.
+        /// </summary>
         public void Step(List<MoveEvent> events = null)
         {
             Tick++;
+            _worldEvents.Clear();
+            _worldEvents.AddRange(_leftEvents);
+            _leftEvents.Clear();
+            if (Sculpt != null)
+            {
+                Sculpt.Step();
+                ConvertSculptEvents(true);
+                foreach (ServerPlayer p in _players)
+                {
+                    if (p.BufferedSeq < 0 || Sculpt.HasBufferedConfirm(p.Id)) continue;
+                    _worldEvents.Add(new WorldEvent { Type = WorldEventType.Rejected, PlayerId = p.Id, Seq = (byte)p.BufferedSeq, Result = SculptResult.Locked });
+                    p.BufferedSeq = -1;
+                }
+            }
+
             foreach (ServerPlayer p in _players)
             {
                 // Slots for ticks in the lead window must be cleared lazily; a slot is valid only if its tick matches.
@@ -246,6 +297,13 @@ namespace Sculpt.Core.Net
                 if (p.CarryJump) { cmd.Move.JumpPressed = true; p.CarryJump = false; }
                 if (p.CarryCrouch) { cmd.Move.CrouchPressed = true; p.CarryCrouch = false; }
                 if (p.CarryRespawn) { cmd.Respawn = true; p.CarryRespawn = false; }
+                if (p.CarryToggle) { cmd.Hand.SculptToggle = true; p.CarryToggle = false; }
+                if (p.CarryWeapon != 0) { if (cmd.Hand.WeaponKey == 0) cmd.Hand.WeaponKey = p.CarryWeapon; p.CarryWeapon = 0; }
+                if (p.CarrySculpt)
+                {
+                    if (!cmd.HasSculpt) { cmd.HasSculpt = true; cmd.SculptSeq = p.CarrySculptCmd.SculptSeq; cmd.Sculpt = p.CarrySculptCmd.Sculpt; }
+                    p.CarrySculpt = false;
+                }
                 p.LastCmd = cmd;
 
                 // Sculpt shoves move the shared body between ticks; friction drags and throw kicks add velocity.
@@ -256,15 +314,180 @@ namespace Sculpt.Core.Net
                     p.Body.Kick = Vec3d.Zero;
                 }
                 NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events);
+                if (p.DeferredLock != int.MinValue)
+                {
+                    HandRules.LockGun(ref p.State.Hand, p.DeferredLock);
+                    p.DeferredLock = int.MinValue;
+                }
                 PlayerMovement.WriteBody(p.State, Movement, p.Body);
+                if (cmd.HasSculpt && Sculpt != null) HandleConfirm(p, cmd);
 
                 int h = Tick % p.PosHistory.Length;
                 p.PosHistory[h] = p.State.Position;
                 p.PosHistoryTick[h] = Tick;
             }
 
+            if (Sculpt != null)
+            {
+                ConvertSculptEvents(false);
+                Sculpt.ClearEvents();
+                _eventsSeen = 0;
+                SendWorldDelta();
+            }
+
             if (Config.SnapshotEveryTicks <= 1 || Tick % Config.SnapshotEveryTicks == 0)
                 SendSnapshots();
+        }
+
+        // ================================================================ Sculpt
+
+        private void HandleConfirm(ServerPlayer p, in InputCmd cmd)
+        {
+            if (!p.State.Hand.CanConfirmSculpt)
+            {
+                _worldEvents.Add(new WorldEvent { Type = WorldEventType.Rejected, PlayerId = p.Id, Seq = cmd.SculptSeq, Result = SculptResult.NotInSculptMode });
+                return;
+            }
+            int old = p.BufferedSeq;
+            p.BufferedSeq = cmd.SculptSeq;
+            SculptCheck c = Sculpt.TryBegin(p.Body, cmd.Sculpt);
+            bool buffered = c.Result == SculptResult.Locked || c.Result == SculptResult.Busy;
+            if (!c.IsValid && !buffered)
+            {
+                p.BufferedSeq = old; // an older buffered confirm (if any) keeps waiting
+                _worldEvents.Add(new WorldEvent { Type = WorldEventType.Rejected, PlayerId = p.Id, Seq = cmd.SculptSeq, Result = c.Result });
+                return;
+            }
+            // A newer confirm replaces an older buffered one.
+            if (old >= 0 && old != cmd.SculptSeq)
+                _worldEvents.Add(new WorldEvent { Type = WorldEventType.Rejected, PlayerId = p.Id, Seq = (byte)old, Result = SculptResult.Busy });
+        }
+
+        /// <summary>Lock end for a windup that keeps the gun away: its completion, plus follow-through for a throw.</summary>
+        public static int GunLockUntil(SculptConfig cfg, in SculptCheck c, int startTick) =>
+            startTick + c.WindupTicks + (c.Type == SculptActionType.Throw ? cfg.ThrowFollowThroughTicks : 0);
+
+        private ServerPlayer FindById(int id)
+        {
+            foreach (var p in _players) if (p.Id == id) return p;
+            return null;
+        }
+
+        /// <summary>Turns new sculpt events into wire events, and applies their effects on players (gun lock, disarm).</summary>
+        private void ConvertSculptEvents(bool beforeMove)
+        {
+            var evs = Sculpt.Events;
+            int lastImpact = 0; // hits follow their impact event
+            for (; _eventsSeen < evs.Count; _eventsSeen++)
+            {
+                SculptEvent e = evs[_eventsSeen];
+                ServerPlayer p = FindById(e.PlayerId);
+                switch (e.Type)
+                {
+                    case SculptEventType.Began:
+                    {
+                        if (p == null) break;
+                        byte seq = (byte)Math.Max(0, p.BufferedSeq);
+                        p.PendingSeq = seq;
+                        p.BufferedSeq = -1;
+                        if (e.Check.LocksGun)
+                        {
+                            int until = GunLockUntil(Sculpt.Config, e.Check, e.Tick);
+                            if (beforeMove) p.DeferredLock = Math.Max(p.DeferredLock, until);
+                            else HandRules.LockGun(ref p.State.Hand, until);
+                        }
+                        _worldEvents.Add(BeganEvent(e, seq, p.Team));
+                        break;
+                    }
+                    case SculptEventType.Completed:
+                    case SculptEventType.Cancelled:
+                    {
+                        byte seq = (byte)Math.Max(0, p?.PendingSeq ?? 0);
+                        if (p != null) p.PendingSeq = -1;
+                        _worldEvents.Add(new WorldEvent
+                        {
+                            Type = e.Type == SculptEventType.Completed ? WorldEventType.Completed : WorldEventType.Cancelled,
+                            PlayerId = e.PlayerId, Seq = seq, Piece = e.Type == SculptEventType.Completed ? e.Check.PieceId : e.Piece, Result = e.Result,
+                        });
+                        break;
+                    }
+                    case SculptEventType.PieceLanded:
+                        _worldEvents.Add(new WorldEvent { Type = WorldEventType.Landed, Piece = e.Piece });
+                        break;
+                    case SculptEventType.PlayerShoved:
+                        _worldEvents.Add(new WorldEvent { Type = WorldEventType.Shoved, PlayerId = e.PlayerId, Piece = e.Piece });
+                        break;
+                    case SculptEventType.PlayerDragged:
+                        _worldEvents.Add(new WorldEvent { Type = WorldEventType.Dragged, PlayerId = e.PlayerId, Piece = e.Piece });
+                        break;
+                    case SculptEventType.Thrown:
+                    {
+                        ThrownPiece t = null;
+                        foreach (var x in Sculpt.Thrown) if (x.Id == e.Value) { t = x; break; }
+                        if (t != null) _worldEvents.Add(WorldEvent.FromProjectile(t, Tick));
+                        break;
+                    }
+                    case SculptEventType.ThrowImpact:
+                        lastImpact = e.Value;
+                        _worldEvents.Add(new WorldEvent { Type = WorldEventType.ThrowImpact, PlayerId = e.PlayerId, Piece = e.Piece, ProjectileId = e.Value, Point = e.Point });
+                        break;
+                    case SculptEventType.ThrowHit:
+                        if (p != null && e.Disarm > 0) HandRules.Disarm(ref p.State.Hand, Tick, e.Disarm);
+                        _worldEvents.Add(new WorldEvent { Type = WorldEventType.ThrowHit, PlayerId = e.PlayerId, Piece = e.Piece, ProjectileId = lastImpact, Value = e.Value, Disarm = e.Disarm, Point = e.Point });
+                        break;
+                }
+            }
+        }
+
+        private static WorldEvent BeganEvent(in SculptEvent e, byte seq, int team) => new WorldEvent
+        {
+            Type = WorldEventType.Began,
+            PlayerId = e.PlayerId,
+            Team = team,
+            Seq = seq,
+            Piece = e.Check.PieceId,
+            Action = e.Action.Type,
+            Direction = e.Action.Type == SculptActionType.Move ? e.Action.Direction : Dir.East,
+            Reinforce = e.Action.Reinforce,
+            StartTick = e.Tick,
+            WindupTicks = e.Check.WindupTicks,
+            Cost = e.Check.Cost,
+            LocksGun = e.Check.LocksGun,
+            EnemyReinforced = e.Check.EnemyReinforced,
+            Look = e.Action.Type == SculptActionType.Throw ? InputCmd.QuantizeVec(e.Action.LookDir) : Vec3d.Zero,
+            Warned = e.WarnedPlayers,
+        };
+
+        private void SendWorldDelta()
+        {
+            var ops = Sculpt.Pieces.Ops;
+            if (_worldEvents.Count == 0 && _opsSent >= ops.Count) return;
+            _opsScratch.Clear();
+            for (int k = _opsSent; k < ops.Count; k++) _opsScratch.Add(ops[k]);
+            _opsSent = ops.Count;
+            _w.Clear();
+            WorldProtocol.Write(_w, new WorldMsg { Tick = Tick, Ops = _opsScratch, Events = _worldEvents });
+            byte[] data = _w.ToArray();
+            foreach (ServerPlayer to in _players) _send(to.ConnectionId, data, true);
+        }
+
+        /// <summary>Late join: the whole op log, windups in progress, pieces in flight.</summary>
+        private void SendJoinState(ServerPlayer to)
+        {
+            var events = new List<WorldEvent>();
+            foreach (ServerPlayer o in _players)
+            {
+                PendingSculpt pend = Sculpt.PendingOf(o.Id);
+                if (pend == null) continue;
+                var e = new SculptEvent { Type = SculptEventType.Began, Tick = pend.StartTick, PlayerId = o.Id, Action = pend.Action, Check = pend.Check, WarnedPlayers = Array.Empty<int>() };
+                events.Add(BeganEvent(e, (byte)Math.Max(0, o.PendingSeq), o.Team));
+            }
+            foreach (ThrownPiece t in Sculpt.Thrown) events.Add(WorldEvent.FromProjectile(t, Tick));
+            var ops = new List<PieceOp>(Sculpt.Pieces.Ops.Count);
+            for (int k = 0; k < _opsSent && k < Sculpt.Pieces.Ops.Count; k++) ops.Add(Sculpt.Pieces.Ops[k]);
+            var w = new ByteWriter(4096);
+            WorldProtocol.Write(w, new WorldMsg { Tick = Tick, Join = true, Ops = ops, Events = events });
+            _send(to.ConnectionId, w.ToArray(), true);
         }
 
         private void SendSnapshots()
@@ -295,6 +518,7 @@ namespace Sculpt.Core.Net
                     SelfInputWasReal = to.LastCmdWasReal,
                     SelfLead = WorstLead(to),
                     Self = to.State,
+                    SelfBar = Sculpt != null ? Sculpt.BarOf(to.Id).Value : 0,
                     Others = _others,
                 });
                 _send(to.ConnectionId, _w.ToArray(), false);

@@ -34,6 +34,8 @@ namespace Sculpt.Core.Net
         public readonly ITerrain Grid;
         public readonly MovementConfig Movement;
         public readonly NetConfig Config;
+        /// <summary>Optional: networked sculpting on a sub-cell grid (prediction, server ops, windups, flights).</summary>
+        public readonly SculptClient Sculpt;
 
         public bool Joined { get; private set; }
         public int PlayerId { get; private set; }
@@ -70,9 +72,12 @@ namespace Sculpt.Core.Net
         private readonly List<InputCmd> _sendCmds = new List<InputCmd>(Protocol.MaxCmdsPerPacket);
         private readonly List<PlayerSnap> _snapOthers = new List<PlayerSnap>();
         private readonly List<InputCmd> _readScratch = new List<InputCmd>();
+        private readonly List<PieceOp> _worldOps = new List<PieceOp>();
+        private readonly List<WorldEvent> _worldEvents = new List<WorldEvent>();
 
         private readonly InputCmd[] _histCmd;
         private readonly MotorState[] _histState;
+        private readonly int[] _histLock; // gun lock a sculpt begin put on the hand after that tick's movement
         private readonly int[] _histTick;
         private readonly int _histMask;
 
@@ -85,7 +90,7 @@ namespace Sculpt.Core.Net
         private readonly Dictionary<int, RemoteTrack> _remotes = new Dictionary<int, RemoteTrack>();
         private readonly List<int> _removeScratch = new List<int>();
 
-        public NetClient(ITerrain grid, MovementConfig movement, NetConfig config, SendFn send)
+        public NetClient(ITerrain grid, MovementConfig movement, NetConfig config, SendFn send, SculptClient sculpt = null)
         {
             Grid = grid;
             Movement = movement;
@@ -96,6 +101,8 @@ namespace Sculpt.Core.Net
             _histCmd = new InputCmd[n];
             _histState = new MotorState[n];
             _histTick = new int[n];
+            _histLock = new int[n];
+            Sculpt = sculpt;
             _histMask = n - 1;
             ClearHistory();
         }
@@ -115,6 +122,10 @@ namespace Sculpt.Core.Net
                 switch (Protocol.PeekType(data, offset, count))
                 {
                     case MsgType.Welcome: OnWelcome(Protocol.ReadWelcome(ref r)); break;
+                    case MsgType.World:
+                        if (!Joined || Sculpt == null) return;
+                        Sculpt.OnWorld(WorldProtocol.Read(ref r, _worldOps, _worldEvents));
+                        break;
                     case MsgType.Snapshot:
                         if (!Joined) return;
                         OnSnapshot(Protocol.ReadSnapshot(ref r, _snapOthers));
@@ -146,6 +157,7 @@ namespace Sculpt.Core.Net
             _serverTime = m.ServerTick;
             _serverTimeValid = true;
             LastSnapshotTick = int.MinValue;
+            Sculpt?.Reset(m.PlayerId, m.Team, m.Spawn, Tick);
         }
 
         private void OnSnapshot(in SnapshotMsg m)
@@ -178,6 +190,7 @@ namespace Sculpt.Core.Net
 
             if (!m.HasSelf) return;
             LastInputWasRealOnServer = m.SelfInputWasReal;
+            Sculpt?.OnSelfBar(m.ServerTick, m.SelfBar);
             RttTicks += ((Tick - m.ServerTick - Math.Max(0, LastServerLead == Protocol.NoLead ? 0 : LastServerLead)) - RttTicks) * 0.1;
             AdjustClock(m.ServerTick, m.SelfLead);
             Reconcile(m.ServerTick, m.Self);
@@ -236,6 +249,7 @@ namespace Sculpt.Core.Net
                 if (_histTick[k] != t) break;
                 prev = s;
                 NetSim.Simulate(Grid, Movement, Config, ref s, _histCmd[k], Spawn, null);
+                if (_histLock[k] != int.MinValue) HandRules.LockGun(ref s.Hand, _histLock[k]);
                 _histState[k] = s;
             }
             _pred = s;
@@ -281,10 +295,18 @@ namespace Sculpt.Core.Net
         }
 
         /// <summary>Predicts one tick with this input and sends the newest commands to the server.</summary>
-        public void PredictTick(in MoveInput move, float pitchDegrees, bool respawn, List<MoveEvent> events)
+        public void PredictTick(in MoveInput move, float pitchDegrees, bool respawn, List<MoveEvent> events) =>
+            PredictTick(move, pitchDegrees, respawn, default, false, default, events);
+
+        /// <summary>
+        /// Predicts one tick with movement, hand presses and an optional sculpt confirm, and sends the newest commands.
+        /// Returns the sequence number given to the confirm (0 if none).
+        /// </summary>
+        public byte PredictTick(in MoveInput move, float pitchDegrees, bool respawn, in HandInput hand, bool confirm, in SculptAction sculpt, List<MoveEvent> events)
         {
-            if (!Joined) return;
+            if (!Joined) return 0;
             Tick++;
+            byte seq = confirm && Sculpt != null ? Sculpt.NextSeq() : (byte)0;
             double view = RemoteRenderTick;
             int viewTick = (int)Math.Floor(view);
             var cmd = InputCmd.Quantize(new InputCmd
@@ -295,17 +317,30 @@ namespace Sculpt.Core.Net
                 Respawn = respawn,
                 ViewTick = viewTick,
                 ViewFrac = (byte)Math.Max(0, Math.Min(255, (int)((view - viewTick) * 256))),
+                Hand = hand,
+                HasSculpt = seq != 0,
+                SculptSeq = seq,
+                Sculpt = sculpt,
             });
 
             _prevPred = _pred;
+            if (Sculpt != null)
+            {
+                Sculpt.SetRemoteBodies(this);
+                Sculpt.BeforeMove(Tick);
+            }
             NetSim.Simulate(Grid, Movement, Config, ref _pred, cmd, Spawn, events);
+            int lockUntil = Sculpt != null ? Sculpt.AfterMove(Tick, _pred, cmd) : int.MinValue;
+            if (lockUntil != int.MinValue) HandRules.LockGun(ref _pred.Hand, lockUntil);
 
             int i = Tick & _histMask;
             _histTick[i] = Tick;
             _histCmd[i] = cmd;
             _histState[i] = _pred;
+            _histLock[i] = lockUntil;
 
             SendInputs();
+            return seq;
         }
 
         private void SendInputs()

@@ -55,6 +55,8 @@ namespace Sculpt.Core
         PlayerBlocked,       // a player would have to be shoved into geometry
         Disturbed,           // the sub-cells changed during windup (resolution only)
         CannotThrowReinforced,
+        /// <summary>Network layer: the confirm arrived while the player was not (yet) in sculpt mode, or was disarmed.</summary>
+        NotInSculptMode,
     }
 
     /// <summary>Everything the client needs to draw the ghost, and the server needs to start the windup.</summary>
