@@ -42,6 +42,8 @@ This file is the source of truth for every thread. Update it whenever Ben change
 
 ## Design spec
 
+> **Terrain v2 (approved by Ben 2026-11-20, built in M3.5) supersedes the single-block grid below wherever they differ.** See the "Terrain v2" section after the sculpt bar. Shape (ramp) is removed for now; the F bind is free.
+
 ### World and grid
 - Blocks are 1.2 m cubes, world-axis aligned. Everything sits at 90 degrees to the grid; nothing is rotated off-grid.
 - Heights in levels: +1 is jumpable. +2 is full standing cover (blocks bullets and walking) but can be mantled. +3 is a hard wall.
@@ -59,7 +61,7 @@ This file is the source of truth for every thread. Update it whenever Ben change
   - Side face: LMB = push away (into that face), RMB = pull toward you (out of that face). Axis = face normal.
   - Top face: split into 4 triangles along its diagonals; the triangle under the crosshair picks the horizontal direction, highlighted with an arrow. LMB/RMB push/pull along that axis.
   - Scroll up = raise (add a block on top of the targeted column). Scroll down = sink (remove the top block of the targeted column).
-  - Hold Shape (default F) + LMB on a top-face triangle = make the block's top a ramp facing that direction, or back to flat if it already faces that way.
+  - ~~Shape (F) ramp action~~: removed for now (Ben, 2026-11-20). F is unbound.
   - Hold Reinforce (default Left Alt) while confirming = reinforced version of the action.
   - The direction press IS the confirm. No separate confirm step.
 - Push/pull moves the targeted block exactly one cell along the axis.
@@ -82,6 +84,19 @@ This file is the source of truth for every thread. Update it whenever Ben change
 - Costs: horizontal push/pull 5%, sink 7%, raise 10%, shape 5%, reinforce +15% on top of the base action.
 - Regen starts 1.5 s after the last sculpt, then refills 0 to 100% in 20 s.
 - Reinforced blocks: caster windup 0.35 s. An enemy changing a reinforced block needs 0.6 s windup and pays 2x normal cost. Reinforcement decays to normal after 20 s. Visual: crystalline veins, heavier sound, faint shimmer.
+
+### Terrain v2: sub-cells, pieces and throw (Ben approved 2026-11-20)
+Ben's constraint: "it cannot become a cube fighting game, its meant to feel proper 3D and detailed". Gameplay stays exact and integer; the look hides the grid.
+- **Sub-cells:** 0.3 m cubes, 4x4x4 per 1.2 m tile. Each stores a piece id (0 = empty). Anchors and bedrock are non-piece terrain. Chunks are 16^3 sub-cells.
+- **One surface for everything:** Core derives a chamfered surface from sub-cell occupancy (45 degree cuts on steps and edges, vertices on a 0.15 m lattice, fixed tie-break rules). The same surface is used for rendering, player collision and bullets: what you see is what you hit. Visual detail (rock materials, normal maps, per-piece colour, seam cracks, debris, dust) has no collision and never blocks sight; real geometry jitter at most ~2 cm. Rule: nothing hides a player without stopping bullets, nothing stops bullets without being visible. Fallback if collision is too slow under rollback: voxel-exact collision with visual bevels <= 4 cm.
+- **Heights:** levels stay 1.2 m as the design language. One sub-cell step (0.3 m) is walkable (it reads as a 45 degree slope). Jump clears up to 1.2 m, mantle up to 2.4 m, 2.7 m and up is a wall. In-between heights (0.9, 1.5, 2.1 m) are allowed (Ben: yes).
+- **Pieces:** a sculpt grabs the tile you aim at, grown up to one tile out in an irregular, non-rectangular shape that follows the terrain it starts from (connected rock at about the same height). Computed at aim time, deterministic, shown as a ghost outline before confirm. Typical ~2x2 tiles, max ~3x3 tiles across (Ben confirmed the 2x2 reading). The piece moves as one rigid unit. No drag-select.
+- **Actions:** push/pull moves a piece one tile (1.2 m); raise/sink moves by one level. Shape is removed.
+- **Scaling with size** (N = sub-cells, reference = a 2x2-tile, one-level piece): cost = base x N/ref clamped 0.5x..2x (reinforce +15% stays flat); windup = 12 ticks at or below ref, +1 tick per extra 1/8 of ref, max 20; reinforced windups stay as minimums. Reinforcement is per piece.
+- **Shove/carry:** same rules on the piece's real shape: lift onto the new surface if within one level, else shove at most one tile, else invalid. Never trapped.
+- **Support/gravity:** a piece stays up if at least a third of its underside rests on something (replaces "held only by the block directly below"). Unsupported pieces fall rigidly one level per 4 ticks, solved bottom-up in fixed order; a falling piece still waits above a player rather than crush them.
+- **Throw** (own bind): one non-reinforced piece at a time, launched along the full look direction with a slight upward lift. Starting numbers (tunable): windup 15 + N/4 ticks at one-tile scale; launch speed 22 - N/16 m/s; gravity 15 m/s^2 (~10 m range on flat); cost 10% + 0.25% per sub-cell at one-tile scale. Damage (20 + 0.6 N) x impact-speed factor (0.6..1.2), capped at 120. Slight splash, no friendly fire. Flight is fixed-point integer, client-predicted, server confirms impact. Breaks on first contact (terrain or player), destroyed, leaves the gap at launch. Throwing a piece someone stands on is allowed: they are pushed along the throw direction and drop off immediately, never ride it. Launch warning: shake and team-colour cracks, rising positional grind, directional warning for enemies in the lane (never purple). Number scaling to be re-based on the 2x2 reference piece and checked by the balance thread.
+- **Netcode:** grid deltas are piece operations (moved, raised, sunk, fell, thrown, impact) by piece id; clients rebuild the surface locally. Initial map from seed plus snapshot for late joiners. Movement prediction codes against a terrain query interface, not the grid type.
 
 ### Movement (first person, snappy, never floaty)
 - Run 6 m/s. Sprint 8.5 m/s (Left Shift), unlimited, can't shoot while sprinting, 0.15 s sprint-to-aim delay. Crouch walk 3 m/s.
@@ -111,10 +126,11 @@ This file is the source of truth for every thread. Update it whenever Ben change
 Riot shield + pistol (frontal block, no sprint or mantle, hip-fire pistol); special objects (bounce pad, mirror block, bridge segment, heavy block) using the same six directions plus Shape; lag compensation; replay/kill-cam and free spectator camera; matchmaking.
 
 ## Milestones
-- **M0** Repo and scaffolding: git, .gitignore, .gitattributes + LFS, CLAUDE.md, folders, Core asmdef, Core.Tests with one trivial test, bootstrap scene steps, push to private GitHub. **(current)**
+- **M0** Repo and scaffolding: git, .gitignore, .gitattributes + LFS, CLAUDE.md, folders, Core asmdef, Core.Tests with one trivial test, bootstrap scene steps, push to private GitHub. (done)
 - **M1** Core grid and sculpt rules: chunked storage, block types (empty, solid, ramp with facing, anchor), reinforcement state and decay, all sculpt actions and validation, gravity, shove/carry, sculpt bar economy, windup and tile locks. Thorough tests.
 - **M2** Core movement + offline playable: box-vs-grid collision incl. ramps, all movement states and tech, tests. Unity: chunk meshing with per-axis shading, test map (flat, raised blocks, ramps, 1/2/3-level walls), first-person controller driven by Core.
-- **M3** Networking: FishNet, server-authoritative, prediction/reconciliation, host mode, two players same machine or LAN, simulated latency and packet loss. Smooth at 100 ms simulated ping.
+- **M3** Networking: FishNet, server-authoritative, prediction/reconciliation, host mode, two players same machine or LAN, simulated latency and packet loss. Smooth at 100 ms simulated ping. (done on branch m3-networking; needs Ben's Unity check)
+- **M3.5** Terrain v2 (after M3, before M4): A) sub-cell storage, piece finder, surface kernel, geometry (box, ray, ground), tests; B) movement on a terrain query interface, port movement tests via a whole-tile map builder; C) sculpt system on pieces (port SculptTests/RulesTable/fuzz invariants, rewrite ramp tests, new piece/support/scaling tests); D) throw; E) Unity mesher, materials, debris.
 - **M4** Sculpt mode networked: inputs, visuals, ghost, windup and locks, bar UI, targeted warnings, server validation, delta sync.
 - **M5** Weapons networked: loadout, swaps, damage, falloff, accuracy states, health, death/respawn, hit markers.
 - **M6** Feel pass: audio, snap/overshoot, ripple, speed effects, compass, settings menu (FOV, sensitivity, rebinds, viewmodel size).
@@ -126,6 +142,7 @@ Assets/Scripts/Core/               Sculpt.Core asmdef, pure C#
 Assets/Scripts/Game/               Sculpt.Game asmdef, Unity layer
 Tests/Core.Tests/                  NUnit tests, dotnet test
 Tests/Core.Check/                  netstandard2.1 compile check of Core
+Tests/Game.Check/                  compile-only check of Game + Core + FishNet against the Editor DLLs (dotnet build Tests/Game.Check)
 ```
 
 ## Machine notes
@@ -134,11 +151,11 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 - .NET 8 SDK is a user-scope install at `%LOCALAPPDATA%\Microsoft\dotnet` (the one in Program Files is runtime only). Run it by full path with `DOTNET_ROOT` set to that folder.
 
 ## Agreed rules (proposed by Claude, approved by Ben 2026-11-20; change here if he overrides)
-1. Support: a block is held up only by the block directly below it. No overhangs.
+1. ~~Support: a block is held up only by the block directly below it. No overhangs.~~ Superseded by Terrain v2: a piece stays up if at least a third of its underside is supported.
 2. Height: base ground top = level 0. Column tops range -2..+4. Cells below -2 are bedrock. Raise past +4 / sink below -2 is invalid.
 3. Range: eye to nearest point of the targeted block, <= 6.0 m.
 4. Line of sight: clear ray from eye to the aimed point on the face.
-5. Ramps: wedge filling the cell. Clicked triangle = low edge (ramp rises away from that side). Only a column's top block can be a ramp; a block landing on a ramp flattens it.
+5. (Shape removed in Terrain v2; kept for reference.) Ramps: wedge filling the cell. Clicked triangle = low edge (ramp rises away from that side). Only a column's top block can be a ramp; a block landing on a ramp flattens it.
 6. Raise on a ramp column: ramp stays on top, solid added under it. Sink removes the ramp block; new top is flat.
 7. Shove: minimal displacement to clear the block, at most one cell.
 8. Windup: bar charged on confirm; re-validated at windup end; if invalid, cancel and refund. Source and destination cells both locked.
@@ -162,7 +179,7 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 - A reinforced sink with nothing sculptable left underneath is rejected (NothingToReinforce), at no cost.
 - Fixed in the same batch: a block landing on a ramp waits if flattening the ramp would overlap a player; an anchor holds what is on top of it but not what hangs under it; lifting re-checks both changed cells so a raised ramp column carries a crouched player on its lip.
 
-### Smaller calls made by Claude in M1 (tell Ben; change if he disagrees)
+### Smaller calls made by Claude in M1 (Ben: "looks good", 2026-11-20)
 - A falling block never enters a cell overlapping a player: it waits above until the cell is clear.
 - A stack with empty space under it falls together as one unit.
 - Raise treats the column's top block as the block being changed (for enemy reinforcement cost and windup).
@@ -172,7 +189,7 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 - Pushing a block horizontally does not drag a player standing on it; they fall through movement gravity.
 - Sculpt tint fades over 10 s (cosmetic, tunable).
 
-### Smaller calls made by Claude in M2 (tell Ben; change if he disagrees)
+### Smaller calls made by Claude in M2 (Ben: "looks good", 2026-11-20)
 - FOV setting is horizontal degrees defined at 16:9 (Hor+ on wider screens). Default 95.
 - Feel helpers: 5-tick coyote time and 6-tick jump buffer. Jump on an upward ramp adds the ramp's upward speed.
 - Air mantle: pressing jump while touching a ledge 0.3 to 2.45 m above your feet mantles (forgiving catch).
@@ -180,6 +197,19 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 - After a vault you're briefly airborne, so holding crouch through it turns into a slide-land.
 - Mouse look is applied every rendered frame (not per tick) for lowest latency; vsync off by default.
 - Rendering is unlit with baked per-axis shading and thin dark block edges (custom URP shader `SCULPT/Voxel`).
+
+### Netcode design and smaller calls made by Claude in M3 (tell Ben; change if he disagrees)
+- FishNet (free, 4.7.4, UPM git URL pinned to the tag) is used only as the transport: connections plus opaque byte packets over Tugboat UDP. No NetworkObjects or prefabs. All netcode is pure Core (`Assets/Scripts/Core/Net`) and unit-tested over a simulated lossy link.
+- Tick-aligned: a client command is tagged with the server tick it is for. The client clock runs ahead so commands arrive ~2 ticks early (server reports the worst lead over 1 s; client speeds up or slows down by up to 3%, or jumps when far off).
+- Each input packet repeats the newest 8 commands, so lost packets cost nothing. A missing command is replaced by the previous one with presses cleared; a press that arrives late is applied on the next tick, never dropped.
+- The client predicts with exactly the quantized command it sends and the server sends the full motor state every tick; any bitwise difference rewinds to the server state and replays. Only the drawn position is smoothed (80 ms); corrections over 2 m snap.
+- Remote players are drawn 3 ticks (50 ms) behind the newest snapshot, interpolated; at most 6 ticks of horizontal extrapolation when snapshots stop. A jump over 4 m (respawn) is never interpolated.
+- Server keeps 64 ticks of every player's position, and each command carries the tick the client was drawing others at, ready for lag compensation in M5.
+- Offline play runs a real local server too, so every mode uses the same prediction path. Host = that plus a FishNet server. Sim ping/loss/jitter apply to the local player's link in every mode (F8/F9/F10).
+- Respawn (R) is a command: the server applies it, the client predicts it. Falling below -30 m respawns on both sides.
+- Spawns: the 3x3 spawn pad, centre first; teams alternate 1, 2. Remote players are team-coloured boxes the size of their collision box (blue, orange; never purple) with a dark visor showing look direction.
+- Movement config is not synced yet: all players must run the same build. Live tuning in the Editor only affects that Editor's server and client.
+- Terrain is not networked in M3 (each side builds the same map). Sculpt/piece deltas come in M4 on top of terrain v2.
 
 ## Open questions
 - (none)

@@ -85,6 +85,8 @@ namespace Sculpt.Core
         Vaulted,
         MantleStarted,
         MantleFinished,
+        /// <summary>The player was put back at their spawn (respawn command or fell out of the world).</summary>
+        Respawned,
     }
 
     public struct MoveEvent

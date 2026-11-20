@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Compile-only check of the Unity layer (Sculpt.Game + Sculpt.Core + FishNet runtime) against the Editor's managed
+    DLLs, so code can be checked without focusing Unity. It is not a Unity build: no codegen, no IL post-processing.
+    Run:  dotnet build Tests/Game.Check
+    Needs: Unity 6000.4.1f1 installed (override UnityManaged), and FishNet imported once by Unity so it sits in
+    Library/PackageCache (override FishNetRuntime to point at a FishNet checkout's Assets/FishNet/Runtime instead).
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS0618;CS0649;CS0414;CS0169;CS0067;CS0168;CS0219;CS0162;CS1998;CS0108;CS0114;CS0109;CS8632;CS0436;CS0672;CS0612;CS0659;CS0661;CS0660</NoWarn>
+    <DefineConstants>UNITY_5_3_OR_NEWER;UNITY_2017_1_OR_NEWER;UNITY_2018_1_OR_NEWER;UNITY_2018_3_OR_NEWER;UNITY_2018_4_OR_NEWER;UNITY_2019_1_OR_NEWER;UNITY_2019_3_OR_NEWER;UNITY_2020_1_OR_NEWER;UNITY_2020_3_OR_NEWER;UNITY_2021_1_OR_NEWER;UNITY_2021_3_OR_NEWER;UNITY_2022_1_OR_NEWER;UNITY_2022_2_OR_NEWER;UNITY_2022_3_OR_NEWER;UNITY_2023_1_OR_NEWER;UNITY_2023_2_OR_NEWER;UNITY_2023_3_OR_NEWER;UNITY_6000_0_OR_NEWER;UNITY_6000_3_OR_NEWER;UNITY_STANDALONE_WIN;UNITY_STANDALONE;ENABLE_INPUT_SYSTEM;UNITYMATHEMATICS;UNITYMATHEMATICS_131;UNITYMATHEMATICS_132;UNITYAI</DefineConstants>
+    <ProjectRoot>$(MSBuildThisFileDirectory)..\..\</ProjectRoot>
+    <UnityManaged Condition="'$(UnityManaged)' == ''">C:\Program Files\Unity\Hub\Editor\6000.4.1f1\Editor\Data\Managed\</UnityManaged>
+    <ScriptAssemblies>$(ProjectRoot)Library\ScriptAssemblies\</ScriptAssemblies>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(FishNetRuntime)' == ''">
+    <Compile Include="$(ProjectRoot)Library\PackageCache\com.firstgeargames.fishnet@*\Runtime\**\*.cs"
+             Exclude="$(ProjectRoot)Library\PackageCache\com.firstgeargames.fishnet@*\Runtime\Plugins\Yak\**;$(ProjectRoot)Library\PackageCache\com.firstgeargames.fishnet@*\Runtime\Transporting\Transports\Synapse\**" />
+    <Reference Include="$(ProjectRoot)Library\PackageCache\com.firstgeargames.fishnet@*\Runtime\Plugins\CodeAnalysis\FishNet.CodeAnalysis.dll" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(FishNetRuntime)' != ''">
+    <Compile Include="$(FishNetRuntime)\**\*.cs" Exclude="$(FishNetRuntime)\Plugins\Yak\**;$(FishNetRuntime)\Transporting\Transports\Synapse\**" />
+    <Reference Include="$(FishNetRuntime)\Plugins\CodeAnalysis\FishNet.CodeAnalysis.dll" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(ProjectRoot)Assets\Scripts\Core\**\*.cs" />
+    <Compile Include="$(ProjectRoot)Assets\Scripts\Game\**\*.cs" />
+    <Reference Include="$(UnityManaged)UnityEngine\UnityEngine*.dll" />
+    <Reference Include="$(UnityManaged)Newtonsoft.Json.dll" />
+    <Reference Include="$(ScriptAssemblies)Unity.InputSystem.dll" />
+    <Reference Include="$(ScriptAssemblies)Unity.Mathematics.dll" />
+    <Reference Include="$(ScriptAssemblies)UnityEngine.UI.dll" />
+    <Reference Include="$(ScriptAssemblies)Unity.Burst.dll" />
+    <Reference Include="$(ScriptAssemblies)Unity.Collections.dll" />
+  </ItemGroup>
+</Project>
