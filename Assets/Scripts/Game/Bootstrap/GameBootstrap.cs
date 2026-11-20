@@ -108,11 +108,14 @@ namespace Sculpt.Game.Bootstrap
             _weapons.Init(_player, _session, _rig, firstPerson, client, movement);
 
             gameObject.AddComponent<DevHud>().Init(_player, client, _session);
+            _player.gameObject.AddComponent<MovementAudio>().Init(_player);
 
             var sculptView = new GameObject("Sculpt View").AddComponent<SculptView>();
-            sculptView.Init(_player, _session, _rig, _world);
+            sculptView.Init(_player, _session, _rig, _world, firstPerson.Shake);
             gameObject.AddComponent<SculptHud>().Init(_player, _session, sculptView, _rig.Camera);
             gameObject.AddComponent<CombatHud>().Init(_player, _session, _weapons, _rig.Camera);
+            gameObject.AddComponent<FeelHud>().Init(_player, client);
+            gameObject.AddComponent<SettingsMenu>().Init(_player, client, _input);
 
             ApplyCommandLine();
 
@@ -126,6 +129,7 @@ namespace Sculpt.Game.Bootstrap
             if (weaponSettings != null) weaponSettings.ApplyTo(_movement.Weapons); // live tuning in Play mode
 #endif
             _session.BeginFrame(dt);       // read network, run server ticks (offline/host), deliver snapshots
+            _player.Events.Clear();        // this frame's movement events (read in LateUpdate by HUD and audio)
             _player.SampleFrame();
 
             NetClient net = _session.Client;

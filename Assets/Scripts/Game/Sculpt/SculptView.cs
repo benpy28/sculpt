@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Sculpt.Core;
 using Sculpt.Core.Net;
+using Sculpt.Game.Audio;
 using Sculpt.Game.Cameras;
 using Sculpt.Game.Net;
 using Sculpt.Game.Player;
@@ -46,6 +47,9 @@ namespace Sculpt.Game.Sculpting
         private readonly PieceMesher _pieceMesher = new PieceMesher();
         private readonly Dictionary<long, List<Vector3>> _edgeCache = new Dictionary<long, List<Vector3>>();
         private readonly Dictionary<object, AudioSource> _hums = new Dictionary<object, AudioSource>();
+        private readonly Dictionary<object, AudioSource> _crystals = new Dictionary<object, AudioSource>();
+        private PieceSnap _snap;
+        private CameraShake _shake;
         private readonly Dictionary<object, List<Vec3d>> _lanes = new Dictionary<object, List<Vec3d>>();
         private readonly Dictionary<FlyingPiece, FlyView> _flying = new Dictionary<FlyingPiece, FlyView>();
         private readonly HashSet<object> _alive = new HashSet<object>();
@@ -80,8 +84,9 @@ namespace Sculpt.Game.Sculpting
         /// <summary>Recent "you are being sculpted / you are in a throw lane" warnings, newest last.</summary>
         public readonly List<Warning> Warnings = new List<Warning>();
 
-        public void Init(LocalPlayer player, NetSession session, CameraRig rig, WorldView world)
+        public void Init(LocalPlayer player, NetSession session, CameraRig rig, WorldView world, CameraShake shake = null)
         {
+            _shake = shake;
             _player = player;
             _session = session;
             _rig = rig;
@@ -112,6 +117,7 @@ namespace Sculpt.Game.Sculpting
             _ghostRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             _ghost.SetActive(false);
 
+            _snap = new PieceSnap(world, transform);
             _dust = MakeParticles("Dust", _particleMat, false);
             _debris = MakeParticles("Debris", _chipMat, true);
         }
@@ -136,7 +142,9 @@ namespace Sculpt.Game.Sculpting
             col.enabled = true;
             var g = new Gradient();
             g.SetKeys(new[] { new GradientColorKey(Color.white, 0), new GradientColorKey(Color.white, 1) },
-                      new[] { new GradientAlphaKey(1, 0), new GradientAlphaKey(chips ? 1 : 0.6f, 0.4f), new GradientAlphaKey(0, 1) });
+                      // Chips use the terrain shader, where vertex alpha means "reinforced": keep it at 1 (they just stop).
+                      chips ? new[] { new GradientAlphaKey(1, 0), new GradientAlphaKey(1, 1) }
+                            : new[] { new GradientAlphaKey(1, 0), new GradientAlphaKey(0.6f, 0.4f), new GradientAlphaKey(0, 1) });
             col.color = g;
             var size = ps.sizeOverLifetime;
             size.enabled = !chips;
@@ -194,6 +202,7 @@ namespace Sculpt.Game.Sculpting
             DrawRemoteWindups(sc, net);
             _lines.End();
             UpdateFlights(sc, net);
+            _snap.Update(Time.unscaledDeltaTime);
             ReapHums();
             Warnings.RemoveAll(w => Time.time - w.Time > 1.5f);
         }
@@ -202,6 +211,9 @@ namespace Sculpt.Game.Sculpting
         {
             foreach (var h in _hums.Values) if (h != null) Destroy(h.gameObject);
             _hums.Clear();
+            foreach (var h in _crystals.Values) if (h != null) Destroy(h.gameObject);
+            _crystals.Clear();
+            _snap?.Clear();
             foreach (var f in _flying.Values) { Destroy(f.Go); Destroy(f.Mesh); }
             _flying.Clear();
             _lanes.Clear();
@@ -254,7 +266,7 @@ namespace Sculpt.Game.Sculpting
                 float progress = Mathf.Clamp01((float)((net.Tick - s.BeginTick + net.Alpha) / Mathf.Max(1, s.Check.WindupTicks)));
                 Int3[] cells = s.Check.Cells;
                 DrawTell(s, cells, s.Action, team, progress, sc.LocalId, false, sc);
-                Hum(s, cells, s.Action.Type, progress, 0.35f);
+                Hum(s, cells, s.Action.Type, progress, 0.35f, s.Action.Reinforce || s.Check.EnemyReinforced);
             }
         }
 
@@ -270,7 +282,7 @@ namespace Sculpt.Game.Sculpting
                 float progress = Mathf.Clamp01((float)((serverNow - w.StartTick) / Mathf.Max(1, w.Check.WindupTicks)));
                 bool enemy = w.Team != sc.LocalTeam;
                 DrawTell(w, cells, w.Action, TeamColour(w.Team), progress, w.PlayerId, w.WarnsMe && enemy, sc);
-                Hum(w, cells, w.Action.Type, progress, enemy ? 1f : 0.6f);
+                Hum(w, cells, w.Action.Type, progress, enemy ? 1f : 0.6f, w.Action.Reinforce || w.Check.EnemyReinforced);
             }
         }
 
@@ -345,27 +357,38 @@ namespace Sculpt.Game.Sculpting
             }
         }
 
-        private void Hum(object key, Int3[] cells, SculptActionType type, float progress, float volume)
+        /// <summary>
+        /// The positional windup sound (enemies hear it): its timbre says the action, its pitch bends with progress
+        /// (a raise rises, a sink falls, a throw grinds upward), and a reinforced action adds a glassy layer.
+        /// </summary>
+        private void Hum(object key, Int3[] cells, SculptActionType type, float progress, float volume, bool reinforced)
         {
             _alive.Add(key);
             if (!_hums.TryGetValue(key, out AudioSource s) || s == null)
             {
-                var go = new GameObject("Sculpt Hum");
-                go.transform.SetParent(transform, false);
-                s = go.AddComponent<AudioSource>();
-                s.clip = type == SculptActionType.Throw ? SculptAudio.Grind : SculptAudio.Hum;
-                s.loop = true;
-                s.spatialBlend = 1f;
-                s.rolloffMode = AudioRolloffMode.Linear;
-                s.minDistance = 3f;
-                s.maxDistance = 40f;
-                s.dopplerLevel = 0f;
-                s.Play();
+                s = Synth.Loop("Sculpt Hum", transform, SculptAudio.HumFor(type), 3f, 40f);
+                s.time = Random.Range(0f, s.clip.length * 0.9f); // two hums never phase together
                 _hums[key] = s;
             }
-            s.transform.position = CellBounds(cells, Int3.Zero).center;
-            s.volume = volume * (0.5f + 0.5f * progress);
-            s.pitch = type == SculptActionType.Throw ? 0.7f + 0.9f * progress : 0.9f + 0.25f * progress;
+            Vector3 at = CellBounds(cells, Int3.Zero).center;
+            s.transform.position = at;
+            s.volume = volume * (0.45f + 0.55f * progress);
+            switch (type)
+            {
+                case SculptActionType.Throw: s.pitch = 0.7f + 0.9f * progress; break;
+                case SculptActionType.Raise: s.pitch = 0.85f + 0.4f * progress; break;
+                case SculptActionType.Sink: s.pitch = 1.1f - 0.35f * progress; break;
+                default: s.pitch = 0.95f + 0.15f * progress; break;
+            }
+            if (!reinforced) return;
+            if (!_crystals.TryGetValue(key, out AudioSource c) || c == null)
+            {
+                c = Synth.Loop("Sculpt Hum Crystal", transform, SculptAudio.HumCrystal, 3f, 40f);
+                _crystals[key] = c;
+            }
+            c.transform.position = at;
+            c.volume = volume * 0.8f * (0.6f + 0.4f * progress);
+            c.pitch = 0.9f + 0.2f * progress;
         }
 
         private void ReapHums()
@@ -377,6 +400,8 @@ namespace Sculpt.Game.Sculpting
                 if (_hums[k] != null) Destroy(_hums[k].gameObject);
                 _hums.Remove(k);
                 _lanes.Remove(k);
+                if (_crystals.TryGetValue(k, out AudioSource c) && c != null) Destroy(c.gameObject);
+                _crystals.Remove(k);
             }
         }
 
@@ -440,16 +465,16 @@ namespace Sculpt.Game.Sculpting
                 {
                     case ClientSculptEventType.LocalBegan:
                         ConfirmTime = Time.time;
-                        SculptAudio.Play(SculptAudio.Confirm, Vector3.zero, 0.6f, 1f, false);
+                        SculptAudio.Play(e.Reinforce ? SculptAudio.ConfirmHeavy : SculptAudio.Confirm, Vector3.zero, 0.6f, 1f, false);
                         break;
                     case ClientSculptEventType.LocalLanded:
-                        Landed(e.Cells, e.Team, true);
+                        if (e.Action != SculptActionType.Throw) { Landed(e.Cells, true, e.Reinforce); _snap.Snap(e.Cells, e.Delta); }
                         break;
                     case ClientSculptEventType.Completed:
-                        if (!e.Mine && e.Action != SculptActionType.Throw) Landed(e.Cells, e.Team, false);
+                        if (!e.Mine && e.Action != SculptActionType.Throw) { Landed(e.Cells, false, e.Reinforce); _snap.Snap(e.Cells, e.Delta); }
                         break;
                     case ClientSculptEventType.PieceLanded:
-                        Landed(e.Cells, e.Team, false);
+                        Landed(e.Cells, false, false);
                         break;
                     case ClientSculptEventType.Rejected:
                         RejectTime = Time.time;
@@ -476,13 +501,18 @@ namespace Sculpt.Game.Sculpting
             sc.Events.Clear();
         }
 
-        private void Landed(Int3[] cells, int team, bool mine)
+        private void Landed(Int3[] cells, bool mine, bool reinforced)
         {
             if (cells == null || cells.Length == 0) return;
             Bounds b = CellBounds(cells, Int3.Zero);
-            Dust(b, 1f);
+            Dust(b, reinforced ? 1.3f : 1f);
+            // Bigger pieces land deeper; a little random pitch so repeats never sound mechanical.
             float size = Mathf.Clamp01(cells.Length / 256f);
-            SculptAudio.Play(SculptAudio.Thunk, b.center, mine ? 0.9f : 1f, 1.15f - 0.3f * size, true);
+            float pitch = (1.12f - 0.3f * size) * Random.Range(0.96f, 1.04f);
+            SculptAudio.Play(reinforced ? SculptAudio.ThunkHeavy : SculptAudio.Thunk, b.center, mine ? 0.95f : 1f, pitch, true);
+            // Feel it when it is close: a short cosmetic camera roll (never pitch or yaw, so aim is untouched).
+            float dist = Vector3.Distance(b.center, _rig.Camera.transform.position);
+            if (dist < 8f && _shake != null) _shake.Roll += (Random.value < 0.5f ? -1f : 1f) * (reinforced ? 0.55f : 0.35f) * (1f - dist / 8f);
         }
 
         private void Dust(Bounds b, float amount)

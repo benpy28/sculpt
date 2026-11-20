@@ -17,6 +17,8 @@ namespace Sculpt.Game.Weapons
         private struct Shape
         {
             public float Len, Crack, CrackDecay, Thump, ThumpHi, ThumpLo, ThumpDecay, Tail, TailDecay, TailCutoff;
+            /// <summary>Mechanical action under the shot (bolt or slide cycling): level and delay in seconds.</summary>
+            public float Mech, MechAt;
         }
 
         private static readonly Shape[] Shapes =
@@ -24,11 +26,11 @@ namespace Sculpt.Game.Weapons
             // Pump: huge low body, long tail.
             new Shape { Len = 1.1f, Crack = 0.55f, CrackDecay = 45, Thump = 1.0f, ThumpHi = 95, ThumpLo = 36, ThumpDecay = 8, Tail = 0.55f, TailDecay = 3.6f, TailCutoff = 0.06f },
             // SMG: short, snappy, less body.
-            new Shape { Len = 0.4f, Crack = 0.7f, CrackDecay = 85, Thump = 0.42f, ThumpHi = 170, ThumpLo = 75, ThumpDecay = 30, Tail = 0.25f, TailDecay = 11, TailCutoff = 0.12f },
+            new Shape { Len = 0.4f, Crack = 0.7f, CrackDecay = 85, Thump = 0.42f, ThumpHi = 170, ThumpLo = 75, ThumpDecay = 30, Tail = 0.25f, TailDecay = 11, TailCutoff = 0.12f, Mech = 0.22f, MechAt = 0.028f },
             // AR: punchy crack and a solid thump.
-            new Shape { Len = 0.75f, Crack = 0.8f, CrackDecay = 70, Thump = 0.72f, ThumpHi = 135, ThumpLo = 48, ThumpDecay = 15, Tail = 0.36f, TailDecay = 5.5f, TailCutoff = 0.08f },
+            new Shape { Len = 0.75f, Crack = 0.8f, CrackDecay = 70, Thump = 0.72f, ThumpHi = 135, ThumpLo = 48, ThumpDecay = 15, Tail = 0.36f, TailDecay = 5.5f, TailCutoff = 0.08f, Mech = 0.26f, MechAt = 0.036f },
             // Pistol: sharp crack, medium body.
-            new Shape { Len = 0.55f, Crack = 0.85f, CrackDecay = 95, Thump = 0.55f, ThumpHi = 185, ThumpLo = 70, ThumpDecay = 22, Tail = 0.26f, TailDecay = 7.5f, TailCutoff = 0.1f },
+            new Shape { Len = 0.55f, Crack = 0.85f, CrackDecay = 95, Thump = 0.55f, ThumpHi = 185, ThumpLo = 70, ThumpDecay = 22, Tail = 0.26f, TailDecay = 7.5f, TailCutoff = 0.1f, Mech = 0.3f, MechAt = 0.022f },
         };
 
         public static AudioClip Shot(Weapon w)
@@ -47,7 +49,8 @@ namespace Sculpt.Game.Weapons
                 float thump = s.Thump * Mathf.Sin(phase) * Mathf.Exp(-t * s.ThumpDecay);
                 lp += (Noise(n + 7919) - lp) * s.TailCutoff;
                 float tail = s.Tail * lp * 3f * Mathf.Exp(-t * s.TailDecay) * Mathf.Min(1f, t * 200f);
-                return Soft(crack + thump + tail);
+                float mech = s.Mech > 0 ? s.Mech * (Clack(t, s.MechAt, 1f, n) + Clack(t, s.MechAt + 0.03f, 0.6f, n + 31)) : 0f;
+                return Soft(crack + thump + tail + mech);
             });
         }
 

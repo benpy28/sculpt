@@ -14,6 +14,10 @@ Shader "SCULPT/Voxel"
         [HideInInspector] _SculptEye ("Sculpt Eye", Vector) = (0, 0, 0, 0)
         [HideInInspector] _SculptRange ("Sculpt Range", Float) = 6
         [HideInInspector] _SculptRipple ("Sculpt Ripple Radius", Float) = 100
+        [HideInInspector] _SculptRippleGlow ("Sculpt Ripple Afterglow", Range(0, 1)) = 0
+        _VeinColor ("Reinforced Vein Colour", Color) = (0.86, 0.95, 1.0, 1)
+        _VeinScale ("Reinforced Vein Scale (per metre)", Range(0.5, 6)) = 1.7
+        _VeinStrength ("Reinforced Vein Strength", Range(0, 1)) = 0.6
     }
 
     SubShader
@@ -43,6 +47,10 @@ Shader "SCULPT/Voxel"
                 float4 _SculptEye;
                 float _SculptRange;
                 float _SculptRipple;
+                float _SculptRippleGlow;
+                float4 _VeinColor;
+                float _VeinScale;
+                float _VeinStrength;
             CBUFFER_END
 
             float Hash3(float3 p)
@@ -103,6 +111,21 @@ Shader "SCULPT/Voxel"
                 seam = seam * seam;
                 half3 c = i.color.rgb * (1.0 + _Detail * (n - 0.5) * 2.0 - _Strata * strata) * (1.0 - _SeamDarken * seam);
 
+                // Reinforced pieces (1 - vertex alpha): crystalline veins through the rock with a faint travelling
+                // shimmer and sparse glints. Pale ice white, never purple. Visual only.
+                float reinf = saturate(1.0 - i.color.a);
+                if (reinf > 0.001)
+                {
+                    float3 vw = i.positionWS * _VeinScale;
+                    float r1 = 1.0 - abs(Noise3(vw) * 2.0 - 1.0);
+                    float r2 = 1.0 - abs(Noise3(vw * 2.3 + 7.7) * 2.0 - 1.0);
+                    float vein = smoothstep(0.90, 0.985, r1) + 0.6 * smoothstep(0.93, 0.99, r2);
+                    float shimmer = 0.5 + 0.5 * sin(_Time.y * 2.6 + dot(i.positionWS, float3(1.3, 2.1, 0.9)) * 1.7);
+                    float glint = step(0.996, Hash3(floor(i.positionWS * 14.0) + floor(_Time.y * 5.0)));
+                    c = lerp(c, _VeinColor.rgb, saturate(vein) * _VeinStrength * reinf * (0.65 + 0.35 * shimmer));
+                    c += _VeinColor.rgb * (0.05 * shimmer + 0.5 * glint) * reinf;
+                }
+
                 // Sculpt overlay (local to this player's terrain material; players and enemies use other materials).
                 // Purple means "sculptable" and nothing else: chamfered edges of sculptable rock within range glow faintly,
                 // brighter in sculpt mode, with a ripple on entering; out-of-range rock dims, non-sculptables desaturate.
@@ -115,6 +138,7 @@ Shader "SCULPT/Voxel"
                 c += purple * edge * sculptable * inRange * (_SculptGlow + 0.30 * _SculptMode);
                 float band = exp(-pow((d - _SculptRipple) / 0.45, 2.0)) * step(_SculptRipple, _SculptRange + 0.6);
                 c += purple * band * sculptable * 0.55 * _SculptMode;
+                c += purple * sculptable * inRange * step(d, _SculptRipple) * (0.10 + 0.25 * edge) * _SculptRippleGlow;
                 float lum = dot(c, half3(0.3, 0.59, 0.11));
                 c = lerp(c, lerp(c, lum.xxx, 0.5 * (1.0 - sculptable)), _SculptMode);
                 c *= lerp(1.0, lerp(0.72, 1.0, inRange), _SculptMode * sculptable);

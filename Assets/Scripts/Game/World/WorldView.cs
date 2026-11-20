@@ -29,6 +29,29 @@ namespace Sculpt.Game.World
         private static readonly int IdRipple = Shader.PropertyToID("_SculptRipple");
 
         public Material Material => _material;
+        public SubGrid Grid => _grid;
+
+        /// <summary>Reinforced veins ease out over the last 3 s before the reinforcement decays.</summary>
+        public const int ReinforceFadeTicks = 180;
+
+        private readonly HashSet<Int3> _hidden = new HashSet<Int3>();
+        private static readonly int IdRippleGlow = Shader.PropertyToID("_SculptRippleGlow");
+
+        /// <summary>Stop drawing these sub-cells (a landing being animated separately). Rebuilds their chunks now.</summary>
+        public void Hide(IList<Int3> cells)
+        {
+            if (_grid == null || cells == null) return;
+            foreach (var c in cells) { _hidden.Add(c); _grid.MarkDirty(c); }
+            RebuildDirty();
+        }
+
+        /// <summary>Draw these sub-cells again.</summary>
+        public void Unhide(IList<Int3> cells)
+        {
+            if (_grid == null || cells == null) return;
+            foreach (var c in cells) if (_hidden.Remove(c)) _grid.MarkDirty(c);
+            RebuildDirty();
+        }
 
         public void Init(SubGrid grid, SculptConfig sculpt)
         {
@@ -48,6 +71,9 @@ namespace Sculpt.Game.World
         {
             _sculpt = sculpt;
             _mesher.PieceTint = sculpt == null ? (System.Func<ushort, (int, float)>)null : id => sculpt.TintOf(id, sculpt.Tick);
+            _mesher.PieceReinforce = sculpt == null ? (System.Func<ushort, float>)null : id => sculpt.ReinforceOf(id, sculpt.Tick, ReinforceFadeTicks);
+            _mesher.Hidden = _hidden;
+            _hidden.Clear();
             if (_grid == null || grid.ChunkCount != _grid.ChunkCount || grid.ChunksX != _grid.ChunksX)
             {
                 if (_chunkObjects != null) foreach (var go in _chunkObjects) Destroy(go);
@@ -94,11 +120,16 @@ namespace Sculpt.Game.World
             _tintTimer += Time.unscaledDeltaTime;
             if (_tintTimer < 0.5f) return;
             _tintTimer = 0;
+            int tick = _sculpt.Tick;
             foreach (PieceInfo p in _sculpt.Mirror.Pieces.All)
             {
-                if (p.Team == 0) continue;
-                int age = _sculpt.Tick - p.TintTick;
-                if (age < 0 || age > _sculpt.Config.TintFadeTicks + 40) continue;
+                if (p.Cells.Count == 0) continue;
+                int age = tick - p.TintTick;
+                bool tintFading = p.Team != 0 && age >= 0 && age <= _sculpt.Config.TintFadeTicks + 40;
+                // Reinforcement: re-mesh while the veins ease out, and once more just after it decays.
+                int toEnd = p.ReinforceUntilTick - tick;
+                bool veinsFading = p.ReinforceTeam != 0 && toEnd > -40 && toEnd < ReinforceFadeTicks + 30;
+                if (!tintFading && !veinsFading) continue;
                 // One sub-cell per 8 is plenty to touch every chunk the piece is in.
                 for (int k = 0; k < p.Cells.Count; k += 8) _grid.MarkDirty(p.Cells[k]);
                 _grid.MarkDirty(p.Cells[p.Cells.Count - 1]);
@@ -114,6 +145,9 @@ namespace Sculpt.Game.World
             _mode = Mathf.MoveTowards(_mode, inSculptMode ? 1f : 0f, Time.unscaledDeltaTime / 0.08f);
             float t = (Time.unscaledTime - _rippleStart) / 0.1f; // spreads to the range edge over ~0.1 s
             float ripple = t < 0 || t > 1.6f ? 100f : t * (range + 0.5f);
+            // Afterglow: sculptables the ripple has passed stay lit, fading over ~0.35 s.
+            float glow = t < 0 ? 0f : Mathf.Clamp01(1f - (t - 1f) / 3.5f);
+            _material.SetFloat(IdRippleGlow, glow * _mode);
             _material.SetFloat(IdMode, _mode);
             _material.SetVector(IdEye, eye);
             _material.SetFloat(IdRange, range);

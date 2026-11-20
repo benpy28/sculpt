@@ -91,17 +91,22 @@ namespace Sculpt.Game.UI
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(1e-4f, Time.unscaledDeltaTime), 0.05f);
             var kb = Keyboard.current;
             if (kb == null || _settings == null) return;
+            if (_player.InputBlocked) return; // the settings menu or the join box has the keyboard
             bool changed = false;
             if (kb.f1Key.wasPressedThisFrame) _show = !_show;
             if (kb.f2Key.wasPressedThisFrame) { _settings.Fov = Mathf.Clamp(_settings.Fov - 5, 60, 120); changed = true; }
             if (kb.f3Key.wasPressedThisFrame) { _settings.Fov = Mathf.Clamp(_settings.Fov + 5, 60, 120); changed = true; }
             if (kb.f4Key.wasPressedThisFrame) { _settings.Sensitivity = Mathf.Max(0.1f, _settings.Sensitivity - 0.1f); changed = true; }
-            if (kb.f5Key.wasPressedThisFrame) { _settings.Sensitivity += 0.1f; changed = true; }
+            if (kb.f5Key.wasPressedThisFrame) { _settings.Sensitivity = Mathf.Min(10f, _settings.Sensitivity + 0.1f); changed = true; }
             if (kb.f6Key.wasPressedThisFrame) { _settings.HeadBob = !_settings.HeadBob; changed = true; }
             if (kb.f7Key.wasPressedThisFrame) { _settings.SpeedFovKick = !_settings.SpeedFovKick; changed = true; }
             if (changed) _settings.Save();
             NetKeys(kb);
+        }
 
+        private void LateUpdate()
+        {
+            if (_player == null) return;
             NetClient net = _session.Client;
             _corrWindowTime += Time.unscaledDeltaTime;
             if (_corrWindowTime >= 1f)
@@ -119,7 +124,6 @@ namespace Sculpt.Game.UI
                 _lastEvent = e.Type == MoveEventType.Landed ? $"Landed: {e.Amount:0.0} levels, {e.Value} dmg" : e.Type.ToString();
                 _lastEventTime = Time.time;
             }
-            _player.Events.Clear();
         }
 
         private void OnGUI()
@@ -144,14 +148,14 @@ namespace Sculpt.Game.UI
                 $"\nFOV {_settings.Fov:0} (F2/F3)   Sens {_settings.Sensitivity:0.0} (F4/F5)\n" +
                 $"Head bob {(_settings.HeadBob ? "on" : "off")} (F6)   Speed FOV kick {(_settings.SpeedFovKick ? "on" : "off")} (F7)\n" +
                 "Q sculpt (LMB push, RMB pull, wheel raise/sink, hold Alt reinforce, E throw)   1-4 weapons\n" +
-                "R respawn   Esc free mouse   F1 hide\n\n" + NetText();
+                "R respawn   Esc settings menu (FOV, sensitivity, binds, volume)   F1 hide\n\n" + NetText();
             var r = new Rect(12, 10, 640, 480);
             var shadow = new GUIStyle(_style);
             shadow.normal.textColor = new Color(0, 0, 0, 0.8f);
             GUI.Label(new Rect(r.x + 1, r.y + 1, r.width, r.height), text, shadow);
             GUI.Label(r, text, _style);
 
-            if (!_player.CursorLocked && !_joinBox)
+            if (!_player.CursorLocked && !_player.InputBlocked)
                 GUI.Label(new Rect(Screen.width / 2f - 120, Screen.height / 2f + 30, 300, 30), "Click to capture the mouse", _style);
             if (_joinBox) DrawJoinBox();
         }

@@ -75,7 +75,7 @@ namespace Sculpt.Game.Player
             LockCursor(true);
         }
 
-        private static void LockCursor(bool locked)
+        public static void LockCursor(bool locked)
         {
             Cursor.lockState = locked ? CursorLockMode.Locked : CursorLockMode.None;
             Cursor.visible = !locked;
@@ -101,9 +101,8 @@ namespace Sculpt.Game.Player
                 RenderFeet = Net.Predicted.Position.ToUnity();
             }
 
-            var kb = Keyboard.current;
+            // Esc opens the settings menu (SettingsMenu frees the cursor and blocks input while it is open).
             var mouse = Mouse.current;
-            if (kb != null && kb.escapeKey.wasPressedThisFrame) LockCursor(false);
             bool clickToLock = !CursorLocked && !InputBlocked && mouse != null && mouse.leftButton.wasPressedThisFrame;
             if (clickToLock) LockCursor(true);
 

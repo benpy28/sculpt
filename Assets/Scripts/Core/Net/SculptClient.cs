@@ -46,6 +46,8 @@ namespace Sculpt.Core.Net
         public int Value;
         public SculptResult Result;
         public bool Mine;
+        /// <summary>The action reinforces the piece, or breaks an enemy's reinforcement (heavier sound and look).</summary>
+        public bool Reinforce;
     }
 
     /// <summary>A windup you started, predicted on this client. Applied to your grid at CompleteTick; the server answers later.</summary>
@@ -305,7 +307,7 @@ namespace Sculpt.Core.Net
                     Events.Add(new ClientSculptEvent
                     {
                         Type = ClientSculptEventType.LocalLanded, PlayerId = LocalId, Team = LocalTeam, Action = s.Action.Type, Direction = s.Action.Direction,
-                        Piece = s.PieceId, Cells = CellsNow(s), Delta = s.Check.Delta, Mine = true,
+                        Piece = s.PieceId, Cells = CellsNow(s), Delta = s.Check.Delta, Mine = true, Reinforce = s.Action.Reinforce,
                     });
                 }
             }
@@ -398,7 +400,7 @@ namespace Sculpt.Core.Net
             Events.Add(new ClientSculptEvent
             {
                 Type = ClientSculptEventType.LocalBegan, PlayerId = LocalId, Team = LocalTeam, Action = a.Type, Direction = a.Direction,
-                Piece = c.PieceId, Cells = c.Cells, Delta = c.Delta, Value = c.WindupTicks, Mine = true,
+                Piece = c.PieceId, Cells = c.Cells, Delta = c.Delta, Value = c.WindupTicks, Mine = true, Reinforce = a.Reinforce || c.EnemyReinforced,
             });
             return c.LocksGun ? NetServer.GunLockUntil(Config, c, tick) : int.MinValue;
         }
@@ -625,7 +627,7 @@ namespace Sculpt.Core.Net
                     Events.Add(new ClientSculptEvent
                     {
                         Type = ClientSculptEventType.Began, PlayerId = e.PlayerId, Team = e.Team, Action = e.Action, Direction = e.Direction,
-                        Piece = e.Piece, Cells = cells, Delta = check.Delta, Value = e.WindupTicks, Mine = mine,
+                        Piece = e.Piece, Cells = cells, Delta = check.Delta, Value = e.WindupTicks, Mine = mine, Reinforce = e.Reinforce || e.EnemyReinforced,
                     });
                     if (warns)
                         Events.Add(new ClientSculptEvent { Type = ClientSculptEventType.Warned, PlayerId = e.PlayerId, Team = e.Team, Action = e.Action, Direction = e.Direction, Piece = e.Piece, Cells = cells });
@@ -677,7 +679,7 @@ namespace Sculpt.Core.Net
                         Type = done ? ClientSculptEventType.Completed : ClientSculptEventType.Cancelled,
                         PlayerId = e.PlayerId, Team = w?.Team ?? 0, Action = w?.Action.Type ?? SculptActionType.Move, Direction = w?.Action.Direction ?? Dir.East,
                         Piece = e.Piece, Cells = pi != null ? pi.Cells.ToArray() : (w?.Check.Cells ?? Array.Empty<Int3>()), Delta = w?.Check.Delta ?? Int3.Zero,
-                        Result = e.Result, Mine = mine,
+                        Result = e.Result, Mine = mine, Reinforce = w != null && (w.Action.Reinforce || w.Check.EnemyReinforced),
                     });
                     break;
                 }
@@ -761,6 +763,18 @@ namespace Sculpt.Core.Net
                 case SculptActionType.Sink: return new Int3(0, -SubGrid.TileSubs, 0);
                 default: return Int3.Zero;
             }
+        }
+
+        /// <summary>
+        /// Reinforcement for drawing (crystalline veins and shimmer): 1 while reinforced, easing to 0 over the last
+        /// <paramref name="fadeTicks"/> before it decays, so you can read when it is about to run out. 0 if not reinforced.
+        /// </summary>
+        public float ReinforceOf(ushort id, int tick, int fadeTicks = 180)
+        {
+            PieceInfo p = Mirror.Pieces.Get(id);
+            if (p == null || !p.IsReinforced(tick)) return 0f;
+            float k = (p.ReinforceUntilTick - tick) / (float)Math.Max(1, fadeTicks);
+            return k > 1 ? 1f : (k < 0.25f ? 0.25f : k);
         }
 
         /// <summary>Tint for drawing: the piece's team and 1..0 as it fades.</summary>

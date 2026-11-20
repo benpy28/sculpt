@@ -31,6 +31,15 @@ namespace Sculpt.Game.World
         /// <summary>Optional: returns (team, 0..1 strength) for a piece's fading tint.</summary>
         public System.Func<ushort, (int team, float strength)> PieceTint;
 
+        /// <summary>Optional: 0..1 reinforcement of a piece (crystalline veins in the shader), stored as 1 - vertex alpha.</summary>
+        public System.Func<ushort, float> PieceReinforce;
+
+        /// <summary>
+        /// Optional: sub-cells not drawn right now (a piece whose landing is being animated by a separate mesh for a few
+        /// frames). Visual only; collision and bullets always use the real grid.
+        /// </summary>
+        public HashSet<Int3> Hidden;
+
         /// <summary>Flag sculptable faces in uv.y (off for ghosts and flying pieces).</summary>
         public bool MarkSculptable = true;
 
@@ -97,9 +106,10 @@ namespace Sculpt.Game.World
             Vec3d worldMin = TerrainShape.CellMin(vx, vy, vz);
             Vec3d centroid = worldMin + cw * TerrainShape.H;
             Int3 owner = TerrainGeometry.NearestOccupied(cfg, vx, vy, vz, centroid);
+            if (Hidden != null && Hidden.Count > 0 && Hidden.Contains(owner)) return;
             ushort ownerId = g.Get(owner);
             Color albedo = Lin(Albedo(ownerId, owner)) * Shade(f.Normal);
-            albedo.a = 1;
+            albedo.a = 1f - (PieceReinforce != null && SubId.IsPiece(ownerId) ? Mathf.Clamp01(PieceReinforce(ownerId)) : 0f);
             // uv.y: 1 on sculptable rock (the shader draws the faint purple edge glow and the sculpt-mode overlay there).
             float sculptable = SubId.IsSculptable(ownerId) && owner.Y >= SubGrid.SculptMinY && owner.Y < 4 * SubGrid.TileSubs ? 1f : 0f;
             if (!MarkSculptable) sculptable = 0f;

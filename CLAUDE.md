@@ -148,7 +148,7 @@ Riot shield + pistol (frontal block, no sprint or mantle, hip-fire pistol); spec
 - **M3.5** Terrain v2 (after M3, before M4): A) sub-cell storage, piece finder, surface kernel, geometry (box, ray, ground), tests; B) movement on a terrain query interface, port movement tests via a whole-tile map builder; C) sculpt system on pieces (port SculptTests/RulesTable/fuzz invariants, rewrite ramp tests, new piece/support/scaling tests); D) throw; E) Unity mesher, materials, debris. (Core done on branch m3.5-terrain-v2 with 174 tests; Unity mesher, rock shader and the generated arena done but not yet seen in the Editor; debris/dust particles move to M4 with the sculpt visuals.)
 - **M4** Sculpt mode networked: inputs, visuals, ghost, windup and locks, bar UI, targeted warnings, server validation, delta sync. (done on branch m4-sculpt-net with 237 Core tests; Game layer compile-checked, not yet seen in the Editor)
 - **M5** Weapons networked: loadout, swaps, damage, falloff, accuracy states, health, death/respawn, hit markers. (done on branch m5-weapons with 285 Core tests, lag-compensated rewind included; ISSUE-8 and ISSUE-9 fixed; Game layer compile-checked, not yet seen in the Editor)
-- **M6** Feel pass: audio, snap/overshoot, ripple, speed effects, compass, settings menu (FOV, sensitivity, rebinds, viewmodel size).
+- **M6** Feel pass: audio, snap/overshoot, ripple, speed effects, compass, settings menu (FOV, sensitivity, rebinds, viewmodel size). (done on branch m6-feel with ISSUE-10 and ISSUE-11 fixed; Game layer compile-checked, not yet seen or heard in the Editor). Last roadmap milestone: next steps are Ben's play-test and his answers to the open questions.
 
 ## Repo layout
 ```
@@ -267,6 +267,17 @@ Tests/Game.Check/                  compile-only check of Game + Core + FishNet a
 - Health 150, fall damage now applied (predicted), throw hits count toward health. Dead players are frozen, invisible and out of the world (their sculpt body is parked far below), and respawn at their spawn after 3 s with full health (dev arena only; 5v5 will be one life per round). R still respawns instantly (dev key).
 - No ammo or reload, and the Aim button (RMB) has no zoom: neither is in the spec (see open questions). Sounds, viewmodels and effects are placeholders generated in code until M6.
 
+### Feel calls made by Claude in M6 (tell Ben; change if he disagrees)
+- Q-tap rule (ISSUE-11, follows "no instant swaps"): leaving sculpt mode to the gun you came from costs its exit time; picking a different gun in sculpt mode, or entering sculpt mode mid-draw, costs that gun's full draw time. Protocol version 5.
+- ISSUE-10: the dead can't send sculpt confirms, and a target the wire can't carry is dropped instead of crashing the client.
+- Sculpt snap: a moved piece is drawn as its own mesh for 0.15 s on a damped spring (arrives the last 20% of the way, overshoots about 5 cm, settles) while the terrain mesh leaves it out. Visual only and short on purpose: the drawn piece is at most ~25 cm behind the real one on the first frame and within ~5 cm after 30 ms. Falls are not snapped (they already step per tick).
+- Sounds are all generated in code (nothing licensed): windup hum per action (push/pull throbs, raise swells and bends up, sink groans and bends down, throw grinds up), a glassy extra layer and heavier landing with a crystalline ring for reinforced actions, layered landing thunk (sub drop, stone knock, gravel spill), the targeted warning is a double knock from below. A piece landing within 8 m gives a small cosmetic camera roll (never pitch or yaw). Your own footsteps (quiet when crouch-walking), jump, landing thud by drop height, slide scrape, vault/mantle grab, and a slide-land success sound (rising whoosh that snaps shut). Guns gained a bolt or slide clack under each shot. One-shots use a 48-voice pool.
+- Reinforced pieces show pale ice-white crystalline veins with a slow shimmer and sparse glints (never purple), easing out over the last 3 s before reinforcement decays so you can read when it ends.
+- Entry ripple now leaves an afterglow on the sculptables it passed, fading over ~0.35 s.
+- Compass strip at the top: cardinals and intercardinals (north in amber), 5/15 degree ticks over a 120 degree span, heading in degrees under the marker.
+- Speed lines: faint white streaks only in the outer ring of the screen (from 62% of the half-diagonal outward), above sprint speed, on by default with a toggle. The existing FOV kick (up to +8 degrees above sprint speed) and 1.2 cm head bob stay, both with toggles.
+- Settings menu on Esc (replaces "Esc frees the mouse"): FOV 60-120 (default 95), sensitivity (shows degrees per count), weapon size 0.7-1.2, head bob, FOV kick, speed lines, master volume, and every bind (click, press the new key or button or scroll the wheel, Esc cancels, reset all). Movement is blocked while it is open; the game keeps running underneath.
+
 ## Balance baseline (2026-11-20)
 - 1v1 simulator and baseline spreadsheet live in `Tools/Balance/` (Python 3, run on any PC; `sculpt-1v1-balance-baseline-2026-11-20.xlsx` is the baseline to compare future analyses against). Equal aim; only sculpt speed and decisions differ.
 - Baseline results with the approved numbers (SMG 5 m): pro vs beginner 75%, pro vs non-sculptor 89% (94% with throws), speed alone pro vs beginner 69%, plain vs always-reinforcing pro 50%, pure turtle broken ~100% within ~8 s. One close fight uses 20-40% bar, so costs and regen don't decide single duels; below ~20% bar going in is a big disadvantage.
@@ -276,4 +287,6 @@ Tests/Game.Check/                  compile-only check of Game + Core + FishNet a
 - Guns: ammo and reloads? ADS / zoom on RMB? SMG headshot multiplier (spec gives none, so head = body = 15)? Friendly fire (off for now)? Respawn delay in non-round modes (3 s for now)?
 - Throw bind defaults to E (the spec only says "own bind"; middle mouse was avoided because it mis-scrolls into raise/sink). Ben to confirm.
 - Top-face direction: LMB moves the piece toward the edge whose triangle you aim at, RMB the opposite way. Ben to confirm this reads right in play.
+- Bloom is shared across all guns, so swapping AR to pump keeps up to 3 degrees of the AR's spray bloom on the pump. Keep shared (no spray-then-swap trick) or give each gun its own bloom?
+- Footsteps: only your own are heard right now. Should enemies hear each other's footsteps (normal for a competitive shooter, and crouch-walking would be the quiet option)?
 - Pump duels: sculpt skill matters least with the pump (pro vs beginner only ~55-63% in the sim; pump peeks over 1-high cover are mostly headshot pellets). Damage, headshot and fire-rate tweaks didn't move it. Needs Ben's play-test before tuning.
