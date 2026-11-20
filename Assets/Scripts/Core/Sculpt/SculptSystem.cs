@@ -171,6 +171,9 @@ namespace Sculpt.Core
         private SculptCheck EvaluateInternal(PlayerBody p, SculptAction a, bool resolving)
         {
             var c = new SculptCheck { Type = a.Type };
+            // The shove plan is per check: a throw never plans one, so it must not inherit an older one (ISSUE-6).
+            _shoves.Clear();
+            _drags.Clear();
 
             if (!resolving && (_pending.ContainsKey(p.Id) || (a.Type == SculptActionType.Throw && HasProjectile(p.Id)))) return Fail(c, SculptResult.Busy);
             if (resolving && _pending.TryGetValue(p.Id, out var own) && own.Disturbed) return Fail(c, SculptResult.Disturbed);

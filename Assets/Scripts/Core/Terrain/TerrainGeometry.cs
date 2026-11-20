@@ -64,8 +64,8 @@ namespace Sculpt.Core
             if (x1 < x0 || y1 < y0 || z1 < z0) return false;
             byte[] occ = ReadOcc(g, x0, x1, y0, y1, z0, z1, out int sx, out int sxz);
 
-            double ex = (box.Max.X - box.Min.X) * 0.5 / H, ey = (box.Max.Y - box.Min.Y) * 0.5 / H, ez = (box.Max.Z - box.Min.Z) * 0.5 / H;
-            Vec3d c = box.Center;
+            // Corners, not centre and half extents: the test is then monotone (a box inside another never collides when
+            // the bigger one does not), because every projection is a sum of terms that each only grow with the box (ISSUE-7).
             for (int vy = y0; vy <= y1; vy++)
                 for (int vz = z0; vz <= z1; vz++)
                 {
@@ -76,11 +76,40 @@ namespace Sculpt.Core
                         if (cfg == 0) continue;
                         if (cfg == 255) return true;
                         Vec3d m = TerrainShape.CellMin(vx, vy, vz);
-                        if (Hits(TerrainShape.Get(cfg), (c.X - m.X) / H, (c.Y - m.Y) / H, (c.Z - m.Z) / H, ex, ey, ez)) return true;
+                        if (HitsBox(TerrainShape.Get(cfg), (box.Min.X - m.X) / H, (box.Min.Y - m.Y) / H, (box.Min.Z - m.Z) / H,
+                                (box.Max.X - m.X) / H, (box.Max.Y - m.Y) / H, (box.Max.Z - m.Z) / H)) return true;
                     }
                 }
             return false;
         }
+
+        /// <summary>Box by its corners (h-units relative to the cell) against a polytope, by separating axes.</summary>
+        public static bool HitsBox(TerrainShape.Poly p, double lx, double ly, double lz, double hx, double hy, double hz)
+        {
+            const double eps = Aabb.Epsilon / H;
+            var axes = TerrainShape.Axes;
+            for (int k = 0; k < 13; k++)
+            {
+                Int3 a = axes[k];
+                double lo = Lo(a.X, lx, hx) + Lo(a.Y, ly, hy) + Lo(a.Z, lz, hz);
+                double hi = Hi(a.X, lx, hx) + Hi(a.Y, ly, hy) + Hi(a.Z, lz, hz);
+                double el = eps * AxisLen[k];
+                if (lo >= p.Max[k] - el || hi <= p.Min[k] + el) return false;
+            }
+            double[] xa = p.ExtraAxes;
+            for (int i = 0, n = p.ExtraMin.Length; i < n; i++)
+            {
+                double ax = xa[i * 3], ay = xa[i * 3 + 1], az = xa[i * 3 + 2];
+                double lo = Lo(ax, lx, hx) + Lo(ay, ly, hy) + Lo(az, lz, hz);
+                double hi = Hi(ax, lx, hx) + Hi(ay, ly, hy) + Hi(az, lz, hz);
+                double el = eps * Math.Sqrt(ax * ax + ay * ay + az * az);
+                if (lo >= p.ExtraMax[i] - el || hi <= p.ExtraMin[i] + el) return false;
+            }
+            return true;
+        }
+
+        private static double Lo(double a, double l, double h) => a >= 0 ? a * l : a * h;
+        private static double Hi(double a, double l, double h) => a >= 0 ? a * h : a * l;
 
         /// <summary>Box (centre, half extents, h-units relative to the cell) against a polytope, by separating axes.</summary>
         public static bool Hits(TerrainShape.Poly p, double cx, double cy, double cz, double ex, double ey, double ez)

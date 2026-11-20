@@ -9,6 +9,11 @@ Shader "SCULPT/Voxel"
         _DetailScale ("Detail Scale (per metre)", Range(0.5, 12)) = 3.2
         _Strata ("Strata", Range(0, 0.2)) = 0.04
         _SeamDarken ("Seam Darken", Range(0, 1)) = 0.45
+        _SculptGlow ("Sculptable Edge Glow", Range(0, 1)) = 0.12
+        [HideInInspector] _SculptMode ("Sculpt Mode", Range(0, 1)) = 0
+        [HideInInspector] _SculptEye ("Sculpt Eye", Vector) = (0, 0, 0, 0)
+        [HideInInspector] _SculptRange ("Sculpt Range", Float) = 6
+        [HideInInspector] _SculptRipple ("Sculpt Ripple Radius", Float) = 100
     }
 
     SubShader
@@ -33,6 +38,11 @@ Shader "SCULPT/Voxel"
                 float _DetailScale;
                 float _Strata;
                 float _SeamDarken;
+                float _SculptGlow;
+                float _SculptMode;
+                float4 _SculptEye;
+                float _SculptRange;
+                float _SculptRipple;
             CBUFFER_END
 
             float Hash3(float3 p)
@@ -58,6 +68,7 @@ Shader "SCULPT/Voxel"
                 float4 positionOS : POSITION;
                 float4 color : COLOR;
                 float2 uv : TEXCOORD0;
+                float3 normalOS : NORMAL;
             };
 
             struct Varyings
@@ -67,6 +78,7 @@ Shader "SCULPT/Voxel"
                 float2 uv : TEXCOORD0;
                 float fogFactor : TEXCOORD1;
                 float3 positionWS : TEXCOORD2;
+                float3 normalWS : TEXCOORD3;
             };
 
             Varyings vert(Attributes i)
@@ -78,6 +90,7 @@ Shader "SCULPT/Voxel"
                 o.uv = i.uv;
                 o.fogFactor = ComputeFogFactor(p.positionCS.z);
                 o.positionWS = p.positionWS;
+                o.normalWS = TransformObjectToWorldNormal(i.normalOS);
                 return o;
             }
 
@@ -89,6 +102,22 @@ Shader "SCULPT/Voxel"
                 float seam = saturate(i.uv.x);
                 seam = seam * seam;
                 half3 c = i.color.rgb * (1.0 + _Detail * (n - 0.5) * 2.0 - _Strata * strata) * (1.0 - _SeamDarken * seam);
+
+                // Sculpt overlay (local to this player's terrain material; players and enemies use other materials).
+                // Purple means "sculptable" and nothing else: chamfered edges of sculptable rock within range glow faintly,
+                // brighter in sculpt mode, with a ripple on entering; out-of-range rock dims, non-sculptables desaturate.
+                float sculptable = saturate(i.uv.y);
+                float d = distance(i.positionWS, _SculptEye.xyz);
+                float inRange = 1.0 - smoothstep(_SculptRange - 0.5, _SculptRange + 0.3, d);
+                float3 an = abs(normalize(i.normalWS));
+                float edge = saturate((1.0 - max(an.x, max(an.y, an.z))) * 3.4);
+                const half3 purple = half3(0.62, 0.33, 1.0);
+                c += purple * edge * sculptable * inRange * (_SculptGlow + 0.30 * _SculptMode);
+                float band = exp(-pow((d - _SculptRipple) / 0.45, 2.0)) * step(_SculptRipple, _SculptRange + 0.6);
+                c += purple * band * sculptable * 0.55 * _SculptMode;
+                float lum = dot(c, half3(0.3, 0.59, 0.11));
+                c = lerp(c, lerp(c, lum.xxx, 0.5 * (1.0 - sculptable)), _SculptMode);
+                c *= lerp(1.0, lerp(0.72, 1.0, inRange), _SculptMode * sculptable);
                 c = MixFog(c, i.fogFactor);
                 return half4(c, 1.0);
             }

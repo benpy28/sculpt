@@ -28,6 +28,9 @@ namespace Sculpt.Game.Net
         public ushort Port { get; private set; } = FishNetTransport.DefaultPort;
         public string JoinAddress { get; private set; } = "";
         public SculptSystem ServerSculpt { get; private set; }
+        /// <summary>The grid the local client draws and predicts on. Replaced with the client (see ClientChanged).</summary>
+        public SubGrid ClientGrid { get; private set; }
+        public SculptConfig SculptConfig => _sculptConfig;
 
         /// <summary>Simulated bad network on the local player's link (one way each).</summary>
         public readonly LinkConditions SimUp = new LinkConditions();
@@ -37,7 +40,7 @@ namespace Sculpt.Game.Net
         public event Action ClientChanged;
 
         private readonly Func<SubGrid> _makeGrid;
-        private readonly SubGrid _clientGrid;
+        private SubGrid _firstClientGrid;
         private readonly MovementConfig _movement;
         private readonly NetConfig _config;
         private readonly SculptConfig _sculptConfig;
@@ -56,7 +59,7 @@ namespace Sculpt.Game.Net
         public NetSession(Func<SubGrid> makeGrid, SubGrid clientGrid, MovementConfig movement, NetConfig config, SculptConfig sculpt, Vec3d[][] teamSpawns, double[] teamYaw)
         {
             _makeGrid = makeGrid;
-            _clientGrid = clientGrid;
+            _firstClientGrid = clientGrid;
             _movement = movement;
             _config = config;
             _sculptConfig = sculpt;
@@ -97,8 +100,7 @@ namespace Sculpt.Game.Net
             JoinAddress = address;
             Port = port;
             NewLocalLinks();
-            Client = new NetClient(_clientGrid, _movement, _config, (d, r) => _up.Send(d, r, _nowMs));
-            ClientChanged?.Invoke();
+            NewClient();
             EnsureFishNet();
             Mode = NetMode.Client;
             Status = $"Connecting to {address}:{port}...";
@@ -115,9 +117,18 @@ namespace Sculpt.Game.Net
             Server.Sculpt = ServerSculpt;
             _serverAccum = 0;
             _nextSpawn = 0;
-            Client = new NetClient(_clientGrid, _movement, _config, (d, r) => _up.Send(d, r, _nowMs));
-            ClientChanged?.Invoke();
+            NewClient();
             AddServerPlayer(LocalConnectionId);
+        }
+
+        /// <summary>A fresh client with its own copy of the map (the server sends everything sculpted since).</summary>
+        private void NewClient()
+        {
+            ClientGrid = _firstClientGrid ?? _makeGrid();
+            _firstClientGrid = null;
+            var sculpt = new SculptClient(ClientGrid, _sculptConfig, _movement);
+            Client = new NetClient(ClientGrid, _movement, _config, (d, r) => _up.Send(d, r, _nowMs), sculpt);
+            ClientChanged?.Invoke();
         }
 
         private void NewLocalLinks()
@@ -198,9 +209,7 @@ namespace Sculpt.Game.Net
                 _serverAccum += Math.Min(dt, 0.25);
                 while (_serverAccum >= TickSeconds)
                 {
-                    Server.Step();
-                    ServerSculpt.Step();
-                    ServerSculpt.ClearEvents();
+                    Server.Step(); // also steps the sculpt system and sends world deltas
                     _serverAccum -= TickSeconds;
                 }
             }

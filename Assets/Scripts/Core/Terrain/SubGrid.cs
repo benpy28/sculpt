@@ -161,6 +161,20 @@ namespace Sculpt.Core
 
         public void Set(Int3 c, ushort id) => Set(c.X, c.Y, c.Z, id);
 
+        /// <summary>Marks the chunks whose surface this sub-cell touches dirty without changing it (e.g. a tint changed).</summary>
+        public void MarkDirty(Int3 c)
+        {
+            if (!InBounds(c)) return;
+            for (int dy = 0; dy <= 1; dy++)
+                for (int dz = 0; dz <= 1; dz++)
+                    for (int dx = 0; dx <= 1; dx++)
+                    {
+                        int vx = c.X + dx, vy = c.Y + dy, vz = c.Z + dz;
+                        if (vx >= SizeX || vz >= SizeZ || vy >= MaxYExclusive) continue;
+                        _dirtyChunks.Add(ChunkIndex(new Int3(vx >> 4, (vy - MinY) >> 4, vz >> 4)));
+                    }
+        }
+
         /// <summary>Fills a box of sub-cells (inclusive bounds).</summary>
         public void Fill(Int3 min, Int3 max, ushort id)
         {

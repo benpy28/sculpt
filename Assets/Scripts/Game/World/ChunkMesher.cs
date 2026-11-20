@@ -31,6 +31,9 @@ namespace Sculpt.Game.World
         /// <summary>Optional: returns (team, 0..1 strength) for a piece's fading tint.</summary>
         public System.Func<ushort, (int team, float strength)> PieceTint;
 
+        /// <summary>Flag sculptable faces in uv.y (off for ghosts and flying pieces).</summary>
+        public bool MarkSculptable = true;
+
         private readonly List<Vector3> _verts = new List<Vector3>(16384);
         private readonly List<Color> _colors = new List<Color>(16384);
         private readonly List<Vector2> _uvs = new List<Vector2>(16384);
@@ -97,6 +100,9 @@ namespace Sculpt.Game.World
             ushort ownerId = g.Get(owner);
             Color albedo = Lin(Albedo(ownerId, owner)) * Shade(f.Normal);
             albedo.a = 1;
+            // uv.y: 1 on sculptable rock (the shader draws the faint purple edge glow and the sculpt-mode overlay there).
+            float sculptable = SubId.IsSculptable(ownerId) && owner.Y >= SubGrid.SculptMinY && owner.Y < 4 * SubGrid.TileSubs ? 1f : 0f;
+            if (!MarkSculptable) sculptable = 0f;
 
             int start = _verts.Count;
             for (int i = 0; i < f.Verts.Length; i++)
@@ -110,7 +116,7 @@ namespace Sculpt.Game.World
                 Int3 near = TerrainGeometry.NearestOccupied(cfg, vx, vy, vz, wv);
                 ushort nid = g.Get(near);
                 float seam = nid != ownerId && (SubId.IsPiece(nid) || SubId.IsPiece(ownerId)) ? 1f : 0f;
-                _uvs.Add(new Vector2(seam, 0));
+                _uvs.Add(new Vector2(seam, sculptable));
             }
             // Core orders vertices so Cross(v1 - v0, v2 - v0) points outward, which is what Unity treats as front facing
             // (same axes, same cross product; the old mesher enforced the same rule).

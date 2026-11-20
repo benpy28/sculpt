@@ -6,6 +6,7 @@ using Sculpt.Game.Cameras;
 using Sculpt.Game.Config;
 using Sculpt.Game.Input;
 using Sculpt.Game.Player;
+using Sculpt.Game.Sculpting;
 using Sculpt.Game.Settings;
 using Sculpt.Game.UI;
 using Sculpt.Game.World;
@@ -68,6 +69,8 @@ namespace Sculpt.Game.Bootstrap
 
             _world = new GameObject("World").AddComponent<WorldView>();
             _world.Init(_grid, sculptConfig);
+            _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
+            _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
 
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
@@ -93,6 +96,10 @@ namespace Sculpt.Game.Bootstrap
             _rig.Mode = new FirstPersonMode(_player, client);
 
             gameObject.AddComponent<DevHud>().Init(_player, client, _session);
+
+            var sculptView = new GameObject("Sculpt View").AddComponent<SculptView>();
+            sculptView.Init(_player, _session, _rig, _world);
+            gameObject.AddComponent<SculptHud>().Init(_player, _session, sculptView, _rig.Camera);
 
             ApplyCommandLine();
 

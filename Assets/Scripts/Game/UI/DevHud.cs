@@ -144,6 +144,7 @@ namespace Sculpt.Game.UI
                 (_lastDamage > 0 ? $"Last fall damage {_lastDamage}\n" : "") +
                 $"\nFOV {_settings.Fov:0} (F2/F3)   Sens {_settings.Sensitivity:0.0} (F4/F5)\n" +
                 $"Head bob {(_settings.HeadBob ? "on" : "off")} (F6)   Speed FOV kick {(_settings.SpeedFovKick ? "on" : "off")} (F7)\n" +
+                "Q sculpt (LMB push, RMB pull, wheel raise/sink, hold Alt reinforce, E throw)   1-4 weapons\n" +
                 "R respawn   Esc free mouse   F1 hide\n\n" + NetText();
             var r = new Rect(12, 10, 640, 480);
             var shadow = new GUIStyle(_style);
@@ -167,6 +168,7 @@ namespace Sculpt.Game.UI
                 $"Round trip ~{System.Math.Max(0, n.RttTicks) * tickMs:0} ms   Input lead {lead} ticks   Clock {n.Dilation * 100:+0.0;-0.0;0}%\n" +
                 $"Corrections {n.Corrections} ({_corrPerSec:0.0}/s, last {n.LastCorrectionMeters * 100:0} cm)   Remote players {n.RemoteCount}\n";
             ServerPlayer sp = _session.LocalServerPlayer;
+            if (n.Sculpt != null) t += $"Sculpt: bar {n.Sculpt.DisplayBar / 100}%   pending {n.Sculpt.Local.Count}   mispredicted {n.Sculpt.Mispredictions}   server refused {n.Sculpt.ServerRejections}\n";
             if (sp != null) t += $"Server: tick {_session.Server.Tick}, players {_session.Server.Players.Count}, your missed inputs {sp.MissedInputs}, late {sp.LateInputs}\n";
             t += $"Sim: ping {SimPingMs} ms (F8)  loss {_session.SimUp.LossPercent:0}% (F9)  jitter +/-{_session.SimUp.JitterMs:0} ms (F10)\n" +
                  $"F11 {(_session.Mode == NetMode.Offline ? "host on port " + _session.Port : "go offline")}   F12 join a server";
