@@ -117,6 +117,15 @@ Ben's constraint: "it cannot become a cube fighting game, its meant to feel prop
 - Fall damage: none below 6 levels, light above.
 - FOV slider (default 95), minimal head bob with off option, subtle speed lines and FOV kick above sprint speed. Small weapon viewmodel with a size option.
 
+### Keybinds (Ben approved 2026-11-20)
+Every bind is rebindable in the Esc menu, dev keys included. "Second" means a second binding on the same action.
+- Movement: W/A/S/D move, mouse look, Space jump/mantle, Left Shift sprint, Left Ctrl crouch/slide (second: C). Settings for sprint hold/toggle and crouch hold/toggle, both default hold.
+- Guns: LMB fire, RMB aim (light zoom on AR and pistol; on pump and SMG it only drops sprint early, as now), R reload (ammo and reloads are in, Ben 2026-11-20), 1 pump, 2 SMG, 3 AR, 4 pistol, 5 utility (empty for now). Zoom hold/toggle setting, default hold. The mouse wheel does nothing in gun mode (so a stray scroll after leaving sculpt mode can't swap weapons). Optional "Last weapon" action, unbound by default.
+- Sculpt: Q toggle sculpt mode, LMB push, RMB pull, wheel up raise, wheel down sink, E throw (confirmed by Ben), hold Mouse 4 (back side button) to reinforce, second: Left Alt. Reason: Left Alt + Shift is the Windows keyboard-layout switch and you can sculpt while sprinting.
+- Menus: Esc settings. Reserved for later: Tab scoreboard, Enter chat, G drop/pass golden ball (only if that mechanic is ever added).
+- Dev keys: their own "Dev" action map, own section in the settings menu, only in dev builds (Development Build or the Editor), never shipped. F1 respawn (moved off R), F2 toggle dev HUD (moved off F1), F3-F7 free (the old FOV/sensitivity/head bob/FOV kick shortcuts are removed; the Esc menu covers them), F8 sim ping, F9 sim loss, F10 sim jitter, F11 host/offline, F12 join box.
+- Rebind menu: binding a key already used by another action in the same context (always / gun mode / sculpt mode) warns and offers to swap the two. LMB/RMB shared between gun and sculpt mode is intended and is not a clash.
+
 ### Weapons (fixed loadout, hitscan)
 - Health 150, no armour. Out-of-combat regen exists as an option but is OFF for now.
 - Hotbar 1-4 = Pump, SMG, AR, Pistol, always equipped. Slot 5 = empty utility slot for later. One of each weapon type max.
@@ -264,7 +273,7 @@ Tests/Game.Check/                  compile-only check of Game + Core + FishNet a
 - Head zone is the top 0.36 m of the box (30% when crouched), full width; remote players' heads are drawn exactly that size, so what you see is what you hit. Teammates are not hit and bullets pass through them (friendly fire off, a config switch).
 - Hit checks: the server fires from the shooter's current eye at targets rewound to what the shooter was drawing (the command's view tick, interpolated exactly like the client's remote view), at most 18 ticks (0.3 s) back, against the current terrain: cover sculpted on the server stops bullets from that tick even if the shooter hasn't seen it yet (favours the defender). Shots resolve after every player has moved, so two players shooting on the same tick trade.
 - Hit markers, damage numbers and kills are shown only when the server confirms them (never predicted). Your own tracers, flash, sound and rock impacts are instant from prediction. Others see your shots from the combat message (MsgType 7, reliable per tick); only the attacker and victim are told the victim's health.
-- Health 150, fall damage now applied (predicted), throw hits count toward health. Dead players are frozen, invisible and out of the world (their sculpt body is parked far below), and respawn at their spawn after 3 s with full health (dev arena only; 5v5 will be one life per round). R still respawns instantly (dev key).
+- Health 150, fall damage now applied (predicted), throw hits count toward health. Dead players are frozen, invisible and out of the world (their sculpt body is parked far below), and respawn at their spawn after 3 s with full health (dev arena only; 5v5 will be one life per round). R still respawns instantly (dev key; moving to F1, see Keybinds).
 - No ammo or reload, and the Aim button (RMB) has no zoom: neither is in the spec (see open questions). Sounds, viewmodels and effects are placeholders generated in code until M6.
 
 ### Feel calls made by Claude in M6 (tell Ben; change if he disagrees)
@@ -285,7 +294,6 @@ Tests/Game.Check/                  compile-only check of Game + Core + FishNet a
 
 ## Open questions
 - Guns: ammo and reloads? ADS / zoom on RMB? SMG headshot multiplier (spec gives none, so head = body = 15)? Friendly fire (off for now)? Respawn delay in non-round modes (3 s for now)?
-- Throw bind defaults to E (the spec only says "own bind"; middle mouse was avoided because it mis-scrolls into raise/sink). Ben to confirm.
 - Top-face direction: LMB moves the piece toward the edge whose triangle you aim at, RMB the opposite way. Ben to confirm this reads right in play.
 - Bloom is shared across all guns, so swapping AR to pump keeps up to 3 degrees of the AR's spray bloom on the pump. Keep shared (no spray-then-swap trick) or give each gun its own bloom?
 - Footsteps: only your own are heard right now. Should enemies hear each other's footsteps (normal for a competitive shooter, and crouch-walking would be the quiet option)?
