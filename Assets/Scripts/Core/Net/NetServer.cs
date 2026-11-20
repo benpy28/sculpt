@@ -36,6 +36,14 @@ namespace Sculpt.Core.Net
         // Position history for lag compensation (M5+).
         internal readonly Vec3d[] PosHistory;
         internal readonly int[] PosHistoryTick;
+        internal readonly double[] HeightHistory;
+        internal readonly bool[] DeadHistory;
+        /// <summary>Shots fired this tick (resolved after every player has moved).</summary>
+        internal readonly List<WeaponShot> Shots = new List<WeaponShot>();
+        internal bool CarryFire;
+
+        /// <summary>Kills and deaths since joining (dev HUD).</summary>
+        public int Kills, Deaths;
 
         public int MissedInputs;   // ticks stepped with a repeated command
         public int LateInputs;     // commands that arrived after their tick was simulated
@@ -51,6 +59,8 @@ namespace Sculpt.Core.Net
             for (int i = 0; i < leadWindow; i++) LeadSlotTick[i] = int.MinValue;
             PosHistory = new Vec3d[historyTicks];
             PosHistoryTick = new int[historyTicks];
+            HeightHistory = new double[historyTicks];
+            DeadHistory = new bool[historyTicks];
             for (int i = 0; i < historyTicks; i++) PosHistoryTick[i] = int.MinValue;
         }
     }
@@ -60,7 +70,7 @@ namespace Sculpt.Core.Net
     /// returns over FishNet (or an in-memory link for offline play and tests).
     /// One tick: consume each player's command for that tick (or repeat the last one), step movement, send snapshots.
     /// </summary>
-    public sealed class NetServer
+    public sealed partial class NetServer
     {
         public delegate void SendFn(int connectionId, byte[] data, bool reliable);
 
@@ -205,6 +215,7 @@ namespace Sculpt.Core.Net
                         p.LateInputs++;
                         if (c.Move.JumpPressed) p.CarryJump = true;
                         if (c.Move.CrouchPressed) p.CarryCrouch = true;
+                        if (c.Move.FirePressed) p.CarryFire = true;
                         if (c.Respawn) p.CarryRespawn = true;
                         if (c.Hand.SculptToggle) p.CarryToggle = true;
                         if (c.Hand.WeaponKey != 0) p.CarryWeapon = c.Hand.WeaponKey;
@@ -263,6 +274,7 @@ namespace Sculpt.Core.Net
         public void Step(List<MoveEvent> events = null)
         {
             Tick++;
+            _combat.Clear();
             _worldEvents.Clear();
             _worldEvents.AddRange(_leftEvents);
             _leftEvents.Clear();
@@ -296,6 +308,7 @@ namespace Sculpt.Core.Net
                 }
                 if (p.CarryJump) { cmd.Move.JumpPressed = true; p.CarryJump = false; }
                 if (p.CarryCrouch) { cmd.Move.CrouchPressed = true; p.CarryCrouch = false; }
+                if (p.CarryFire) { cmd.Move.FirePressed = true; p.CarryFire = false; }
                 if (p.CarryRespawn) { cmd.Respawn = true; p.CarryRespawn = false; }
                 if (p.CarryToggle) { cmd.Hand.SculptToggle = true; p.CarryToggle = false; }
                 if (p.CarryWeapon != 0) { if (cmd.Hand.WeaponKey == 0) cmd.Hand.WeaponKey = p.CarryWeapon; p.CarryWeapon = 0; }
@@ -307,25 +320,34 @@ namespace Sculpt.Core.Net
                 p.LastCmd = cmd;
 
                 // Sculpt shoves move the shared body between ticks; friction drags and throw kicks add velocity.
-                p.State.Position = p.Body.Position;
-                if (p.Body.Kick.LengthSquared > 0)
+                // A dead player's body is parked out of the world, so it is not theirs to copy back.
+                if (!p.State.Dead)
                 {
-                    p.State.Velocity += p.Body.Kick;
-                    p.Body.Kick = Vec3d.Zero;
+                    p.State.Position = p.Body.Position;
+                    if (p.Body.Kick.LengthSquared > 0) p.State.Velocity += p.Body.Kick;
                 }
-                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events);
+                p.Body.Kick = Vec3d.Zero;
+                bool wasDead = p.State.Dead;
+                p.Shots.Clear();
+                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots);
+                if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
                 if (p.DeferredLock != int.MinValue)
                 {
                     HandRules.LockGun(ref p.State.Hand, p.DeferredLock);
                     p.DeferredLock = int.MinValue;
                 }
                 PlayerMovement.WriteBody(p.State, Movement, p.Body);
-                if (cmd.HasSculpt && Sculpt != null) HandleConfirm(p, cmd);
+                if (p.State.Dead) p.Body.Position = ParkedBody;
+                if (cmd.HasSculpt && Sculpt != null && !p.State.Dead) HandleConfirm(p, cmd);
 
                 int h = Tick % p.PosHistory.Length;
                 p.PosHistory[h] = p.State.Position;
                 p.PosHistoryTick[h] = Tick;
+                p.HeightHistory[h] = PlayerMovement.HeightOf(p.State, Movement);
+                p.DeadHistory[h] = p.State.Dead;
             }
+
+            ResolveShots();
 
             if (Sculpt != null)
             {
@@ -335,6 +357,7 @@ namespace Sculpt.Core.Net
                 SendWorldDelta();
             }
 
+            SendCombat();
             if (Config.SnapshotEveryTicks <= 1 || Tick % Config.SnapshotEveryTicks == 0)
                 SendSnapshots();
         }
@@ -377,7 +400,7 @@ namespace Sculpt.Core.Net
         private void ConvertSculptEvents(bool beforeMove)
         {
             var evs = Sculpt.Events;
-            int lastImpact = 0; // hits follow their impact event
+            int lastImpact = 0, lastThrower = 0; // hits follow their impact event
             for (; _eventsSeen < evs.Count; _eventsSeen++)
             {
                 SculptEvent e = evs[_eventsSeen];
@@ -429,10 +452,12 @@ namespace Sculpt.Core.Net
                     }
                     case SculptEventType.ThrowImpact:
                         lastImpact = e.Value;
+                        lastThrower = e.PlayerId;
                         _worldEvents.Add(new WorldEvent { Type = WorldEventType.ThrowImpact, PlayerId = e.PlayerId, Piece = e.Piece, ProjectileId = e.Value, Point = e.Point });
                         break;
                     case SculptEventType.ThrowHit:
                         if (p != null && e.Disarm > 0) HandRules.Disarm(ref p.State.Hand, Tick, e.Disarm);
+                        if (p != null) ThrowDamage(p, e.Value, e.Point, lastThrower);
                         _worldEvents.Add(new WorldEvent { Type = WorldEventType.ThrowHit, PlayerId = e.PlayerId, Piece = e.Piece, ProjectileId = lastImpact, Value = e.Value, Disarm = e.Disarm, Point = e.Point });
                         break;
                 }
@@ -508,6 +533,9 @@ namespace Sculpt.Core.Net
                         Pitch = o.LastCmd.Pitch,
                         Mode = o.State.Mode,
                         Crouched = o.State.Crouched,
+                        Dead = o.State.Dead,
+                        Held = o.State.Hand.Held,
+                        Hand = o.State.Hand.Mode,
                     });
                 }
                 _w.Clear();

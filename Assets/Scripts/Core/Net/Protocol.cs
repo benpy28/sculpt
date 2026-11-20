@@ -14,7 +14,8 @@ namespace Sculpt.Core.Net
         Snapshot = 3,  // server -> client, unreliable: authoritative state for one server tick
         World = 4,     // server -> client, reliable: piece ops and sculpt events of one tick, or the late-join state
         // Sculpt confirms ride inside Inputs (same tick, same redundancy). Thrown pieces fly deterministically from
-        // their Thrown event, so they need no entity stream. Reserved: WeaponEvents = 7
+        // their Thrown event, so they need no entity stream.
+        Combat = 7,    // server -> client, reliable: shots, hits and kills of one tick
     }
 
     public struct WelcomeMsg
@@ -46,6 +47,10 @@ namespace Sculpt.Core.Net
         public float Pitch;   // degrees
         public MoveMode Mode;
         public bool Crouched;
+        public bool Dead;
+        /// <summary>Gun in hand, and whether they are in sculpt mode etc. (a visible tell).</summary>
+        public Weapon Held;
+        public HandMode Hand;
     }
 
     public struct SnapshotMsg
@@ -64,7 +69,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 3;
+        public const byte Version = 4;
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
@@ -158,7 +163,7 @@ namespace Sculpt.Core.Net
                 w.F32(p.Yaw);
                 w.F32(p.Pitch);
                 w.U8((byte)p.Mode);
-                w.Bool(p.Crouched);
+                w.U8((byte)((p.Crouched ? 1 : 0) | (p.Dead ? 2 : 0) | ((byte)p.Held << 2) | ((byte)p.Hand << 4)));
             }
         }
 
@@ -188,8 +193,14 @@ namespace Sculpt.Core.Net
                     Yaw = r.F32(),
                     Pitch = r.F32(),
                     Mode = ReadMode(ref r),
-                    Crouched = r.Bool(),
                 };
+                byte pf = r.U8();
+                p.Crouched = (pf & 1) != 0;
+                p.Dead = (pf & 2) != 0;
+                p.Held = (Weapon)((pf >> 2) & 3);
+                int hm = pf >> 4;
+                if (hm > (int)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
+                p.Hand = (HandMode)hm;
                 othersInto.Add(p);
             }
             return m;
@@ -227,6 +238,12 @@ namespace Sculpt.Core.Net
             w.U8((byte)((byte)s.Hand.Held | (s.Hand.ExitQueued ? 0x80 : 0)));
             w.I32(s.Hand.ReadyTick);
             w.I32(s.Hand.SculptLockUntil);
+            WeaponState g = s.Weapon;
+            w.I64(g.NextPump); w.I64(g.NextSmg); w.I64(g.NextAr); w.I64(g.NextPistol);
+            w.I32(g.LastShotTick); w.I32(g.Streak); w.I32(g.ShotCount);
+            w.F64(g.Bloom); w.F64(g.RecoilPitch); w.F64(g.RecoilYaw);
+            w.Bool(g.TriggerWasHeld); w.I32(g.BufferedPressTick);
+            w.I32(s.Damage); w.Bool(s.Dead); w.I32(s.RespawnTick);
         }
 
         public static MotorState ReadMotor(ref ByteReader r)
@@ -264,6 +281,17 @@ namespace Sculpt.Core.Net
             s.Hand.ExitQueued = (hw & 0x80) != 0;
             s.Hand.ReadyTick = r.I32();
             s.Hand.SculptLockUntil = r.I32();
+            var g = new WeaponState
+            {
+                NextPump = r.I64(), NextSmg = r.I64(), NextAr = r.I64(), NextPistol = r.I64(),
+                LastShotTick = r.I32(), Streak = r.I32(), ShotCount = r.I32(),
+                Bloom = r.F64(), RecoilPitch = r.F64(), RecoilYaw = r.F64(),
+                TriggerWasHeld = r.Bool(), BufferedPressTick = r.I32(),
+            };
+            s.Weapon = g;
+            s.Damage = r.I32();
+            s.Dead = r.Bool();
+            s.RespawnTick = r.I32();
             return s;
         }
 
@@ -278,7 +306,8 @@ namespace Sculpt.Core.Net
                    a.LandVelocity.Equals(b.LandVelocity) && a.AirPeakY.Equals(b.AirPeakY) && a.UphillTicks == b.UphillTicks && a.ActionTick == b.ActionTick &&
                    a.ActionStartY.Equals(b.ActionStartY) && a.ActionTargetY.Equals(b.ActionTargetY) &&
                    a.ActionForward.Equals(b.ActionForward) && a.ActionKeepVelocity.Equals(b.ActionKeepVelocity) &&
-                   a.ShootReadyTick == b.ShootReadyTick && a.Hand.Equals(b.Hand);
+                   a.ShootReadyTick == b.ShootReadyTick && a.Hand.Equals(b.Hand) && a.Weapon.Equals(b.Weapon) &&
+                   a.Damage == b.Damage && a.Dead == b.Dead && a.RespawnTick == b.RespawnTick;
         }
 
         private static MoveMode ReadMode(ref ByteReader r)

@@ -77,6 +77,7 @@ namespace Sculpt.Core.Net
 
         private const byte FJumpPressed = 1, FJumpHeld = 2, FCrouchHeld = 4, FCrouchPressed = 8, FSprint = 16, FShoot = 32, FRespawn = 64, FExt = 128;
         private const byte XToggle = 1, XSculpt = 2, XReinforce = 4;
+        private const byte GFireHeld = 1, GFirePressed = 2;
 
         internal void Write(ByteWriter w)
         {
@@ -91,6 +92,10 @@ namespace Sculpt.Core.Net
             bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || HasSculpt;
             if (ext) f |= FExt;
             w.U8(f);
+            byte g = 0;
+            if (Move.FireHeld) g |= GFireHeld;
+            if (Move.FirePressed) g |= GFirePressed;
+            w.U8(g);
             w.I8(AxisToByte(Move.MoveX));
             w.I8(AxisToByte(Move.MoveZ));
             w.F32((float)Move.Yaw);
@@ -124,6 +129,9 @@ namespace Sculpt.Core.Net
             c.Move.SprintHeld = (f & FSprint) != 0;
             c.Move.WantsToShoot = (f & FShoot) != 0;
             c.Respawn = (f & FRespawn) != 0;
+            byte g = r.U8();
+            c.Move.FireHeld = (g & GFireHeld) != 0;
+            c.Move.FirePressed = (g & GFirePressed) != 0;
             c.Move.MoveX = AxisFromByte(r.I8());
             c.Move.MoveZ = AxisFromByte(r.I8());
             float yaw = r.F32();
@@ -158,6 +166,7 @@ namespace Sculpt.Core.Net
             c.Tick = tick;
             c.Move.JumpPressed = false;
             c.Move.CrouchPressed = false;
+            c.Move.FirePressed = false;
             c.Respawn = false;
             c.Hand = default;
             c.HasSculpt = false;
@@ -170,16 +179,41 @@ namespace Sculpt.Core.Net
     /// <summary>The one function both client prediction and the server use to advance a player by one command.</summary>
     public static class NetSim
     {
-        public static void Simulate(ITerrain grid, MovementConfig mc, NetConfig nc, ref MotorState s, in InputCmd cmd, Vec3d spawn, List<MoveEvent> events)
+        [ThreadStatic] private static List<MoveEvent> _scratch;
+
+        /// <summary>
+        /// Order inside a tick: death/respawn timer, hand, movement (fall damage), then the gun. Shots fired go into
+        /// <paramref name="shots"/> (null while replaying). Damage from other players is applied by the server only.
+        /// </summary>
+        public static void Simulate(ITerrain grid, MovementConfig mc, NetConfig nc, ref MotorState s, in InputCmd cmd, Vec3d spawn, List<MoveEvent> events, List<WeaponShot> shots = null)
         {
             if (cmd.Respawn)
             {
                 Respawn(ref s, spawn, cmd.Tick, events);
                 return;
             }
+            if (s.Dead)
+            {
+                if (cmd.Tick >= s.RespawnTick) Respawn(ref s, spawn, cmd.Tick, events);
+                return; // frozen where they fell
+            }
             HandRules.Step(ref s.Hand, cmd.Tick, cmd.Hand, mc.Hand);
-            PlayerMovement.Step(grid, mc, ref s, cmd.Move, events);
-            if (s.Position.Y < nc.KillY) Respawn(ref s, spawn, cmd.Tick, events);
+
+            List<MoveEvent> ev = events ?? (_scratch ??= new List<MoveEvent>());
+            int before = ev.Count;
+            PlayerMovement.Step(grid, mc, ref s, cmd.Move, ev);
+            for (int i = before; i < ev.Count; i++)
+            {
+                MoveEvent e = ev[i];
+                if (e.Type != MoveEventType.Landed || e.Value <= 0) continue;
+                if (WeaponRules.ApplyDamage(ref s, e.Value, cmd.Tick, mc.Weapons))
+                    ev.Add(new MoveEvent { Type = MoveEventType.Died, Tick = cmd.Tick });
+            }
+            if (events == null) ev.Clear();
+
+            if (s.Position.Y < nc.KillY) { Respawn(ref s, spawn, cmd.Tick, events); return; }
+            if (s.Dead) return;
+            WeaponRules.Step(ref s, cmd.Tick, cmd.Move, cmd.Pitch, mc, shots);
         }
 
         private static void Respawn(ref MotorState s, Vec3d spawn, int tick, List<MoveEvent> events)

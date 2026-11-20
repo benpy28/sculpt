@@ -14,6 +14,9 @@ namespace Sculpt.Core.Net
         public double Pitch;   // degrees
         public MoveMode Mode;
         public bool Crouched;
+        public bool Dead;
+        public Weapon Held;
+        public HandMode Hand;
         /// <summary>True when the snapshot stream ran dry and this pose is extrapolated or held.</summary>
         public bool Extrapolated;
     }
@@ -62,6 +65,12 @@ namespace Sculpt.Core.Net
         public int SnapshotsReceived { get; private set; }
         public int DroppedPackets { get; private set; }
         public bool LastInputWasRealOnServer { get; private set; } = true;
+
+        /// <summary>Shots the local player fired in prediction (each once, never on replays). The Game layer drains it.</summary>
+        public readonly List<WeaponShot> LocalShots = new List<WeaponShot>();
+        /// <summary>Combat events from the server (others' shots, hits, kills), with their server tick. The Game layer drains it.</summary>
+        public readonly List<KeyValuePair<int, CombatEvent>> Combat = new List<KeyValuePair<int, CombatEvent>>();
+        private readonly List<CombatEvent> _combatScratch = new List<CombatEvent>();
 
         public double TickSeconds => 1.0 / SimTime.TicksPerSecond;
         /// <summary>Fraction of a tick elapsed since the last predicted tick, for drawing. 0..1.</summary>
@@ -126,6 +135,14 @@ namespace Sculpt.Core.Net
                         if (!Joined || Sculpt == null) return;
                         Sculpt.OnWorld(WorldProtocol.Read(ref r, _worldOps, _worldEvents));
                         break;
+                    case MsgType.Combat:
+                    {
+                        if (!Joined) return;
+                        CombatMsg cm = CombatProtocol.Read(ref r, _combatScratch);
+                        foreach (CombatEvent e in cm.Events) Combat.Add(new KeyValuePair<int, CombatEvent>(cm.Tick, e));
+                        if (Combat.Count > 4096) Combat.RemoveRange(0, 2048); // nobody is draining (tests)
+                        break;
+                    }
                     case MsgType.Snapshot:
                         if (!Joined) return;
                         OnSnapshot(Protocol.ReadSnapshot(ref r, _snapOthers));
@@ -329,7 +346,15 @@ namespace Sculpt.Core.Net
                 Sculpt.SetRemoteBodies(this);
                 Sculpt.BeforeMove(Tick);
             }
-            NetSim.Simulate(Grid, Movement, Config, ref _pred, cmd, Spawn, events);
+            if (LocalShots.Count > 1024) LocalShots.Clear(); // nobody is draining (tests)
+            int shotsBefore = LocalShots.Count;
+            NetSim.Simulate(Grid, Movement, Config, ref _pred, cmd, Spawn, events, LocalShots);
+            for (int k = shotsBefore; k < LocalShots.Count; k++)
+            {
+                WeaponShot sh = LocalShots[k];
+                sh.ShooterId = PlayerId;
+                LocalShots[k] = sh;
+            }
             int lockUntil = Sculpt != null ? Sculpt.AfterMove(Tick, _pred, cmd) : int.MinValue;
             if (lockUntil != int.MinValue) HandRules.LockGun(ref _pred.Hand, lockUntil);
 
@@ -440,6 +465,9 @@ namespace Sculpt.Core.Net
                 Pitch = s.Pitch,
                 Mode = s.Mode,
                 Crouched = s.Crouched,
+                Dead = s.Dead,
+                Held = s.Held,
+                Hand = s.Hand,
             };
 
             private static RemoteView Lerp(in PlayerSnap a, in PlayerSnap b, double f)

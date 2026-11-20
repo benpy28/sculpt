@@ -76,5 +76,8 @@ namespace Sculpt.Core
 
         /// <summary>Weapon draw, sculpt enter and exit times. Stepped with movement so the netcode predicts them too.</summary>
         public HandConfig Hand = new HandConfig();
+
+        /// <summary>Guns, health and hit rules. Stepped with movement so the netcode predicts firing too.</summary>
+        public WeaponsConfig Weapons = new WeaponsConfig();
     }
 }

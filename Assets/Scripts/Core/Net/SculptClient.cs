@@ -208,6 +208,7 @@ namespace Sculpt.Core.Net
         {
             if (LocalBody == null) return;
             PlayerMovement.WriteBody(s, Movement, LocalBody);
+            if (s.Dead) LocalBody.Position = NetServer.ParkedBody;
         }
 
         /// <summary>Positions of the other players as drawn (for shove planning in prediction). Call once per tick.</summary>
@@ -227,7 +228,7 @@ namespace Sculpt.Core.Net
                     Mirror.AddPlayer(b);
                 }
                 b.Team = v.Team;
-                b.Position = v.Position;
+                b.Position = v.Dead ? NetServer.ParkedBody : v.Position; // the dead are out of the world
                 b.Height = v.Crouched ? Movement.CrouchHeight : Movement.StandHeight;
                 b.EyeHeight = v.Crouched ? Movement.CrouchEye : Movement.StandEye;
             }

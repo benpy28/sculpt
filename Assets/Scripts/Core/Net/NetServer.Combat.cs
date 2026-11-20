@@ -1,0 +1,151 @@
+using System;
+using System.Collections.Generic;
+
+namespace Sculpt.Core.Net
+{
+    /// <summary>
+    /// Server combat: hitscan with lag compensation, damage, deaths, and the per-tick combat message.
+    /// Shots are fired inside each player's simulation (so the client predicts them on the same tick) and resolved here,
+    /// after every player has moved: the shooter fires from their current eye, at targets rewound to what the shooter was
+    /// drawing (InputCmd.ViewTick + ViewFrac, at most WeaponsConfig.MaxRewindTicks back), against the current terrain.
+    /// Cover sculpted on the server stops bullets from that tick on, even if the shooter hasn't seen it yet.
+    /// </summary>
+    public sealed partial class NetServer
+    {
+        /// <summary>Where a dead player's sculpt body waits, so pieces and throws ignore it.</summary>
+        public static readonly Vec3d ParkedBody = new Vec3d(0, -10000, 0);
+
+        private readonly List<CombatEvent> _combat = new List<CombatEvent>();
+        private readonly List<CombatEvent> _combatTo = new List<CombatEvent>();
+        private readonly List<HitTarget> _targets = new List<HitTarget>();
+        private readonly List<ShotVictim> _victims = new List<ShotVictim>();
+
+        /// <summary>Every combat event of the last tick (tests and the host's HUD).</summary>
+        public IReadOnlyList<CombatEvent> CombatEvents => _combat;
+
+        private WeaponsConfig Weapons => Movement.Weapons;
+
+        private void ResolveShots()
+        {
+            foreach (ServerPlayer p in _players)
+            {
+                for (int k = 0; k < p.Shots.Count; k++)
+                {
+                    WeaponShot shot = p.Shots[k];
+                    shot.ShooterId = p.Id;
+                    p.Shots[k] = shot;
+                    _combat.Add(new CombatEvent
+                    {
+                        Type = CombatEventType.Shot, Attacker = p.Id, Source = (DamageSource)shot.Weapon,
+                        Origin = shot.Origin, Aim = shot.Aim, Spread = (float)shot.Spread, Seed = shot.Seed,
+                    });
+                    BuildTargets(p, p.LastCmd.ViewTick, p.LastCmd.ViewFrac);
+                    WeaponStats st = Weapons.Of(shot.Weapon);
+                    Hitscan.Resolve(Grid, shot, st, Weapons, p.Team, _targets, _victims);
+                    foreach (ShotVictim v in _victims)
+                    {
+                        ServerPlayer victim = FindById(v.Id);
+                        if (victim == null || victim.State.Dead) continue;
+                        int dmg = v.Damage;
+                        if (dmg <= 0) continue;
+                        bool killed = WeaponRules.ApplyDamage(ref victim.State, dmg, Tick, Weapons);
+                        _combat.Add(new CombatEvent
+                        {
+                            Type = CombatEventType.Hit, Attacker = p.Id, Victim = v.Id, Source = (DamageSource)shot.Weapon,
+                            Damage = dmg, Pellets = (byte)v.Pellets, HeadPellets = (byte)v.HeadPellets, Point = v.Point,
+                            Killed = killed, HealthAfter = victim.State.Health(Weapons), Origin = shot.Origin,
+                        });
+                        if (killed) OnKilled(victim, p.Id, (DamageSource)shot.Weapon, v.HeadPellets > 0);
+                    }
+                }
+                p.Shots.Clear();
+            }
+        }
+
+        /// <summary>Everyone but the shooter, as the shooter saw them at <paramref name="viewTick"/> + frac/256.</summary>
+        private void BuildTargets(ServerPlayer shooter, int viewTick, byte viewFrac)
+        {
+            _targets.Clear();
+            double view = viewTick + viewFrac / 256.0;
+            view = Math.Max(Tick - Weapons.MaxRewindTicks, Math.Min(Tick, view));
+            foreach (ServerPlayer o in _players)
+            {
+                if (o == shooter) continue;
+                if (!TryGetRewound(o, view, out Vec3d feet, out double height, out bool dead))
+                {
+                    feet = o.State.Position;
+                    height = PlayerMovement.HeightOf(o.State, Movement);
+                    dead = o.State.Dead;
+                }
+                if (dead || o.State.Dead) continue;
+                _targets.Add(HitTarget.Of(o.Id, o.Team, feet, Movement.HalfWidth, height, Weapons));
+            }
+        }
+
+        /// <summary>
+        /// A player's pose at a fractional past tick, interpolated exactly like the client draws remote players
+        /// (linear position, crouch and death from the nearer tick, no interpolation across a teleport).
+        /// </summary>
+        public bool TryGetRewound(ServerPlayer p, double view, out Vec3d feet, out double height, out bool dead)
+        {
+            int a = (int)Math.Floor(view);
+            double f = view - a;
+            int n = p.PosHistory.Length;
+            int ia = ((a % n) + n) % n, ib = (((a + 1) % n) + n) % n;
+            bool hasA = p.PosHistoryTick[ia] == a, hasB = p.PosHistoryTick[ib] == a + 1;
+            if (!hasA && !hasB) { feet = default; height = 0; dead = false; return false; }
+            if (!hasB || f <= 0) { feet = p.PosHistory[ia]; height = p.HeightHistory[ia]; dead = p.DeadHistory[ia]; return true; }
+            if (!hasA) { feet = p.PosHistory[ib]; height = p.HeightHistory[ib]; dead = p.DeadHistory[ib]; return true; }
+            Vec3d pa = p.PosHistory[ia], pb = p.PosHistory[ib];
+            int near = f < 0.5 ? ia : ib;
+            height = p.HeightHistory[near];
+            dead = p.DeadHistory[near];
+            feet = (pb - pa).LengthSquared > 16.0 ? p.PosHistory[near] : pa + (pb - pa) * f;
+            return true;
+        }
+
+        private void ThrowDamage(ServerPlayer victim, int damage, Vec3d point, int thrower)
+        {
+            if (victim.State.Dead || damage <= 0) return;
+            bool killed = WeaponRules.ApplyDamage(ref victim.State, damage, Tick, Weapons);
+            _combat.Add(new CombatEvent
+            {
+                Type = CombatEventType.Hit, Attacker = thrower, Victim = victim.Id, Source = DamageSource.Throw,
+                Damage = damage, Pellets = 1, Point = point, Killed = killed, HealthAfter = victim.State.Health(Weapons),
+            });
+            if (killed) OnKilled(victim, thrower, DamageSource.Throw, false);
+        }
+
+        private void OnKilled(ServerPlayer victim, int killer, DamageSource source, bool headshot)
+        {
+            victim.Deaths++;
+            ServerPlayer k = killer != 0 && killer != victim.Id ? FindById(killer) : null;
+            if (k != null) k.Kills++;
+            victim.Body.Position = ParkedBody;
+            victim.Body.Kick = Vec3d.Zero;
+            _combat.Add(new CombatEvent { Type = CombatEventType.Kill, Attacker = killer, Victim = victim.Id, Source = source, HeadPellets = (byte)(headshot ? 1 : 0) });
+        }
+
+        /// <summary>One reliable message per tick with events. Shots skip their shooter; health is told only to the two involved.</summary>
+        private void SendCombat()
+        {
+            if (_combat.Count == 0) return;
+            foreach (ServerPlayer to in _players)
+            {
+                _combatTo.Clear();
+                foreach (CombatEvent e in _combat)
+                {
+                    if (e.Type == CombatEventType.Shot && e.Attacker == to.Id) continue;
+                    CombatEvent c = e;
+                    if (c.Type == CombatEventType.Hit && c.Attacker != to.Id && c.Victim != to.Id) c.HealthAfter = -1;
+                    _combatTo.Add(c);
+                    if (_combatTo.Count == CombatProtocol.MaxEvents) break;
+                }
+                if (_combatTo.Count == 0) continue;
+                _w.Clear();
+                CombatProtocol.Write(_w, new CombatMsg { Tick = Tick, Events = _combatTo });
+                _send(to.ConnectionId, _w.ToArray(), true);
+            }
+        }
+    }
+}

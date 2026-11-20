@@ -25,6 +25,10 @@ namespace Sculpt.Core
         public bool SprintHeld;
         /// <summary>Fire or aim is held: sprint stops, and shooting waits for the sprint-to-aim delay.</summary>
         public bool WantsToShoot;
+        /// <summary>Fire button held this tick (guns). Movement ignores it.</summary>
+        public bool FireHeld;
+        /// <summary>Fire pressed since the last tick (semi-auto and buffered shots).</summary>
+        public bool FirePressed;
     }
 
     /// <summary>
@@ -64,6 +68,17 @@ namespace Sculpt.Core
         /// <summary>Weapon / sculpt-mode hand state (enter and exit times, gun lock, disarm).</summary>
         public HandState Hand;
 
+        /// <summary>Gun timers, bloom and recoil.</summary>
+        public WeaponState Weapon;
+
+        /// <summary>Damage taken since spawning; health = max - Damage. Fall damage is predicted, hits come from the server.</summary>
+        public int Damage;
+        public bool Dead;
+        /// <summary>While dead: the tick the player respawns at their spawn.</summary>
+        public int RespawnTick;
+
+        public int Health(WeaponsConfig c) => c.MaxHealth - Damage;
+
         public static MotorState At(Vec3d feet) => new MotorState
         {
             Position = feet,
@@ -75,6 +90,7 @@ namespace Sculpt.Core
             LandTick = int.MinValue / 2,
             AirPeakY = feet.Y,
             Hand = HandState.Initial,
+            Weapon = WeaponState.Initial,
         };
 
         public bool CanShoot => Tick >= ShootReadyTick && !Sprinting && Mode != MoveMode.Mantle;
@@ -91,8 +107,10 @@ namespace Sculpt.Core
         Vaulted,
         MantleStarted,
         MantleFinished,
-        /// <summary>The player was put back at their spawn (respawn command or fell out of the world).</summary>
+        /// <summary>The player was put back at their spawn (respawn command, respawn after death, or fell out of the world).</summary>
         Respawned,
+        /// <summary>Fall damage killed the player.</summary>
+        Died,
     }
 
     public struct MoveEvent
