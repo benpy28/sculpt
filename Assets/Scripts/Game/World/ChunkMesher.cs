@@ -26,6 +26,8 @@ namespace Sculpt.Game.World
         public static readonly Color RockHigh = new Color(0.86f, 0.82f, 0.74f);
         public static readonly Color Bedrock = new Color(0.46f, 0.44f, 0.41f);
         public static readonly Color AnchorColor = new Color(0.47f, 0.52f, 0.56f);
+        /// <summary>Sculpted pieces: pale amethyst crystal (purple means sculptable; every piece is). The shader adds facets, gloss and glow.</summary>
+        public static readonly Color Crystal = new Color(0.62f, 0.50f, 0.86f);
         public static readonly Color[] TeamTint = { new Color(0.30f, 0.55f, 1.00f), new Color(1.00f, 0.55f, 0.20f) }; // blue, orange: never purple
 
         /// <summary>Optional: returns (team, 0..1 strength) for a piece's fading tint.</summary>
@@ -45,7 +47,7 @@ namespace Sculpt.Game.World
 
         private readonly List<Vector3> _verts = new List<Vector3>(16384);
         private readonly List<Color> _colors = new List<Color>(16384);
-        private readonly List<Vector2> _uvs = new List<Vector2>(16384);
+        private readonly List<Vector3> _uvs = new List<Vector3>(16384);
         private readonly List<Vector3> _normals = new List<Vector3>(16384);
         private readonly List<int> _tris = new List<int>(24576);
         // Read lazily: Unity forbids QualitySettings in constructors, and meshers are created from field initializers.
@@ -117,6 +119,8 @@ namespace Sculpt.Game.World
             // uv.y: 1 on sculptable rock (the shader draws the faint purple edge glow and the sculpt-mode overlay there).
             float sculptable = SubId.IsSculptable(ownerId) && owner.Y >= SubGrid.SculptMinY && owner.Y < 4 * SubGrid.TileSubs ? 1f : 0f;
             if (!MarkSculptable) sculptable = 0f;
+            // uv.z: 1 on sculpted pieces (crystal look), also while they snap or fly.
+            float crystal = SubId.IsPiece(ownerId) ? 1f : 0f;
 
             int start = _verts.Count;
             for (int i = 0; i < f.Verts.Length; i++)
@@ -124,13 +128,16 @@ namespace Sculpt.Game.World
                 Vec3d lv = f.Verts[i];
                 _verts.Add(cellMin + new Vector3((float)lv.X, (float)lv.Y, (float)lv.Z) * h);
                 _normals.Add(normal);
-                _colors.Add(albedo);
+                Color vc = albedo;
+                float ao = Occlusion(g, worldMin + lv * TerrainShape.H);
+                vc.r *= ao; vc.g *= ao; vc.b *= ao;
+                _colors.Add(vc);
                 // Seam weight: the vertex sits next to a different solid id than the face's owner.
                 Vec3d wv = worldMin + lv * TerrainShape.H;
                 Int3 near = TerrainGeometry.NearestOccupied(cfg, vx, vy, vz, wv);
                 ushort nid = g.Get(near);
                 float seam = nid != ownerId && (SubId.IsPiece(nid) || SubId.IsPiece(ownerId)) ? 1f : 0f;
-                _uvs.Add(new Vector2(seam, sculptable));
+                _uvs.Add(new Vector3(seam, sculptable, crystal));
             }
             // Core orders vertices so Cross(v1 - v0, v2 - v0) points outward, which is what Unity treats as front facing
             // (same axes, same cross product; the old mesher enforced the same rule).
@@ -140,6 +147,31 @@ namespace Sculpt.Game.World
                 _tris.Add(start + i);
                 _tris.Add(start + i + 1);
             }
+        }
+
+        // Vertex ambient occlusion: how much rock surrounds the vertex, at two radii. Concave corners and the feet of
+        // steps darken, convex edges lift a little. Visual only; it breaks up the flat per-axis shading so steps read
+        // as rock forms instead of a staircase of cubes.
+        private const float AoDark = 0.42f, AoLift = 0.10f;
+
+        private static float Occlusion(SubGrid g, Vec3d p)
+        {
+            float near = Solid(g, p, 0.15), far = Solid(g, p, 0.45);
+            float o = near * 0.6f + far * 0.4f; // 0.5 on a flat floor or wall
+            if (o >= 0.5f) return 1f - AoDark * (o - 0.5f) * 2f * 0.5f;
+            return 1f + AoLift * (0.5f - o) * 2f;
+        }
+
+        private static float Solid(SubGrid g, Vec3d p, double r)
+        {
+            int solid = 0;
+            for (int k = 0; k < 8; k++)
+            {
+                double x = p.X + ((k & 1) != 0 ? r : -r), y = p.Y + ((k & 2) != 0 ? r : -r), z = p.Z + ((k & 4) != 0 ? r : -r);
+                var c = new Int3((int)System.Math.Floor(x / SubGrid.SubSize), (int)System.Math.Floor(y / SubGrid.SubSize), (int)System.Math.Floor(z / SubGrid.SubSize));
+                if (g.InBounds(c) && g.Get(c) != SubId.Empty) solid++;
+            }
+            return solid / 8f;
         }
 
         private Color Albedo(ushort id, Int3 sub)
@@ -155,7 +187,7 @@ namespace Sculpt.Game.World
                     // Pieces: slight per-piece variation so pieces read as separate stones.
                     uint hsh = (uint)id * 2654435761u;
                     float v = 0.93f + ((hsh >> 24) & 0xFF) / 255f * 0.10f;
-                    c = RockHigh * v;
+                    c = Crystal * v;
                     if (PieceTint != null)
                     {
                         var (team, strength) = PieceTint(id);

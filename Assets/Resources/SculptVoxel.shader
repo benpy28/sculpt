@@ -7,9 +7,13 @@ Shader "SCULPT/Voxel"
     {
         _Detail ("Rock Detail", Range(0, 0.3)) = 0.09
         _DetailScale ("Detail Scale (per metre)", Range(0.5, 12)) = 3.2
-        _Strata ("Strata", Range(0, 0.2)) = 0.04
+        _Strata ("Strata", Range(0, 0.2)) = 0.015
+        _Macro ("Large-scale Colour Variation", Range(0, 0.3)) = 0.10
+        _CrystalGloss ("Crystal Gloss", Range(0, 1)) = 0.55
+        _CrystalGlow ("Crystal Inner Glow", Range(0, 1)) = 0.35
+        _CrystalFacet ("Crystal Facet Scale (per metre)", Range(0.5, 8)) = 2.6
         _SeamDarken ("Seam Darken", Range(0, 1)) = 0.45
-        _SculptGlow ("Sculptable Edge Glow", Range(0, 1)) = 0.12
+        _SculptGlow ("Sculptable Edge Glow", Range(0, 1)) = 0.08
         [HideInInspector] _SculptMode ("Sculpt Mode", Range(0, 1)) = 0
         [HideInInspector] _SculptEye ("Sculpt Eye", Vector) = (0, 0, 0, 0)
         [HideInInspector] _SculptRange ("Sculpt Range", Float) = 6
@@ -41,6 +45,10 @@ Shader "SCULPT/Voxel"
                 float _Detail;
                 float _DetailScale;
                 float _Strata;
+                float _Macro;
+                float _CrystalGloss;
+                float _CrystalGlow;
+                float _CrystalFacet;
                 float _SeamDarken;
                 float _SculptGlow;
                 float _SculptMode;
@@ -71,11 +79,30 @@ Shader "SCULPT/Voxel"
                                  lerp(Hash3(i + float3(0, 1, 1)), Hash3(i + float3(1, 1, 1)), f.x), f.y), f.z);
             }
 
+            // Cellular noise: id and edge distance of the nearest jittered point (irregular facets, no grid).
+            float2 Cells(float3 p, out float3 cellId)
+            {
+                float3 b = floor(p);
+                float d1 = 8.0, d2 = 8.0;
+                cellId = b;
+                for (int z = -1; z <= 1; z++)
+                    for (int y = -1; y <= 1; y++)
+                        for (int x = -1; x <= 1; x++)
+                        {
+                            float3 c = b + float3(x, y, z);
+                            float3 j = c + float3(Hash3(c), Hash3(c + 17.3), Hash3(c + 41.9));
+                            float d = distance(p, j);
+                            if (d < d1) { d2 = d1; d1 = d; cellId = c; }
+                            else if (d < d2) d2 = d;
+                        }
+                return float2(d1, d2 - d1);
+            }
+
             struct Attributes
             {
                 float4 positionOS : POSITION;
                 float4 color : COLOR;
-                float2 uv : TEXCOORD0;
+                float3 uv : TEXCOORD0;
                 float3 normalOS : NORMAL;
             };
 
@@ -83,7 +110,7 @@ Shader "SCULPT/Voxel"
             {
                 float4 positionCS : SV_POSITION;
                 half4 color : COLOR;
-                float2 uv : TEXCOORD0;
+                float3 uv : TEXCOORD0;
                 float fogFactor : TEXCOORD1;
                 float3 positionWS : TEXCOORD2;
                 float3 normalWS : TEXCOORD3;
@@ -109,7 +136,42 @@ Shader "SCULPT/Voxel"
                 float strata = sin(i.positionWS.y * 9.0 + Noise3(i.positionWS * 0.8) * 4.0) * 0.5 + 0.5;
                 float seam = saturate(i.uv.x);
                 seam = seam * seam;
-                half3 c = i.color.rgb * (1.0 + _Detail * (n - 0.5) * 2.0 - _Strata * strata) * (1.0 - _SeamDarken * seam);
+                float crystal = saturate(i.uv.z);
+                // Large, slow colour drift (warm/cool patches) so the ground never repeats on a grid rhythm.
+                float macro = Noise3(i.positionWS * 0.16 + 3.7) - 0.5;
+                half3 drift = half3(1.0 + macro * 0.6, 1.0, 1.0 - macro * 0.6);
+                half3 c = i.color.rgb * (1.0 + _Detail * (1.0 - 0.6 * crystal) * (n - 0.5) * 2.0 - _Strata * strata * (1.0 - crystal))
+                          * (1.0 - _SeamDarken * seam) * lerp(1.0 + macro * 2.0 * _Macro, 1.0, crystal) * lerp(drift, 1.0, crystal * 0.5 + 0.5);
+
+                // Sculpted pieces: amethyst crystal. Irregular facets (each tilts the light a little), glossy highlights
+                // and a soft fresnel rim from a fixed sun, brighter chamfered edges, and a slow inner glow. Opaque and
+                // never brighter than a readable rock: it must not hide or outshine a player. Visual only.
+                if (crystal > 0.001)
+                {
+                    float3 N = normalize(i.normalWS);
+                    float3 V = normalize(GetWorldSpaceViewDir(i.positionWS));
+                    float3 id;
+                    float2 cd = Cells(i.positionWS * _CrystalFacet, id);
+                    float3 tilt = float3(Hash3(id + 3.1), Hash3(id + 7.7), Hash3(id + 12.9)) - 0.5;
+                    float3 fn = normalize(N + tilt * 0.55);
+                    float3 L = normalize(float3(0.35, 0.85, 0.40));
+                    float3 Hh = normalize(L + V);
+                    float spec = pow(saturate(dot(fn, Hh)), 40.0);
+                    float rim = pow(1.0 - saturate(dot(fn, V)), 3.0);
+                    float facetShade = 0.88 + 0.24 * Hash3(id);
+                    float facetLine = 1.0 - smoothstep(0.0, 0.05, cd.y);
+                    float3 cA = abs(N);
+                    float chamfer = saturate((1.0 - max(cA.x, max(cA.y, cA.z))) * 3.4);
+                    float glowN = Noise3(i.positionWS * 1.1 + float3(0, _Time.y * 0.12, 0));
+                    float inner = smoothstep(0.45, 0.95, glowN);
+                    const half3 lilac = half3(0.80, 0.70, 1.00);
+                    const half3 core = half3(0.55, 0.30, 0.95);
+                    half3 cc = c * facetShade;
+                    cc = lerp(cc, cc * 0.82, facetLine);
+                    cc += lilac * (spec * _CrystalGloss + rim * 0.22 * _CrystalGloss + chamfer * 0.10);
+                    cc += core * inner * _CrystalGlow * 0.35;
+                    c = lerp(c, cc, crystal);
+                }
 
                 // Reinforced pieces (1 - vertex alpha): crystalline veins through the rock with a faint travelling
                 // shimmer and sparse glints. Pale ice white, never purple. Visual only.
@@ -135,13 +197,13 @@ Shader "SCULPT/Voxel"
                 float3 an = abs(normalize(i.normalWS));
                 float edge = saturate((1.0 - max(an.x, max(an.y, an.z))) * 3.4);
                 const half3 purple = half3(0.62, 0.33, 1.0);
-                c += purple * edge * sculptable * inRange * (_SculptGlow + 0.30 * _SculptMode);
+                c += purple * edge * sculptable * inRange * (_SculptGlow + 0.14 * _SculptMode);
                 float band = exp(-pow((d - _SculptRipple) / 0.45, 2.0)) * step(_SculptRipple, _SculptRange + 0.6);
-                c += purple * band * sculptable * 0.55 * _SculptMode;
-                c += purple * sculptable * inRange * step(d, _SculptRipple) * (0.10 + 0.25 * edge) * _SculptRippleGlow;
+                c += purple * band * sculptable * 0.35 * _SculptMode;
+                c += purple * sculptable * inRange * step(d, _SculptRipple) * (0.03 + 0.15 * edge) * _SculptRippleGlow;
                 float lum = dot(c, half3(0.3, 0.59, 0.11));
-                c = lerp(c, lerp(c, lum.xxx, 0.5 * (1.0 - sculptable)), _SculptMode);
-                c *= lerp(1.0, lerp(0.72, 1.0, inRange), _SculptMode * sculptable);
+                c = lerp(c, lerp(c, lum.xxx, 0.35 * (1.0 - sculptable)), _SculptMode);
+                c *= lerp(1.0, lerp(0.84, 1.0, inRange), _SculptMode * sculptable);
                 c = MixFog(c, i.fogFactor);
                 return half4(c, 1.0);
             }
