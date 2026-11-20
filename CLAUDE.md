@@ -162,7 +162,7 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 - A reinforced sink with nothing sculptable left underneath is rejected (NothingToReinforce), at no cost.
 - Fixed in the same batch: a block landing on a ramp waits if flattening the ramp would overlap a player; an anchor holds what is on top of it but not what hangs under it; lifting re-checks both changed cells so a raised ramp column carries a crouched player on its lip.
 
-### Smaller calls made by Claude in M1 (tell Ben; change if he disagrees)
+### Smaller calls made by Claude in M1 (Ben: "looks good", 2026-11-20)
 - A falling block never enters a cell overlapping a player: it waits above until the cell is clear.
 - A stack with empty space under it falls together as one unit.
 - Raise treats the column's top block as the block being changed (for enemy reinforcement cost and windup).
@@ -172,7 +172,7 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 - Pushing a block horizontally does not drag a player standing on it; they fall through movement gravity.
 - Sculpt tint fades over 10 s (cosmetic, tunable).
 
-### Smaller calls made by Claude in M2 (tell Ben; change if he disagrees)
+### Smaller calls made by Claude in M2 (Ben: "looks good", 2026-11-20)
 - FOV setting is horizontal degrees defined at 16:9 (Hor+ on wider screens). Default 95.
 - Feel helpers: 5-tick coyote time and 6-tick jump buffer. Jump on an upward ramp adds the ramp's upward speed.
 - Air mantle: pressing jump while touching a ledge 0.3 to 2.45 m above your feet mantles (forgiving catch).
