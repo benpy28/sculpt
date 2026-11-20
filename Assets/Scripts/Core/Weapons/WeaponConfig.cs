@@ -40,6 +40,24 @@ namespace Sculpt.Core
 
         /// <summary>Multi-pellet guns: radius of the fixed pellet pattern (the outer ring), degrees.</summary>
         public double PatternSpread;
+        /// <summary>
+        /// Bloom this gun starts with after a swap (bloom is per gun; Ben 2026-11-20: "small penalty" on swapping). It does
+        /// not recover during the draw, only once the gun is out.
+        /// </summary>
+        public double SwapBloom;
+
+        // ---- Ammo (Ben 2026-11-20: ammo and reloads; numbers are Claude's tuning, unlimited reserve) ----
+        public int MagSize = 30;
+        /// <summary>Magazine guns: ticks for a full reload (the mag is full at the end; cancelled by a swap or sculpt mode).</summary>
+        public int ReloadTicks = 96;
+        /// <summary>Shell-by-shell reload (pump): first shell after ShellStartTicks + ShellTicks, then one per ShellTicks.
+        /// Firing with at least one shell loaded interrupts it; shells already in stay in.</summary>
+        public bool ShellReload;
+        public int ShellStartTicks;
+        public int ShellTicks;
+
+        /// <summary>Right-mouse zoom: field of view multiplier (1 = no zoom; camera only, no accuracy change).</summary>
+        public double AimFovScale = 1;
 
         // ---- Recoil: moves the real aim (and the camera with it), recovers on its own ----
         public double RecoilPitchPerShot;
@@ -95,12 +113,14 @@ namespace Sculpt.Core
                 FireBufferTicks = 6, Range = 60,
                 FalloffDistances = new double[] { 5, 12, 25 }, FalloffFactors = new double[] { 1.0, 0.65, 0.2 },
                 BaseSpread = 0.0, MoveSpread = 0.3, CrouchFactor = 1, SlideSpread = 0.6, AirSpread = 0.8, PatternSpread = 2.6,
+                SwapBloom = 0.3, BloomRecoveryPerSecond = 4,
+                MagSize = 5, ShellReload = true, ShellStartTicks = 6, ShellTicks = 30,
                 RecoilPitchPerShot = 3.5, RecoilYawPerShot = 0.6, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 11, RecoilRecoveryDelayTicks = 8,
             },
-            // SMG: 15, 12 shots/s, heavy falloff past 10 m.
+            // SMG: 15, 12 shots/s, heavy falloff past 10 m; head 1.25x (Ben 2026-11-20).
             new WeaponStats
             {
-                Name = "SMG", BodyDamage = 15, HeadDamage = 15, FireIntervalMilliTicks = 5000, Automatic = true, Range = 120,
+                Name = "SMG", BodyDamage = 15, HeadDamage = 18.75, MagSize = 30, ReloadTicks = 96, SwapBloom = 0.3, FireIntervalMilliTicks = 5000, Automatic = true, Range = 120,
                 FalloffDistances = new double[] { 10, 20, 35 }, FalloffFactors = new double[] { 1.0, 0.6, 0.4 },
                 BaseSpread = 0.9, MoveSpread = 0.7, CrouchFactor = 0.8, SlideSpread = 1.2, AirSpread = 1.8,
                 BloomPerShot = 0.12, BloomMax = 1.6, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 7,
@@ -109,7 +129,7 @@ namespace Sculpt.Core
             // AR: 25 body / 40 head, 5.5 shots/s, first shot accurate then spread builds; strongly penalised sliding/airborne.
             new WeaponStats
             {
-                Name = "AR", BodyDamage = 25, HeadDamage = 40, FireIntervalMilliTicks = 10909, Automatic = true, Range = 250,
+                Name = "AR", BodyDamage = 25, HeadDamage = 40, MagSize = 25, ReloadTicks = 114, SwapBloom = 0.4, AimFovScale = 0.8, FireIntervalMilliTicks = 10909, Automatic = true, Range = 250,
                 BaseSpread = 0.0, MoveSpread = 0.9, CrouchFactor = 0.75, SlideSpread = 3.0, AirSpread = 4.0,
                 BloomPerShot = 0.45, BloomMax = 3.0, BloomRecoveryPerSecond = 6, BloomRecoveryDelayTicks = 13,
                 RecoilPitchPerShot = 0.7, RecoilYawPerShot = 0.3, RecoilMaxPitch = 7, RecoilRecoveryPerSecond = 9, RecoilRecoveryDelayTicks = 13,
@@ -117,7 +137,7 @@ namespace Sculpt.Core
             // Pistol: 30 body / 50 head, semi-auto, max 5 shots/s, accurate; falloff from 25 m to 70% at 50 m.
             new WeaponStats
             {
-                Name = "Pistol", BodyDamage = 30, HeadDamage = 50, FireIntervalMilliTicks = 12000, Automatic = false,
+                Name = "Pistol", BodyDamage = 30, HeadDamage = 50, MagSize = 12, ReloadTicks = 78, SwapBloom = 0.3, AimFovScale = 0.87, FireIntervalMilliTicks = 12000, Automatic = false,
                 FireBufferTicks = 6, Range = 250,
                 FalloffDistances = new double[] { 25, 50 }, FalloffFactors = new double[] { 1.0, 0.7 },
                 BaseSpread = 0.1, MoveSpread = 0.5, CrouchFactor = 0.8, SlideSpread = 1.5, AirSpread = 2.0,

@@ -22,8 +22,30 @@ namespace Sculpt.Core
         public bool TriggerWasHeld;
         /// <summary>Tick of a semi-auto press waiting for the gun to be ready.</summary>
         public int BufferedPressTick;
+        /// <summary>The gun the current bloom belongs to (bloom is per gun; a swap replaces it with the new gun's swap penalty).</summary>
+        public Weapon BloomGun;
+        /// <summary>Rounds fired from each magazine since it was last full (0 = full), so a fresh state has full mags.</summary>
+        public byte UsedPump, UsedSmg, UsedAr, UsedPistol;
+        /// <summary>A reload is running for <see cref="ReloadGun"/>; the mag (or the next shell) is in at ReloadTick.</summary>
+        public bool Reloading;
+        public Weapon ReloadGun;
+        public int ReloadTick;
 
         public static WeaponState Initial => new WeaponState { LastShotTick = int.MinValue / 2, BufferedPressTick = int.MinValue / 2 };
+
+        public int UsedOf(Weapon w) => w == Weapon.Pump ? UsedPump : w == Weapon.Smg ? UsedSmg : w == Weapon.Ar ? UsedAr : UsedPistol;
+
+        public void SetUsed(Weapon w, int v)
+        {
+            byte b = (byte)Math.Max(0, Math.Min(255, v));
+            if (w == Weapon.Pump) UsedPump = b;
+            else if (w == Weapon.Smg) UsedSmg = b;
+            else if (w == Weapon.Ar) UsedAr = b;
+            else UsedPistol = b;
+        }
+
+        /// <summary>Rounds left in a gun's magazine.</summary>
+        public int AmmoOf(Weapon w, WeaponsConfig cfg) => Math.Max(0, cfg.Of(w).MagSize - UsedOf(w));
 
         public long NextOf(Weapon w) => w == Weapon.Pump ? NextPump : w == Weapon.Smg ? NextSmg : w == Weapon.Ar ? NextAr : NextPistol;
 
@@ -39,7 +61,9 @@ namespace Sculpt.Core
             NextPump == o.NextPump && NextSmg == o.NextSmg && NextAr == o.NextAr && NextPistol == o.NextPistol &&
             LastShotTick == o.LastShotTick && Streak == o.Streak && ShotCount == o.ShotCount && Bloom.Equals(o.Bloom) &&
             RecoilPitch.Equals(o.RecoilPitch) && RecoilYaw.Equals(o.RecoilYaw) && TriggerWasHeld == o.TriggerWasHeld &&
-            BufferedPressTick == o.BufferedPressTick;
+            BufferedPressTick == o.BufferedPressTick && BloomGun == o.BloomGun &&
+            UsedPump == o.UsedPump && UsedSmg == o.UsedSmg && UsedAr == o.UsedAr && UsedPistol == o.UsedPistol &&
+            Reloading == o.Reloading && ReloadGun == o.ReloadGun && ReloadTick == o.ReloadTick;
     }
 
     /// <summary>One shot leaving a gun. Pellet directions are rebuilt from it deterministically (<see cref="WeaponRules.PelletDir"/>).</summary>
@@ -68,18 +92,29 @@ namespace Sculpt.Core
         public static long ToMilli(int tick) => tick * 1000L;
 
         /// <summary>
-        /// One tick of the held gun, after hand and movement. Appends a shot when it fires.
+        /// One tick of the held gun, after hand and movement: bloom and recoil recovery, reloads, then firing.
+        /// Appends a shot when it fires.
         /// </summary>
-        public static void Step(ref MotorState s, int tick, in MoveInput input, double pitchDegrees, MovementConfig mc, List<WeaponShot> shots)
+        public static void Step(ref MotorState s, int tick, in MoveInput input, double pitchDegrees, MovementConfig mc, List<WeaponShot> shots, bool reloadPressed = false)
         {
             WeaponsConfig cfg = mc.Weapons;
             ref WeaponState w = ref s.Weapon;
-            WeaponStats st = cfg.Of(s.Hand.Held);
+            Weapon held = s.Hand.Held;
+            WeaponStats st = cfg.Of(held);
 
-            // Recovery (from the gun in hand; the values are shared so a swap doesn't reset them).
+            // Bloom is per gun: a different gun in hand replaces it with that gun's small swap penalty, which only starts
+            // recovering once the gun is out (not during the draw).
+            if (w.BloomGun != held)
+            {
+                w.BloomGun = held;
+                w.Bloom = st.SwapBloom;
+            }
+
+            // Recovery. Recoil is the aim itself and recovers on its own whatever is in hand.
             int since = tick - w.LastShotTick;
             double dt = 1.0 / SimTime.TicksPerSecond;
-            if (since > st.BloomRecoveryDelayTicks && w.Bloom > 0) w.Bloom = Math.Max(0, w.Bloom - st.BloomRecoveryPerSecond * dt);
+            if (since > st.BloomRecoveryDelayTicks && w.Bloom > 0 && s.Hand.Mode == HandMode.Weapon)
+                w.Bloom = Math.Max(0, w.Bloom - st.BloomRecoveryPerSecond * dt);
             if (since > st.RecoilRecoveryDelayTicks && (w.RecoilPitch != 0 || w.RecoilYaw != 0))
             {
                 double step = st.RecoilRecoveryPerSecond * dt;
@@ -92,15 +127,24 @@ namespace Sculpt.Core
             w.TriggerWasHeld = input.FireHeld;
             if (pressed && !s.Hand.InSculptMode) w.BufferedPressTick = tick; // a sculpt click is never a buffered shot
 
-            if (s.Dead || !s.Hand.CanFire || !s.CanShoot) return;
+            if (s.Dead) { w.Reloading = false; return; }
+            Reload(ref s, tick, st, reloadPressed);
+            if (!s.Hand.CanFire || !s.CanShoot) return;
 
             long now = ToMilli(tick);
-            long next = w.NextOf(s.Hand.Held);
+            long next = w.NextOf(held);
             if (now < next) return;
             bool want = st.Automatic
                 ? input.FireHeld || tick - w.BufferedPressTick <= st.FireBufferTicks
                 : tick - w.BufferedPressTick <= st.FireBufferTicks;
             if (!want) return;
+            if (w.UsedOf(held) >= st.MagSize) return; // empty: the auto-reload has started (Reload)
+            if (w.Reloading)
+            {
+                // A shell reload is interrupted by firing a loaded shell; a magazine reload can't be fired through.
+                if (!st.ShellReload) return;
+                w.Reloading = false;
+            }
 
             // Fire. Continuous auto fire keeps the exact average rate; otherwise the cycle starts now.
             w.SetNext(s.Hand.Held, (now - next < 1000 ? next : now) + st.FireIntervalMilliTicks);
@@ -118,12 +162,51 @@ namespace Sculpt.Core
             };
             shots?.Add(shot);
 
+            w.SetUsed(held, w.UsedOf(held) + 1);
             w.ShotCount++;
             w.LastShotTick = tick;
             w.Bloom = Math.Min(st.BloomMax, w.Bloom + st.BloomPerShot);
             w.RecoilPitch = Math.Min(st.RecoilMaxPitch, w.RecoilPitch + st.RecoilPitchPerShot);
             w.RecoilYaw += st.RecoilYawPerShot * YawPattern[w.Streak % YawPattern.Length];
             w.Streak++;
+        }
+
+        /// <summary>
+        /// Reload rules. A reload starts on the reload press when the held gun's magazine isn't full, or by itself when it
+        /// is empty; only with the gun out (not drawing, in sculpt mode or disarmed). Swapping, sculpt mode or a disarm
+        /// cancels it (a magazine reload loses its progress; shells already loaded stay in). Sprinting, sliding and
+        /// jumping don't stop it.
+        /// </summary>
+        public static void Reload(ref MotorState s, int tick, WeaponStats st, bool pressed)
+        {
+            ref WeaponState w = ref s.Weapon;
+            Weapon held = s.Hand.Held;
+            if (w.Reloading && (w.ReloadGun != held || s.Hand.Mode != HandMode.Weapon)) w.Reloading = false;
+
+            if (w.Reloading && tick >= w.ReloadTick)
+            {
+                if (st.ShellReload)
+                {
+                    w.SetUsed(held, w.UsedOf(held) - 1);
+                    if (w.UsedOf(held) > 0) w.ReloadTick = tick + st.ShellTicks;
+                    else w.Reloading = false;
+                }
+                else
+                {
+                    w.SetUsed(held, 0);
+                    w.Reloading = false;
+                }
+            }
+
+            if (w.Reloading || s.Hand.Mode != HandMode.Weapon) return;
+            int used = w.UsedOf(held);
+            bool empty = used >= st.MagSize;
+            if (used <= 0 || !(pressed || empty)) return;
+            // An empty gun waits for its fire cycle (the pump's rack) before reloading by itself.
+            if (empty && !pressed && ToMilli(tick) < w.NextOf(held)) return;
+            w.Reloading = true;
+            w.ReloadGun = held;
+            w.ReloadTick = tick + (st.ShellReload ? st.ShellStartTicks + st.ShellTicks : st.ReloadTicks);
         }
 
         /// <summary>Spread cone half-angle (degrees) for a shot fired now, from the movement state.</summary>

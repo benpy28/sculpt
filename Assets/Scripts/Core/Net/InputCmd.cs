@@ -81,7 +81,7 @@ namespace Sculpt.Core.Net
         private static double Clamp(double v, double lo, double hi) => v < lo ? lo : (v > hi ? hi : v);
 
         private const byte FJumpPressed = 1, FJumpHeld = 2, FCrouchHeld = 4, FCrouchPressed = 8, FSprint = 16, FShoot = 32, FRespawn = 64, FExt = 128;
-        private const byte XToggle = 1, XSculpt = 2, XReinforce = 4;
+        private const byte XToggle = 1, XSculpt = 2, XReinforce = 4, XReload = 8;
         private const byte GFireHeld = 1, GFirePressed = 2;
 
         internal void Write(ByteWriter w)
@@ -94,7 +94,7 @@ namespace Sculpt.Core.Net
             if (Move.SprintHeld) f |= FSprint;
             if (Move.WantsToShoot) f |= FShoot;
             if (Respawn) f |= FRespawn;
-            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || HasSculpt;
+            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt;
             if (ext) f |= FExt;
             w.U8(f);
             byte g = 0;
@@ -111,6 +111,7 @@ namespace Sculpt.Core.Net
             if (!ext) return;
             byte x = (byte)((Hand.WeaponKey & 7) << 4);
             if (Hand.SculptToggle) x |= XToggle;
+            if (Hand.Reload) x |= XReload;
             if (HasSculpt) x |= XSculpt;
             if (HasSculpt && Sculpt.Reinforce) x |= XReinforce;
             w.U8(x);
@@ -150,6 +151,7 @@ namespace Sculpt.Core.Net
             if ((f & FExt) == 0) return c;
             byte x = r.U8();
             c.Hand.SculptToggle = (x & XToggle) != 0;
+            c.Hand.Reload = (x & XReload) != 0;
             c.Hand.WeaponKey = (byte)((x >> 4) & 7);
             if (c.Hand.WeaponKey > 4) throw new NetFormatException("Bad weapon key.");
             if ((x & XSculpt) == 0) return c;
@@ -218,7 +220,7 @@ namespace Sculpt.Core.Net
 
             if (s.Position.Y < nc.KillY) { Respawn(ref s, spawn, cmd.Tick, events); return; }
             if (s.Dead) return;
-            WeaponRules.Step(ref s, cmd.Tick, cmd.Move, cmd.Pitch, mc, shots);
+            WeaponRules.Step(ref s, cmd.Tick, cmd.Move, cmd.Pitch, mc, shots, cmd.Hand.Reload);
         }
 
         private static void Respawn(ref MotorState s, Vec3d spawn, int tick, List<MoveEvent> events)

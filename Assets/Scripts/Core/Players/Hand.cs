@@ -65,6 +65,8 @@ namespace Sculpt.Core
     {
         public bool SculptToggle;
         public byte WeaponKey;
+        /// <summary>Reload press (R by default).</summary>
+        public bool Reload;
     }
 
     /// <summary>Hand timings (Ben approved 2026-11-20). Ticks at 60 Hz.</summary>

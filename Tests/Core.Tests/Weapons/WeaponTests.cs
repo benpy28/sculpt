@@ -230,6 +230,7 @@ namespace Sculpt.Core.Tests.Weapons
         public void ArFirstShotIsExactThenSpreadBuilds()
         {
             Equip(Weapon.Ar);
+            Run(10, default); // the small swap penalty (0.4 deg) recovers in a few ticks once the gun is out
             Run(6, Hold);
             Assert.That(_shots[0].Spread, Is.EqualTo(0), "first shot accurate standing still");
             WeaponStats ar = _mc.Weapons.Of(Weapon.Ar);

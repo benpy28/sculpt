@@ -142,6 +142,7 @@ namespace Sculpt.Core.Tests.Weapons
             var h = Arena();
             if (!rewind) h.Movement.Weapons.MaxRewindTicks = 0;
             h.Movement.Weapons.MaxHealth = 100000; // nobody dies: count every hit
+            h.Movement.Weapons.Of(Weapon.Pistol).MagSize = 250; // every press is a shot (no reload pauses)
             var a = h.AddClient(SculptNetHarness.FeetIn(10, 5), team: 1, up: SculptNetHarness.Lag(75), down: SculptNetHarness.Lag(75));
             var b = h.AddClient(SculptNetHarness.FeetIn(10, 14), team: 2);
             b.Script = (p, t) => new SculptTickInput { Move = new MoveInput { MoveX = (t / 50) % 2 == 0 ? 1 : -1 } };

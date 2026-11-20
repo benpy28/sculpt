@@ -69,7 +69,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 5;
+        public const byte Version = 6;
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
@@ -243,6 +243,9 @@ namespace Sculpt.Core.Net
             w.I32(g.LastShotTick); w.I32(g.Streak); w.I32(g.ShotCount);
             w.F64(g.Bloom); w.F64(g.RecoilPitch); w.F64(g.RecoilYaw);
             w.Bool(g.TriggerWasHeld); w.I32(g.BufferedPressTick);
+            w.U8((byte)((byte)g.BloomGun | ((byte)g.ReloadGun << 2) | (g.Reloading ? 0x10 : 0)));
+            w.U8(g.UsedPump); w.U8(g.UsedSmg); w.U8(g.UsedAr); w.U8(g.UsedPistol);
+            w.I32(g.ReloadTick);
             w.I32(s.Damage); w.Bool(s.Dead); w.I32(s.RespawnTick);
         }
 
@@ -289,6 +292,12 @@ namespace Sculpt.Core.Net
                 Bloom = r.F64(), RecoilPitch = r.F64(), RecoilYaw = r.F64(),
                 TriggerWasHeld = r.Bool(), BufferedPressTick = r.I32(),
             };
+            byte gw = r.U8();
+            g.BloomGun = (Weapon)(gw & 3);
+            g.ReloadGun = (Weapon)((gw >> 2) & 3);
+            g.Reloading = (gw & 0x10) != 0;
+            g.UsedPump = r.U8(); g.UsedSmg = r.U8(); g.UsedAr = r.U8(); g.UsedPistol = r.U8();
+            g.ReloadTick = r.I32();
             s.Weapon = g;
             s.Damage = r.I32();
             s.Dead = r.Bool();
