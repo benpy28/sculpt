@@ -129,8 +129,9 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 ## Machine notes
 - Project path: `E:\Unity\sculpt`. Editor: Unity 6000.4.1f1. Shell: PowerShell on Windows 11.
 - `gh` CLI is not installed; push with plain git over HTTPS (Git Credential Manager handles sign-in).
+- .NET 8 SDK is a user-scope install at `%LOCALAPPDATA%\Microsoft\dotnet` (the one in Program Files is runtime only). Run it by full path with `DOTNET_ROOT` set to that folder.
 
-## Provisional rules (proposed 2026-11-20, awaiting Ben's OK; change here if he overrides)
+## Agreed rules (proposed by Claude, approved by Ben 2026-11-20; change here if he overrides)
 1. Support: a block is held up only by the block directly below it. No overhangs.
 2. Height: base ground top = level 0. Column tops range -2..+4. Cells below -2 are bedrock. Raise past +4 / sink below -2 is invalid.
 3. Range: eye to nearest point of the targeted block, <= 6.0 m.
