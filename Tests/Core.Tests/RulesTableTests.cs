@@ -27,20 +27,20 @@ namespace Sculpt.Core.Tests
         // type, reinforce, enemy reinforced, expected cost (basis points), expected windup ticks
         [TestCase(SculptActionType.Move, false, false, 500, 12)]
         [TestCase(SculptActionType.Move, true, false, 2000, 21)]
-        [TestCase(SculptActionType.Move, false, true, 1000, 36)]
-        [TestCase(SculptActionType.Move, true, true, 2500, 36)]
+        [TestCase(SculptActionType.Move, false, true, 1000, 24)]
+        [TestCase(SculptActionType.Move, true, true, 2500, 24)]
         [TestCase(SculptActionType.Raise, false, false, 1000, 12)]
         [TestCase(SculptActionType.Raise, true, false, 2500, 21)]
-        [TestCase(SculptActionType.Raise, false, true, 2000, 36)]
-        [TestCase(SculptActionType.Raise, true, true, 3500, 36)]
+        [TestCase(SculptActionType.Raise, false, true, 2000, 24)]
+        [TestCase(SculptActionType.Raise, true, true, 3500, 24)]
         [TestCase(SculptActionType.Sink, false, false, 700, 12)]
         [TestCase(SculptActionType.Sink, true, false, 2200, 21)]
-        [TestCase(SculptActionType.Sink, false, true, 1400, 36)]
-        [TestCase(SculptActionType.Sink, true, true, 2900, 36)]
+        [TestCase(SculptActionType.Sink, false, true, 1400, 24)]
+        [TestCase(SculptActionType.Sink, true, true, 2900, 24)]
         [TestCase(SculptActionType.Shape, false, false, 500, 12)]
         [TestCase(SculptActionType.Shape, true, false, 2000, 21)]
-        [TestCase(SculptActionType.Shape, false, true, 1000, 36)]
-        [TestCase(SculptActionType.Shape, true, true, 2500, 36)]
+        [TestCase(SculptActionType.Shape, false, true, 1000, 24)]
+        [TestCase(SculptActionType.Shape, true, true, 2500, 24)]
         public void CostAndWindupForEveryCombination(SculptActionType type, bool reinforce, bool enemyReinforced, int cost, int windup)
         {
             var w = new TestWorld();

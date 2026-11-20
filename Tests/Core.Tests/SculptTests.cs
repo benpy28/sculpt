@@ -325,11 +325,11 @@ namespace Sculpt.Core.Tests
             SculptCheck c = _w.Sculpt.Evaluate(_p1, PushEast(Target));
             Assert.That(c.EnemyReinforced, Is.True);
             Assert.That(c.Cost, Is.EqualTo(1000));
-            Assert.That(c.WindupTicks, Is.EqualTo(36));
+            Assert.That(c.WindupTicks, Is.EqualTo(24));
 
             SculptCheck r = _w.Sculpt.Evaluate(_p1, PushEast(Target, true));
             Assert.That(r.Cost, Is.EqualTo(2 * 500 + 1500), "reinforce surcharge is not doubled");
-            Assert.That(r.WindupTicks, Is.EqualTo(36));
+            Assert.That(r.WindupTicks, Is.EqualTo(24));
         }
 
         [Test]
@@ -367,7 +367,7 @@ namespace Sculpt.Core.Tests
         {
             ReinforceTarget(2, 5000);
             _w.Sculpt.TryBegin(_p1, PushEast(Target));
-            _w.Step(36);
+            _w.Step(24);
             Block b = _w.At(8, 0, 5);
             Assert.That(b.IsReinforced(_w.Sculpt.Tick), Is.False);
         }
