@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using Sculpt.Core;
 using Sculpt.Core.Net;
+using Sculpt.Game.Net;
+using Sculpt.Game.Player;
 using UnityEngine;
 
 namespace Sculpt.Game.World
@@ -8,6 +10,7 @@ namespace Sculpt.Game.World
     /// <summary>
     /// Owns one GameObject + mesh per sub-cell chunk and rebuilds only chunks the grid marks dirty. Also drives the
     /// local sculpt overlay on the terrain material (purple edge glow, ripple, range dimming) and the fading team tint.
+    /// Also owns the meadow (<see cref="GrassField"/>, re-planted with each rebuilt chunk) and the shared wind.
     /// </summary>
     public sealed class WorldView : MonoBehaviour
     {
@@ -53,9 +56,26 @@ namespace Sculpt.Game.World
             RebuildDirty();
         }
 
-        public void Init(SubGrid grid, SculptConfig sculpt)
+        private GrassField _grass;
+        private LocalPlayer _localPlayer;
+        private NetSession _session;
+        private readonly List<Vector3> _actors = new List<Vector3>();
+        private readonly List<int> _remoteIds = new List<int>();
+
+        /// <summary>map: optional, for trees (anchors drawn as bark and leaves).</summary>
+        public void Init(SubGrid grid, SculptConfig sculpt, MapInfo map = null)
         {
             _mesher = new ChunkMesher();
+            if (map != null && map.Trees.Count > 0)
+            {
+                _mesher.Decor = new Dictionary<Int3, byte>();
+                foreach (TreeInfo t in map.Trees)
+                {
+                    foreach (Int3 c in t.Wood) _mesher.Decor[c] = (byte)ChunkMesher.KindWood;
+                    foreach (Int3 c in t.Leaves) _mesher.Decor[c] = (byte)ChunkMesher.KindLeaves;
+                }
+            }
+            _grass = new GrassField();
             Shader shader = Shader.Find("SCULPT/Voxel");
             if (shader == null)
             {
@@ -97,8 +117,34 @@ namespace Sculpt.Game.World
                 }
             }
             _grid = grid;
+            _grass.Bind(grid);
             grid.MarkAllDirty();
             RebuildDirty();
+        }
+
+        /// <summary>Players whose feet flatten the grass (the local player and everyone drawn remotely).</summary>
+        public void TrackPlayers(LocalPlayer local, NetSession session)
+        {
+            _localPlayer = local;
+            _session = session;
+        }
+
+        private void LateUpdate()
+        {
+            Wind.Update(Time.time);
+            if (_grass == null) return;
+            _actors.Clear();
+            if (_localPlayer != null) _actors.Add(_localPlayer.RenderFeet);
+            if (_session != null)
+            {
+                NetClient net = _session.Client;
+                net.GetRemoteIds(_remoteIds);
+                foreach (int id in _remoteIds)
+                    if (net.TryGetRemote(id, out RemoteView v) && !v.Dead) _actors.Add(v.Position.ToUnity());
+            }
+            _grass.SetActors(_actors);
+            Camera cam = Camera.main;
+            if (cam != null) _grass.Draw(cam.transform.position);
         }
 
         /// <summary>Rebuild every chunk the grid changed since the last call.</summary>
@@ -109,7 +155,11 @@ namespace Sculpt.Game.World
             if (!_grid.HasDirtyChunks) return 0;
             _dirty.Clear();
             _grid.DrainDirtyChunks(_dirty);
-            foreach (int i in _dirty) _mesher.Build(_grid, _grid.ChunkCoordFromIndex(i), _meshes[i]);
+            foreach (int i in _dirty)
+            {
+                _mesher.Build(_grid, _grid.ChunkCoordFromIndex(i), _meshes[i]);
+                _grass.Rebuild(i);
+            }
             return _dirty.Count;
         }
 
