@@ -61,13 +61,16 @@ namespace Sculpt.Game.UI
             {
                 _gl.SetPass(0);
                 GL.PushMatrix();
-                GL.LoadPixelMatrix();
-                if (!s.Dead) DrawCrosshair(s, cfg, w / 2f, h / 2f);
-                DrawHitMarker(w / 2f, h / 2f);
-                DrawHurt(w, h);
-                DrawHealthBar(s, cfg);
-                DrawHotbar(s, net.Tick, w);
-                GL.PopMatrix();
+                try
+                {
+                    GL.LoadPixelMatrix();
+                    if (!s.Dead) DrawCrosshair(s, cfg, w / 2f, h / 2f);
+                    DrawHitMarker(w / 2f, h / 2f);
+                    DrawHurt(w, h);
+                    DrawHealthBar(s, cfg);
+                    DrawHotbar(s, net.Tick, w);
+                }
+                finally { GL.PopMatrix(); } // an exception must never leave the matrix stack pushed
             }
 
             // Health number.

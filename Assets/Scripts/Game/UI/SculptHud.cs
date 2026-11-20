@@ -44,7 +44,7 @@ namespace Sculpt.Game.UI
 
         private void OnGUI()
         {
-            if (_player == null || _session == null) return;
+            if (_player == null || _session == null || _view == null) return;
             NetClient net = _session.Client;
             SculptClient sc = net.Sculpt;
             if (sc == null || !net.Joined) return;
@@ -63,30 +63,41 @@ namespace Sculpt.Game.UI
             {
                 _gl.SetPass(0);
                 GL.PushMatrix();
-                GL.LoadPixelMatrix();
-                DrawBar(sc, cx, Screen.height - cy, hand);
-                DrawWarnings(sc);
-                DrawHitMarker(cx, Screen.height - cy);
-                GL.PopMatrix();
+                try
+                {
+                    GL.LoadPixelMatrix();
+                    DrawBar(sc, cx, Screen.height - cy, hand);
+                    DrawWarnings(sc);
+                    DrawHitMarker(cx, Screen.height - cy);
+                }
+                finally { GL.PopMatrix(); } // an exception must never leave the matrix stack pushed
             }
 
-            // Text under the crosshair.
-            string label = null;
+            // Text under the crosshair: what a left click does right now and what it costs, or why it can't happen
+            // (shown live while you aim, not only after a refused click), plus the binds while in sculpt mode.
+            string label = null, detail = null;
             Color col = Color.white;
+            bool refusedRecently = Time.time - _view.RejectTime < 0.9f;
             if (hand.Mode == HandMode.Disarmed) { label = "DISARMED"; col = Red; }
-            else if (Time.time - _view.RejectTime < 0.7f) { label = Reason(_view.LastReject); col = Red; }
-            else if (hand.Mode == HandMode.SculptEnter) label = "sculpt...";
-            else if (hand.Mode == HandMode.Sculpt) label = _player.ReinforceHeld ? "SCULPT  reinforce" : "SCULPT";
+            else if (refusedRecently) { label = "REFUSED: " + Reason(_view.LastReject); col = Red; }
+            else if (hand.Mode == HandMode.SculptEnter) label = "SCULPT MODE...";
+            else if (hand.Mode == HandMode.Sculpt)
+            {
+                if (!_player.Target.Valid) { label = "SCULPT MODE: aim at rock within 6 m"; col = new Color(1, 1, 1, 0.75f); }
+                else if (_player.HasHover)
+                {
+                    SculptCheck c = _player.HoverCheck;
+                    int pct = Mathf.RoundToInt(c.Cost * 100f / SculptConfig.BarMax);
+                    string what = "LMB push " + DirName(_player.HoverAction.Direction) + (_player.ReinforceHeld ? " + reinforce" : "");
+                    if (c.IsValid) label = $"{what}   {pct}%";
+                    else { label = $"{what}: can't, {Reason(c.Result)}"; col = Red; }
+                }
+            }
             else if (hand.Mode == HandMode.SculptExit || hand.Mode == HandMode.Drawing) label = WeaponName(hand.Held) + "...";
             if (hand.InSculptMode && hand.SculptLockUntil > net.Tick) label = (label ?? "SCULPT") + "  (gun locked)";
-            if (label != null)
-            {
-                var r = new Rect(cx - 160, cy + 38, 320, 20);
-                GUI.Label(new Rect(r.x + 1, r.y + 1, r.width, r.height), label, _shadow);
-                _small.normal.textColor = col;
-                GUI.Label(r, label, _small);
-                _small.normal.textColor = Color.white;
-            }
+            if (hand.InSculptMode) detail = "LMB push   RMB pull   wheel up raise   wheel down sink   E throw   hold Alt reinforce   Q back to gun";
+            if (label != null) Label(new Rect(cx - 260, cy + 38, 520, 22), label, col, 15);
+            if (detail != null) Label(new Rect(cx - 360, cy + 60, 720, 20), detail, new Color(1, 1, 1, 0.6f), 12);
             if (Time.time - _view.HurtTime < 0.6f)
             {
                 string hurt = $"-{_view.LastHurt}";
@@ -94,6 +105,31 @@ namespace Sculpt.Game.UI
                 _small.normal.textColor = Red;
                 GUI.Label(new Rect(cx - 61, cy + 57, 120, 20), hurt, _small);
                 _small.normal.textColor = Color.white;
+            }
+        }
+
+        private void Label(Rect r, string text, Color col, int size)
+        {
+            _small.fontSize = size;
+            _shadow.fontSize = size;
+            GUI.Label(new Rect(r.x + 1, r.y + 1, r.width, r.height), text, _shadow);
+            _small.normal.textColor = col;
+            GUI.Label(r, text, _small);
+            _small.normal.textColor = Color.white;
+            _small.fontSize = 13;
+            _shadow.fontSize = 13;
+        }
+
+        private static string DirName(Dir d)
+        {
+            switch (d)
+            {
+                case Dir.North: return "north";
+                case Dir.South: return "south";
+                case Dir.East: return "east";
+                case Dir.West: return "west";
+                case Dir.Up: return "up";
+                default: return "down";
             }
         }
 
@@ -115,7 +151,7 @@ namespace Sculpt.Game.UI
                 case SculptResult.NotSculptable: return "not sculptable";
                 case SculptResult.NotInSculptMode: return "not ready";
                 case SculptResult.Disturbed: return "disturbed";
-                default: return "refused";
+                default: return r.ToString();
             }
         }
 

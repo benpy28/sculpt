@@ -18,7 +18,7 @@ namespace Sculpt.Game.World
         private readonly List<Vector3> _n = new List<Vector3>();
         private readonly List<Vector2> _uv = new List<Vector2>();
         private readonly List<int> _t = new List<int>();
-        private readonly Mesh _scratch = new Mesh();
+        private Mesh _scratch; // made on first use: Unity objects can't be created from constructors or field initializers
         private SubGrid _grid;
 
         /// <summary>World position of the scratch grid's sub-cell (0, MinY, 0) for the last built mesh.</summary>
@@ -29,6 +29,7 @@ namespace Sculpt.Game.World
         {
             mesh.Clear();
             if (cells == null || cells.Count == 0) return false;
+            if (_scratch == null) _scratch = new Mesh { name = "Piece scratch" };
             int x0 = int.MaxValue, y0 = int.MaxValue, z0 = int.MaxValue, x1 = int.MinValue, y1 = int.MinValue, z1 = int.MinValue;
             foreach (var c0 in cells)
             {

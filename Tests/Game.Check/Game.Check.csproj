@@ -17,11 +17,10 @@
     <UnityManaged Condition="'$(UnityManaged)' == ''">C:\Program Files\Unity\Hub\Editor\6000.4.1f1\Editor\Data\Managed\</UnityManaged>
     <ScriptAssemblies>$(ProjectRoot)Library\ScriptAssemblies\</ScriptAssemblies>
   </PropertyGroup>
-  <ItemGroup Condition="'$(FishNetRuntime)' == ''">
-    <Compile Include="$(ProjectRoot)Library\PackageCache\com.firstgeargames.fishnet@*\Runtime\**\*.cs"
-             Exclude="$(ProjectRoot)Library\PackageCache\com.firstgeargames.fishnet@*\Runtime\Plugins\Yak\**;$(ProjectRoot)Library\PackageCache\com.firstgeargames.fishnet@*\Runtime\Transporting\Transports\Synapse\**" />
-    <Reference Include="$(ProjectRoot)Library\PackageCache\com.firstgeargames.fishnet@*\Runtime\Plugins\CodeAnalysis\FishNet.CodeAnalysis.dll" />
-  </ItemGroup>
+  <!-- FishNet is embedded in Packages/ (without its Pro-only Yak plugin, which does not compile from source). -->
+  <PropertyGroup Condition="'$(FishNetRuntime)' == ''">
+    <FishNetRuntime>$(ProjectRoot)Packages\com.firstgeargames.fishnet\Runtime</FishNetRuntime>
+  </PropertyGroup>
   <ItemGroup Condition="'$(FishNetRuntime)' != ''">
     <Compile Include="$(FishNetRuntime)\**\*.cs" Exclude="$(FishNetRuntime)\Plugins\Yak\**;$(FishNetRuntime)\Transporting\Transports\Synapse\**" />
     <Reference Include="$(FishNetRuntime)\Plugins\CodeAnalysis\FishNet.CodeAnalysis.dll" />

@@ -48,11 +48,15 @@ namespace Sculpt.Game.World
         private readonly List<Vector2> _uvs = new List<Vector2>(16384);
         private readonly List<Vector3> _normals = new List<Vector3>(16384);
         private readonly List<int> _tris = new List<int>(24576);
-        private readonly bool _linear;
-
-        public ChunkMesher()
+        // Read lazily: Unity forbids QualitySettings in constructors, and meshers are created from field initializers.
+        private int _linearState; // 0 unknown, 1 gamma, 2 linear
+        private bool Linear
         {
-            _linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
+            get
+            {
+                if (_linearState == 0) _linearState = QualitySettings.activeColorSpace == ColorSpace.Linear ? 2 : 1;
+                return _linearState == 2;
+            }
         }
 
         public void Build(SubGrid g, Int3 chunkCoord, Mesh mesh)
@@ -173,6 +177,6 @@ namespace Sculpt.Game.World
             return (float)(side + (ShadeBottom - side) * -n.Y);
         }
 
-        private Color Lin(Color c) => _linear ? c.linear : c;
+        private Color Lin(Color c) => Linear ? c.linear : c;
     }
 }

@@ -25,8 +25,8 @@ namespace Sculpt.Game.Sculpting
     {
         // Colours. Purple is reserved for "sculptable". Red only for invalid.
         public static readonly Color HoverEdge = new Color(0.93f, 0.85f, 1.00f, 0.95f);
-        public static readonly Color GhostOk = new Color(0.78f, 0.62f, 1.00f, 0.28f);
-        public static readonly Color GhostBad = new Color(1.00f, 0.18f, 0.15f, 0.30f);
+        public static readonly Color GhostOk = new Color(0.78f, 0.62f, 1.00f, 0.40f);
+        public static readonly Color GhostBad = new Color(1.00f, 0.18f, 0.15f, 0.42f);
         public static readonly Color BadEdge = new Color(1.00f, 0.25f, 0.2f, 0.95f);
         public static readonly Color[] Team =
         {
@@ -44,7 +44,7 @@ namespace Sculpt.Game.Sculpting
         private Mesh _ghostMesh;
         private MeshRenderer _ghostRenderer;
         private long _ghostKey;
-        private readonly PieceMesher _pieceMesher = new PieceMesher();
+        private PieceMesher _pieceMesher; // made in Init (it creates Unity objects, which field initializers may not)
         private readonly Dictionary<long, List<Vector3>> _edgeCache = new Dictionary<long, List<Vector3>>();
         private readonly Dictionary<object, AudioSource> _hums = new Dictionary<object, AudioSource>();
         private readonly Dictionary<object, AudioSource> _crystals = new Dictionary<object, AudioSource>();
@@ -117,6 +117,7 @@ namespace Sculpt.Game.Sculpting
             _ghostRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             _ghost.SetActive(false);
 
+            _pieceMesher = new PieceMesher();
             _snap = new PieceSnap(world, transform);
             _dust = MakeParticles("Dust", _particleMat, false);
             _debris = MakeParticles("Debris", _chipMat, true);
@@ -185,7 +186,7 @@ namespace Sculpt.Game.Sculpting
 
         private void LateUpdate()
         {
-            if (_player == null || _rig == null || _rig.Camera == null) return;
+            if (_player == null || _rig == null || _rig.Camera == null || _lines == null) return;
             NetClient net = _session.Client;
             SculptClient sc = net.Sculpt;
             if (sc != _boundSculpt) { ClearAll(); _boundSculpt = sc; }
@@ -209,6 +210,7 @@ namespace Sculpt.Game.Sculpting
 
         private void ClearAll()
         {
+            if (_hums == null) return; // construction failed; nothing to clean up
             foreach (var h in _hums.Values) if (h != null) Destroy(h.gameObject);
             _hums.Clear();
             foreach (var h in _crystals.Values) if (h != null) Destroy(h.gameObject);
@@ -235,7 +237,7 @@ namespace Sculpt.Game.Sculpting
             if (c.Cells == null || c.Cells.Length == 0) { _ghost.SetActive(false); return; }
 
             // Outline of the piece that would move (bright white-purple), red edges if the action is refused.
-            AddOutline(c.Cells, Int3.Zero, ok ? HoverEdge : BadEdge, 0.022f, 0f, 0);
+            AddOutline(c.Cells, Int3.Zero, ok ? HoverEdge : BadEdge, 0.03f, 0f, 0);
 
             // Ghost where it would go.
             long key = CellsKey(c.Cells, c.Delta);
@@ -479,6 +481,7 @@ namespace Sculpt.Game.Sculpting
                     case ClientSculptEventType.Rejected:
                         RejectTime = Time.time;
                         LastReject = e.Result;
+                        Debug.Log($"[SCULPT] Sculpt refused: {e.Result} ({e.Action})");
                         SculptAudio.Play(SculptAudio.Reject, Vector3.zero, 0.5f, 1f, false);
                         break;
                     case ClientSculptEventType.Warned:

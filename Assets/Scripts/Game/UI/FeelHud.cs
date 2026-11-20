@@ -76,10 +76,13 @@ namespace Sculpt.Game.UI
             {
                 _gl.SetPass(0);
                 GL.PushMatrix();
-                GL.LoadPixelMatrix();
-                if (_speedLines > 0.01f) DrawSpeedLines(w, h);
-                DrawCompassTicks(cx, h - top, stripW, stripH, yaw);
-                GL.PopMatrix();
+                try
+                {
+                    GL.LoadPixelMatrix();
+                    if (_speedLines > 0.01f) DrawSpeedLines(w, h);
+                    DrawCompassTicks(cx, h - top, stripW, stripH, yaw);
+                }
+                finally { GL.PopMatrix(); } // an exception must never leave the matrix stack pushed
             }
 
             // Letters and heading.
