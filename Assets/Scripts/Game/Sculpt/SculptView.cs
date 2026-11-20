@@ -236,8 +236,15 @@ namespace Sculpt.Game.Sculpting
             bool ok = c.IsValid;
             if (c.Cells == null || c.Cells.Length == 0) { _ghost.SetActive(false); return; }
 
-            // Outline of the piece that would move (bright white-purple), red edges if the action is refused.
-            AddOutline(c.Cells, Int3.Zero, ok ? HoverEdge : BadEdge, 0.03f, 0f, 0);
+            // Outline of the piece you would grab (bright white-purple). While only hovering, a move that can't happen
+            // is never red (Ben: red only when you actually try): a faint outline, no ghost, no arrow.
+            if (!ok)
+            {
+                AddOutline(c.Cells, Int3.Zero, new Color(HoverEdge.r, HoverEdge.g, HoverEdge.b, HoverEdge.a * 0.45f), 0.02f, 0f, 0);
+                _ghost.SetActive(false);
+                return;
+            }
+            AddOutline(c.Cells, Int3.Zero, HoverEdge, 0.03f, 0f, 0);
 
             // Ghost where it would go.
             long key = CellsKey(c.Cells, c.Delta);
@@ -253,7 +260,7 @@ namespace Sculpt.Game.Sculpting
             // Direction arrow on top of the piece.
             Bounds b = CellBounds(c.Cells, Int3.Zero);
             Vector3 top = new Vector3(b.center.x, b.max.y + 0.04f, b.center.z);
-            Vector3 d = t.PushDir.ToVec().ToUnity();
+            Vector3 d = _player.HoverAction.Direction.ToVec().ToUnity();
             Chevrons(top - d * 0.25f, d, Vector3.up, 0.32f, ok ? HoverEdge : BadEdge, 2, 0.03f);
         }
 

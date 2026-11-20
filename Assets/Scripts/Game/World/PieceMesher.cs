@@ -12,12 +12,13 @@ namespace Sculpt.Game.World
     {
         private const int Chunks = 2;                // 32^3 sub-cells: the biggest piece plus a move
         private const int Span = Chunks * SubGrid.ChunkSize;
-        private readonly ChunkMesher _mesher = new ChunkMesher { MarkSculptable = false };
+        private readonly ChunkMesher _mesher = new ChunkMesher { MarkSculptable = false, OnlyId = SubId.Natural };
         private readonly List<Vector3> _v = new List<Vector3>();
         private readonly List<Color> _c = new List<Color>();
         private readonly List<Vector3> _n = new List<Vector3>();
-        private readonly List<Vector2> _uv = new List<Vector2>();
+        private readonly List<Vector3> _uv = new List<Vector3>();
         private readonly List<int> _t = new List<int>();
+        private readonly List<Vector3> _uvScratch = new List<Vector3>();
         private Mesh _scratch; // made on first use: Unity objects can't be created from constructors or field initializers
         private SubGrid _grid;
 
@@ -61,7 +62,7 @@ namespace Sculpt.Game.World
                 foreach (var v in verts) _v.Add(v + shift);
                 _c.AddRange(_scratch.colors);
                 _n.AddRange(_scratch.normals);
-                _uv.AddRange(_scratch.uv);
+                _scratch.GetUVs(0, _uvScratch); _uv.AddRange(_uvScratch);
                 foreach (int tri in _scratch.triangles) _t.Add(tri + start);
             }
             _grid.DrainDirtyChunks(new List<int>());

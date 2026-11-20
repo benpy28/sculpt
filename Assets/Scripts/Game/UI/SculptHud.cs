@@ -77,7 +77,9 @@ namespace Sculpt.Game.UI
                     SculptCheck c = _player.HoverCheck;
                     string what = "PUSH " + DirName(_player.HoverAction.Direction).ToUpperInvariant() + (_player.ReinforceHeld ? "  +  REINFORCE" : "");
                     if (c.IsValid) { label = what; cost = Mathf.RoundToInt(c.Cost * 100f / SculptConfig.BarMax) + "%"; }
-                    else { label = what + "  ·  " + Reason(c.Result).ToUpperInvariant(); red = true; }
+                    // Only hovering: say why, quietly. Red is for a click that was actually refused.
+                    else if (c.Result == SculptResult.DestinationBlocked) { label = "CAN'T PUSH HERE  ·  WHEEL TO RAISE OR SINK"; col = HudDraw.Dim; }
+                    else { label = what + "  ·  " + Reason(c.Result).ToUpperInvariant(); col = HudDraw.Dim; }
                 }
             }
             else if (hand.Mode == HandMode.SculptExit || hand.Mode == HandMode.Drawing) { label = WeaponName(hand.Held).ToUpperInvariant(); col = HudDraw.Dim; }

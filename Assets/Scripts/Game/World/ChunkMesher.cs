@@ -45,6 +45,13 @@ namespace Sculpt.Game.World
         /// <summary>Flag sculptable faces in uv.y (off for ghosts and flying pieces).</summary>
         public bool MarkSculptable = true;
 
+        /// <summary>
+        /// Free-standing meshes (ghosts, flying and snapping pieces): draw only faces of this id and give them the
+        /// crystal look. Their scratch grid reads as bedrock outside its bounds, which otherwise meshed a 9.6 m open
+        /// box around the piece (the "plates" from the play-test).
+        /// </summary>
+        public ushort OnlyId;
+
         private readonly List<Vector3> _verts = new List<Vector3>(16384);
         private readonly List<Color> _colors = new List<Color>(16384);
         private readonly List<Vector3> _uvs = new List<Vector3>(16384);
@@ -114,13 +121,14 @@ namespace Sculpt.Game.World
             Int3 owner = TerrainGeometry.NearestOccupied(cfg, vx, vy, vz, centroid);
             if (Hidden != null && Hidden.Count > 0 && Hidden.Contains(owner)) return;
             ushort ownerId = g.Get(owner);
+            if (OnlyId != 0 && ownerId != OnlyId) return;
             Color albedo = Lin(Albedo(ownerId, owner)) * Shade(f.Normal);
             albedo.a = 1f - (PieceReinforce != null && SubId.IsPiece(ownerId) ? Mathf.Clamp01(PieceReinforce(ownerId)) : 0f);
             // uv.y: 1 on sculptable rock (the shader draws the faint purple edge glow and the sculpt-mode overlay there).
             float sculptable = SubId.IsSculptable(ownerId) && owner.Y >= SubGrid.SculptMinY && owner.Y < 4 * SubGrid.TileSubs ? 1f : 0f;
             if (!MarkSculptable) sculptable = 0f;
             // uv.z: 1 on sculpted pieces (crystal look), also while they snap or fly.
-            float crystal = SubId.IsPiece(ownerId) ? 1f : 0f;
+            float crystal = SubId.IsPiece(ownerId) || OnlyId != 0 ? 1f : 0f;
 
             int start = _verts.Count;
             for (int i = 0; i < f.Verts.Length; i++)
@@ -129,7 +137,7 @@ namespace Sculpt.Game.World
                 _verts.Add(cellMin + new Vector3((float)lv.X, (float)lv.Y, (float)lv.Z) * h);
                 _normals.Add(normal);
                 Color vc = albedo;
-                float ao = Occlusion(g, worldMin + lv * TerrainShape.H);
+                float ao = OnlyId != 0 ? 1f : Occlusion(g, worldMin + lv * TerrainShape.H);
                 vc.r *= ao; vc.g *= ao; vc.b *= ao;
                 _colors.Add(vc);
                 // Seam weight: the vertex sits next to a different solid id than the face's owner.
