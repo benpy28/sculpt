@@ -45,7 +45,14 @@ namespace Sculpt.Core
         {
             public SculptAction Action;
             public int ExpireTick;
+            /// <summary>Aimed at the piece of your own windup: once it lands, the aim follows the piece by this much.</summary>
+            public Int3 FollowDelta;
+            /// <summary>The aim followed your own landed piece: line of sight was checked at the click, not again.</summary>
+            public bool Chained;
         }
+
+        /// <summary>Set while evaluating a confirm chained onto your own landed piece (range is checked, sight is not).</summary>
+        private bool _chained;
 
         public SculptSystem(SubGrid grid, SculptConfig config, int startTick = 0)
         {
@@ -109,10 +116,14 @@ namespace Sculpt.Core
             if (!c.IsValid)
             {
                 if (allowBuffer && (c.Result == SculptResult.Locked || c.Result == SculptResult.Busy) && Config.ConfirmBufferTicks > 0)
-                    _buffered[p.Id] = new BufferedConfirm { Action = a, ExpireTick = Tick + Config.ConfirmBufferTicks };
+                {
+                    QueueRule(p.Id, a, out int expire, out Int3 follow);
+                    _buffered[p.Id] = new BufferedConfirm { Action = a, ExpireTick = expire, FollowDelta = follow };
+                }
                 return c;
             }
             _buffered.Remove(p.Id);
+            a.Target = c.Target; // resolve on the sub-cell it really works on (the column top for raise and sink)
 
             if (c.PieceId == 0)
             {
@@ -154,10 +165,70 @@ namespace Sculpt.Core
             return c;
         }
 
+        /// <summary>
+        /// How long a Locked or Busy confirm waits, and whether its aim follows a piece. A click during your own windup
+        /// is queued until that windup ends (plus the click buffer), so pressing early never refuses you; if it aims at
+        /// the piece you are already moving, it follows that piece. Anything else waits ConfirmBufferTicks.
+        /// The client's prediction uses the same rule.
+        /// </summary>
+        public void QueueRule(int playerId, in SculptAction a, out int expireTick, out Int3 followDelta)
+        {
+            expireTick = Tick + Config.ConfirmBufferTicks;
+            followDelta = Int3.Zero;
+            if (!_pending.TryGetValue(playerId, out var own)) return;
+            expireTick = Math.Max(expireTick, own.CompleteTick + Config.ConfirmBufferTicks);
+            if (own.Check.Delta == Int3.Zero || own.Check.Cells == null) return;
+            foreach (var x in own.Check.Cells)
+                if (x == a.Target) { followDelta = own.Check.Delta; return; }
+        }
+
+        /// <summary>
+        /// A queued confirm aimed at a piece that has since moved by <paramref name="delta"/>: moves the aim with it.
+        /// True if it moved (the piece is now where the aim plus delta is, and no longer under the old aim).
+        /// </summary>
+        public bool TryFollow(ref SculptAction a, Int3 delta)
+        {
+            if (delta == Int3.Zero) return false;
+            Int3 to = a.Target + delta;
+            if (!Grid.InBounds(to) || !Grid.InBounds(a.Target)) return false;
+            ushort there = Grid.Get(to);
+            if (!SubId.IsPiece(there) || Grid.Get(a.Target) == there) return false;
+            a.Target = to;
+            a.AimPoint = a.AimPoint + new Vec3d(delta.X, delta.Y, delta.Z) * SubGrid.SubSize;
+            return true;
+        }
+
+        /// <summary>Evaluate() for a confirm chained onto your own landed piece: sight was checked at the click.</summary>
+        public SculptCheck EvaluateChained(PlayerBody p, SculptAction a)
+        {
+            _chained = true;
+            try { return EvaluateInternal(p, a, false); }
+            finally { _chained = false; }
+        }
+
         private static SculptCheck Fail(SculptCheck c, SculptResult r)
         {
             c.Result = r;
             return c;
+        }
+
+        /// <summary>
+        /// The top sculptable sub-cell of the column above <paramref name="from"/> (through natural rock and pieces).
+        /// Returns <paramref name="from"/> unchanged if an anchor or bedrock caps the column.
+        /// </summary>
+        private Int3 ColumnTop(Int3 from)
+        {
+            Int3 t = from;
+            for (int k = 0; k < 64; k++)
+            {
+                Int3 up = t + Int3.Up;
+                if (!Grid.InBounds(up)) break;
+                ushort v = Grid.Get(up);
+                if (v == SubId.Empty) break;
+                if (!SubId.IsSculptable(v)) return from;
+                t = up;
+            }
+            return t;
         }
 
         private bool LockedByOther(Int3 cell, int playerId) => _locks.TryGetValue(cell, out int owner) && owner != playerId;
@@ -182,6 +253,22 @@ namespace Sculpt.Core
             ushort id = Grid.Get(a.Target);
             if (id == SubId.Empty) return Fail(c, SculptResult.NoTarget);
             if (!SubId.IsSculptable(id)) return Fail(c, SculptResult.NotSculptable);
+
+            // Raise and sink work on the top of the column you aim at ("add to / take from the top"), so aiming at the
+            // side of a wall never gets refused because rock sits above the level you happened to hit.
+            Int3 aimed = a.Target;
+            bool retargeted = false;
+            if ((a.Type == SculptActionType.Raise || a.Type == SculptActionType.Sink) && id == SubId.Natural)
+            {
+                Int3 top = ColumnTop(a.Target);
+                if (top != a.Target)
+                {
+                    a.Target = top;
+                    id = Grid.Get(top);
+                    retargeted = true;
+                }
+            }
+            c.Target = a.Target;
             if (a.Target.Y < Config.MinSubY || a.Target.Y > Config.MaxSubY) return Fail(c, SculptResult.NotSculptable);
 
             // The piece: an existing one, or the natural rock this aim would carve.
@@ -208,15 +295,15 @@ namespace Sculpt.Core
             {
                 case SculptActionType.Move:
                     if (!a.Direction.IsHorizontal()) return Fail(c, SculptResult.BadDirection);
-                    c.Delta = a.Direction.ToInt3() * SubGrid.TileSubs;
+                    c.Delta = Config.DeltaFor(a.Type, a.Direction);
                     break;
                 case SculptActionType.Raise:
-                    c.Delta = new Int3(0, SubGrid.TileSubs, 0);
-                    if (maxY + SubGrid.TileSubs > Config.MaxSubY) return Fail(c, SculptResult.OutOfHeightRange);
+                    c.Delta = Config.DeltaFor(a.Type, a.Direction);
+                    if (maxY + Config.LiftSubs > Config.MaxSubY) return Fail(c, SculptResult.OutOfHeightRange);
                     break;
                 case SculptActionType.Sink:
-                    c.Delta = new Int3(0, -SubGrid.TileSubs, 0);
-                    if (minY - SubGrid.TileSubs < Config.MinSubY) return Fail(c, SculptResult.OutOfHeightRange);
+                    c.Delta = Config.DeltaFor(a.Type, a.Direction);
+                    if (minY - Config.LiftSubs < Config.MinSubY) return Fail(c, SculptResult.OutOfHeightRange);
                     break;
                 case SculptActionType.Throw:
                     c.Delta = Int3.Zero;
@@ -250,16 +337,22 @@ namespace Sculpt.Core
 
             if (!resolving)
             {
-                // Range and line of sight from the server's view of the eye.
+                // Range and line of sight from the server's view of the eye, to what you aimed at.
                 Vec3d eye = p.Eye;
-                Aabb targetBox = SubGrid.SubBounds(a.Target);
+                Aabb targetBox = SubGrid.SubBounds(aimed);
                 if ((targetBox.ClosestPoint(eye) - eye).Length > Config.RangeMeters + 1e-9) return Fail(c, SculptResult.OutOfRange);
-                if (!targetBox.Contains(a.AimPoint, Config.AimTolerance)) return Fail(c, SculptResult.NoLineOfSight);
-                Vec3d toAim = a.AimPoint - eye;
-                TerrainHit hit = Grid.Raycast(eye, toAim, toAim.Length + 0.05);
-                if (!hit.Hit) return Fail(c, SculptResult.NoLineOfSight);
-                bool samePiece = info != null ? hit.Id == id : (hit.Id == SubId.Natural && _setScratch.Contains(hit.Sub));
-                if (!samePiece) return Fail(c, SculptResult.NoLineOfSight);
+                if (!_chained)
+                {
+                    if (!targetBox.Contains(a.AimPoint, Config.AimTolerance)) return Fail(c, SculptResult.NoLineOfSight);
+                    Vec3d toAim = a.AimPoint - eye;
+                    TerrainHit hit = Grid.Raycast(eye, toAim, toAim.Length + 0.05);
+                    if (!hit.Hit) return Fail(c, SculptResult.NoLineOfSight);
+                    bool samePiece = info != null ? hit.Id == id : (hit.Id == SubId.Natural && _setScratch.Contains(hit.Sub));
+                    // Retargeted to the column top: the ray must reach the column you aimed at.
+                    if (!samePiece && retargeted)
+                        samePiece = SubId.IsSculptable(hit.Id) && Math.Abs(hit.Sub.X - aimed.X) <= 1 && Math.Abs(hit.Sub.Z - aimed.Z) <= 1;
+                    if (!samePiece) return Fail(c, SculptResult.NoLineOfSight);
+                }
             }
 
             // Cost and windup, scaled by size.
@@ -478,7 +571,15 @@ namespace Sculpt.Core
                     if (Tick > b.ExpireTick) continue;
                     PlayerBody p = FindPlayer(id);
                     if (p == null) continue;
-                    SculptCheck c = TryBeginInternal(p, b.Action, false);
+                    if (b.FollowDelta != Int3.Zero && !_pending.ContainsKey(id))
+                    {
+                        if (TryFollow(ref b.Action, b.FollowDelta)) b.Chained = true;
+                        b.FollowDelta = Int3.Zero;
+                    }
+                    _chained = b.Chained;
+                    SculptCheck c;
+                    try { c = TryBeginInternal(p, b.Action, false); }
+                    finally { _chained = false; }
                     if (c.Result == SculptResult.Locked || c.Result == SculptResult.Busy) _buffered[id] = b; // keep waiting until it expires
                 }
             }
@@ -493,6 +594,8 @@ namespace Sculpt.Core
         {
             PlayerBody p = FindPlayer(pend.PlayerId);
             SculptCheck c = p != null ? EvaluateInternal(p, pend.Action, true) : Fail(pend.Check, SculptResult.NoTarget);
+            // It resolves on the piece it started on, never on rock it would have to carve now.
+            if (c.IsValid && (c.PieceId == 0 || Pieces.Get(c.PieceId) == null)) c = Fail(c, SculptResult.Disturbed);
             ReleaseLocks(pend);
             _pending.Remove(pend.PlayerId);
 

@@ -168,8 +168,14 @@ namespace Sculpt.Core.Net
             public byte Seq;
             public SculptAction Action;
             public int ExpireTick;
+            public Int3 FollowDelta;
+            public bool Chained;
+            public SculptResult LastResult;
         }
         private Buffered _buffer;
+
+        /// <summary>Confirms this client already refused (and showed red for): the server's matching refusal is not shown again.</summary>
+        private readonly HashSet<byte> _localRejected = new HashSet<byte>();
 
         public SculptClient(SubGrid grid, SculptConfig config, MovementConfig movement)
         {
@@ -191,6 +197,7 @@ namespace Sculpt.Core.Net
             _windups.Clear();
             _flying.Clear();
             _buffer = default;
+            _localRejected.Clear();
             LocalId = localId;
             LocalTeam = team;
             LocalBody = new PlayerBody(localId, team, spawn);
@@ -204,6 +211,7 @@ namespace Sculpt.Core.Net
         {
             byte s = _nextSeq++;
             if (_nextSeq == 0) _nextSeq = 1;
+            _localRejected.Remove(s);
             return s;
         }
 
@@ -259,13 +267,15 @@ namespace Sculpt.Core.Net
         // ================================================================ Evaluation (ghost)
 
         /// <summary>Full check of an action from the local player's current predicted position, as the server would see it.</summary>
-        public SculptCheck Evaluate(in SculptAction a, int tick)
+        public SculptCheck Evaluate(in SculptAction a, int tick) => Evaluate(a, tick, false);
+
+        private SculptCheck Evaluate(in SculptAction a, int tick, bool chained)
         {
             if (LocalBody == null) return new SculptCheck { Result = SculptResult.NoTarget, Type = a.Type };
             Mirror.SetTick(tick);
             Mirror.BarOf(LocalId).SetValue(DisplayBar);
             if (a.Type == SculptActionType.Throw && HasOwnProjectile()) return new SculptCheck { Result = SculptResult.Busy, Type = a.Type };
-            SculptCheck c = Mirror.Evaluate(LocalBody, a);
+            SculptCheck c = chained ? Mirror.EvaluateChained(LocalBody, a) : Mirror.Evaluate(LocalBody, a);
             Mirror.ClearSupportQueue();
             return c;
         }
@@ -314,10 +324,21 @@ namespace Sculpt.Core.Net
             _deferredLock = int.MinValue;
             if (_buffer.Active)
             {
-                if (tick > _buffer.ExpireTick) RejectLocal(_buffer.Seq, _buffer.Action, SculptResult.Locked);
+                if (tick > _buffer.ExpireTick)
+                {
+                    _buffer.Active = false;
+                    RejectLocal(_buffer.Seq, _buffer.Action, _buffer.LastResult == SculptResult.Valid ? SculptResult.Locked : _buffer.LastResult);
+                }
                 else
                 {
-                    SculptCheck c = Evaluate(_buffer.Action, tick);
+                    // Same order and rule as the server: a click queued on your own moving piece follows it once it lands.
+                    if (_buffer.FollowDelta != Int3.Zero && Mirror.PendingOf(LocalId) == null)
+                    {
+                        if (Mirror.TryFollow(ref _buffer.Action, _buffer.FollowDelta)) _buffer.Chained = true;
+                        _buffer.FollowDelta = Int3.Zero;
+                    }
+                    SculptCheck c = Evaluate(_buffer.Action, tick, _buffer.Chained);
+                    _buffer.LastResult = c.Result;
                     if (c.IsValid)
                     {
                         _buffer.Active = false;
@@ -370,21 +391,23 @@ namespace Sculpt.Core.Net
             SculptCheck c = Evaluate(cmd.Sculpt, tick);
             if (c.IsValid)
             {
-                if (_buffer.Active) { RejectLocal(_buffer.Seq, _buffer.Action, SculptResult.Busy); _buffer.Active = false; }
+                if (_buffer.Active) { _localRejected.Add(_buffer.Seq); _buffer.Active = false; } // replaced: silent
                 return Math.Max(lockUntil, Begin(cmd.SculptSeq, cmd.Sculpt, c, tick));
             }
             if ((c.Result == SculptResult.Locked || c.Result == SculptResult.Busy) && Config.ConfirmBufferTicks > 0)
             {
-                if (_buffer.Active && _buffer.Seq != cmd.SculptSeq) RejectLocal(_buffer.Seq, _buffer.Action, SculptResult.Busy);
-                _buffer = new Buffered { Active = true, Seq = cmd.SculptSeq, Action = cmd.Sculpt, ExpireTick = tick + Config.ConfirmBufferTicks };
+                if (_buffer.Active && _buffer.Seq != cmd.SculptSeq) _localRejected.Add(_buffer.Seq); // the newest click wins, silently
+                Mirror.QueueRule(LocalId, cmd.Sculpt, out int expire, out Int3 follow);
+                _buffer = new Buffered { Active = true, Seq = cmd.SculptSeq, Action = cmd.Sculpt, ExpireTick = expire, FollowDelta = follow, LastResult = c.Result };
                 return lockUntil;
             }
             RejectLocal(cmd.SculptSeq, cmd.Sculpt, c.Result);
             return lockUntil;
         }
 
-        private int Begin(byte seq, in SculptAction a, SculptCheck c, int tick)
+        private int Begin(byte seq, SculptAction a, SculptCheck c, int tick)
         {
+            a.Target = c.Target; // as the server stores it
             var s = new LocalSculpt
             {
                 Seq = seq,
@@ -407,6 +430,7 @@ namespace Sculpt.Core.Net
 
         private void RejectLocal(byte seq, in SculptAction a, SculptResult r)
         {
+            _localRejected.Add(seq);
             Events.Add(new ClientSculptEvent { Type = ClientSculptEventType.Rejected, PlayerId = LocalId, Team = LocalTeam, Action = a.Type, Direction = a.Direction, Result = r, Value = seq, Mine = true });
         }
 
@@ -598,6 +622,7 @@ namespace Sculpt.Core.Net
             {
                 case WorldEventType.Began:
                 {
+                    if (mine) _localRejected.Remove(e.Seq);
                     LocalSculpt s = mine && !join ? FindLocal(e.Seq) : null;
                     if (s != null)
                     {
@@ -611,7 +636,7 @@ namespace Sculpt.Core.Net
                     var action = new SculptAction { Type = e.Action, Direction = e.Direction, Reinforce = e.Reinforce, LookDir = e.Look };
                     var check = new SculptCheck
                     {
-                        Result = SculptResult.Valid, Type = e.Action, PieceId = e.Piece, Cells = cells, Delta = DeltaOf(e.Action, e.Direction),
+                        Result = SculptResult.Valid, Type = e.Action, PieceId = e.Piece, Cells = cells, Delta = Config.DeltaFor(e.Action, e.Direction),
                         Cost = e.Cost, WindupTicks = e.WindupTicks, LocksGun = e.LocksGun, EnemyReinforced = e.EnemyReinforced,
                     };
                     bool warns = false;
@@ -640,7 +665,10 @@ namespace Sculpt.Core.Net
                     if (_buffer.Active && _buffer.Seq == e.Seq) _buffer.Active = false;
                     ServerRejections++;
                     if (s != null) { DropLocal(s); Mispredictions++; }
-                    Events.Add(new ClientSculptEvent { Type = ClientSculptEventType.Rejected, PlayerId = LocalId, Team = LocalTeam, Result = e.Result, Value = e.Seq, Mine = true });
+                    // Already shown red here, or a queued click replaced by a newer one: nothing more to show.
+                    bool shown = _localRejected.Remove(e.Seq) && s == null;
+                    if (shown || e.Result == SculptResult.Superseded) break;
+                    Events.Add(new ClientSculptEvent { Type = ClientSculptEventType.Rejected, PlayerId = LocalId, Team = LocalTeam, Action = s?.Action.Type ?? SculptActionType.Move, Result = e.Result, Value = e.Seq, Mine = true });
                     break;
                 }
                 case WorldEventType.Completed:
@@ -754,16 +782,6 @@ namespace Sculpt.Core.Net
             }
         }
 
-        private static Int3 DeltaOf(SculptActionType t, Dir d)
-        {
-            switch (t)
-            {
-                case SculptActionType.Move: return d.ToInt3() * SubGrid.TileSubs;
-                case SculptActionType.Raise: return new Int3(0, SubGrid.TileSubs, 0);
-                case SculptActionType.Sink: return new Int3(0, -SubGrid.TileSubs, 0);
-                default: return Int3.Zero;
-            }
-        }
 
         /// <summary>
         /// Reinforcement for drawing (crystalline veins and shimmer): 1 while reinforced, easing to 0 over the last

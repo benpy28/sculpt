@@ -59,6 +59,8 @@ namespace Sculpt.Core
         NotInSculptMode,
         /// <summary>Network layer: the confirm reached the server too late to apply (or never did, as the client decided).</summary>
         TooLate,
+        /// <summary>A queued confirm was replaced by a newer one (or dropped because you left sculpt mode). Silent: no red.</summary>
+        Superseded,
     }
 
     /// <summary>Everything the client needs to draw the ghost, and the server needs to start the windup.</summary>
@@ -72,6 +74,8 @@ namespace Sculpt.Core
         public Int3[] Cells;
         /// <summary>Sub-cell translation of the piece (zero for a throw). Ghost = Cells + Delta.</summary>
         public Int3 Delta;
+        /// <summary>The sub-cell the action really works on (raise and sink move the aim to the column top).</summary>
+        public Int3 Target;
         public int Cost;
         public int WindupTicks;
         public bool EnemyReinforced;

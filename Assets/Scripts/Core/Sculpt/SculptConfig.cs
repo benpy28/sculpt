@@ -14,10 +14,16 @@ namespace Sculpt.Core
         public double RangeMeters = 6.0;
 
         // ---- Windups (at or below the reference size) ----
-        public int WindupTicks = 12;                   // 0.2 s
+        public int WindupTicks = 9;                    // 0.15 s (Ben 2026-11-20, was 0.2 s)
         public int ReinforcedCasterWindupTicks = 21;   // 0.35 s, a minimum
         public int EnemyReinforcedWindupTicks = 24;    // 0.4 s, a minimum (balance sim: must stay below a pro counter-break, ~0.5 s)
-        public int MaxWindupTicks = 20;                // size scaling cap for normal actions
+        public int MaxWindupTicks = 15;                // size scaling cap for normal actions (0.25 s; was 20 with the 0.2 s base)
+
+        // ---- Distances, in sub-cells ----
+        /// <summary>Push/pull travel: 5 sub-cells = 1.5 m (Ben 2026-11-20: "30% further" than one tile; 1.5 m is the nearest exact step).</summary>
+        public int MoveSubs = 5;
+        /// <summary>Raise/sink travel: one level (4 sub-cells, 1.2 m).</summary>
+        public int LiftSubs = SubGrid.TileSubs;
 
         // ---- Costs (base, at the reference size) ----
         public int CostMove = 500;       // 5%
@@ -61,7 +67,7 @@ namespace Sculpt.Core
         // ---- Shove and carry ----
         public double MaxLift = SubGrid.TileSize + 0.01;   // carry onto a raised piece, one level
         public double SmallLift = 0.3;                     // a push only ever lifts this much (clipping a chamfer)
-        public double MaxShove = SubGrid.TileSize + 1e-6;  // one tile
+        public double MaxShove = 5 * SubGrid.SubSize + 1e-6;  // the push travel (MoveSubs): someone in the path is shoved at most that far
         /// <summary>Horizontal friction kick given to players standing on a piece that moves sideways (m/s).</summary>
         public double RiderDragSpeed = 7.7;
         /// <summary>Box bottom within this of a piece's top counts as standing on it.</summary>
@@ -98,6 +104,18 @@ namespace Sculpt.Core
         public int DisarmMaxTicks = 30;
         public double DisarmMinDamage = 30.0;
         public double DisarmRangeDamage = 60.0;
+
+        /// <summary>Sub-cell translation of an action (zero for a throw).</summary>
+        public Int3 DeltaFor(SculptActionType t, Dir d)
+        {
+            switch (t)
+            {
+                case SculptActionType.Move: return d.ToInt3() * MoveSubs;
+                case SculptActionType.Raise: return new Int3(0, LiftSubs, 0);
+                case SculptActionType.Sink: return new Int3(0, -LiftSubs, 0);
+                default: return Int3.Zero;
+            }
+        }
 
         public int CostFor(SculptActionType t)
         {

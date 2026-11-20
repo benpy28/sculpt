@@ -100,10 +100,12 @@ namespace Sculpt.Core.Tests.Pieces
             Assert.That(c.ScaledCost(500, 64), Is.EqualTo(250), "clamped at half");
             Assert.That(c.ScaledCost(500, 1000), Is.EqualTo(1000), "clamped at double");
             Assert.That(c.ScaledCost(1000, 384), Is.EqualTo(1500));
-            Assert.That(c.ScaledWindup(100), Is.EqualTo(12));
-            Assert.That(c.ScaledWindup(257), Is.EqualTo(13));
-            Assert.That(c.ScaledWindup(320), Is.EqualTo(14));
-            Assert.That(c.ScaledWindup(576), Is.EqualTo(20), "capped");
+            Assert.That(c.ScaledWindup(100), Is.EqualTo(9), "0.15 s");
+            Assert.That(c.ScaledWindup(257), Is.EqualTo(10));
+            Assert.That(c.ScaledWindup(320), Is.EqualTo(11));
+            Assert.That(c.ScaledWindup(576), Is.EqualTo(15), "capped");
+            Assert.That(c.DeltaFor(SculptActionType.Move, Dir.East), Is.EqualTo(new Int3(5, 0, 0)), "push travels 1.5 m");
+            Assert.That(c.DeltaFor(SculptActionType.Raise, Dir.East), Is.EqualTo(new Int3(0, 4, 0)), "raise is one level");
             // Throw numbers from the balance sim: 1 tile, 2x2, 3x3.
             Assert.That(c.ThrowWindup(64), Is.EqualTo(27));
             Assert.That(c.ThrowWindup(256), Is.EqualTo(36));
@@ -129,20 +131,20 @@ namespace Sculpt.Core.Tests.Pieces
             SculptCheck c = w.Sculpt.TryBegin(p, a);
             Assert.That(c.Result, Is.EqualTo(SculptResult.Valid));
             Assert.That(c.Size, Is.InRange(64, 128));
-            Assert.That(c.WindupTicks, Is.EqualTo(12));
+            Assert.That(c.WindupTicks, Is.EqualTo(9));
             Assert.That(c.Cost, Is.EqualTo(w.Config.ScaledCost(500, c.Size)));
             Assert.That(w.Sculpt.BarOf(1).Value, Is.EqualTo(SculptConfig.BarMax - c.Cost), "charged on confirm");
             ushort id = w.Grid.Get(a.Target);
             Assert.That(SubId.IsPiece(id), Is.True, "carved on confirm");
 
             var before = w.Sculpt.Pieces.Get(id).Cells.ToArray();
-            w.Step(11);
+            w.Step(8);
             Assert.That(w.Grid.Get(before[0]), Is.EqualTo(id), "not moved during windup");
             w.Step(1);
             foreach (var x in before)
             {
-                Assert.That(w.Grid.Get(x + new Int3(4, 0, 0)), Is.EqualTo(id));
-                if (!before.Contains(x - new Int3(4, 0, 0))) Assert.That(w.Grid.Get(x), Is.EqualTo(SubId.Empty));
+                Assert.That(w.Grid.Get(x + new Int3(5, 0, 0)), Is.EqualTo(id));
+                if (!before.Contains(x - new Int3(5, 0, 0))) Assert.That(w.Grid.Get(x), Is.EqualTo(SubId.Empty));
             }
             Assert.That(w.Sculpt.Events.Any(e => e.Type == SculptEventType.Completed), Is.True);
         }
@@ -232,13 +234,70 @@ namespace Sculpt.Core.Tests.Pieces
         {
             var (w, p) = WallWorld();
             Assert.That(w.Sculpt.TryBegin(p, w.Raise(p, new Vec3d(4.5 * B, 0, 7.5 * B))).Result, Is.EqualTo(SculptResult.Valid));
-            w.Step(10);
+            w.Step(7);
             var second = w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East);
             Assert.That(w.Sculpt.TryBegin(p, second).Result, Is.EqualTo(SculptResult.Busy));
             Assert.That(w.Sculpt.HasBufferedConfirm(1), Is.True);
-            w.Step(2); // the raise lands at tick 12; the buffered push starts on that same tick
+            w.Step(2); // the raise lands at tick 9; the buffered push starts on that same tick
             Assert.That(w.Sculpt.PendingOf(1), Is.Not.Null);
             Assert.That(w.Sculpt.PendingOf(1).Action.Type, Is.EqualTo(SculptActionType.Move));
+        }
+
+        [Test]
+        public void AClickEarlyInYourOwnWindupIsQueuedNotRefused()
+        {
+            var (w, p) = WallWorld();
+            Assert.That(w.Sculpt.TryBegin(p, w.Raise(p, new Vec3d(4.5 * B, 0, 7.5 * B))).Result, Is.EqualTo(SculptResult.Valid));
+            w.Step(1); // far more than the 3-tick click buffer before the windup ends
+            Assert.That(w.Sculpt.TryBegin(p, w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East)).Result, Is.EqualTo(SculptResult.Busy));
+            w.Step(7);
+            Assert.That(w.Sculpt.HasBufferedConfirm(1), Is.True, "still queued");
+            w.Step(1);
+            Assert.That(w.Sculpt.PendingOf(1)?.Action.Type, Is.EqualTo(SculptActionType.Move), "fires the tick the raise lands");
+        }
+
+        [Test]
+        public void TheNewestQueuedClickReplacesTheOlderOne()
+        {
+            var (w, p) = WallWorld();
+            Assert.That(w.Sculpt.TryBegin(p, w.Raise(p, new Vec3d(4.5 * B, 0, 7.5 * B))).Result, Is.EqualTo(SculptResult.Valid));
+            w.Sculpt.TryBegin(p, w.Sink(p, new Vec3d(3.5 * B, 0, 3.5 * B)));
+            w.Sculpt.TryBegin(p, w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East));
+            w.Step(9);
+            Assert.That(w.Sculpt.PendingOf(1)?.Action.Type, Is.EqualTo(SculptActionType.Move));
+        }
+
+        [Test]
+        public void ScrollingTwiceRaisesTheSamePieceTwice()
+        {
+            var w = new SculptWorld();
+            var p = w.AddPlayer(1, 1, 5, 0, 5);
+            Vec3d spot = new Vec3d(8.5 * B, 0, 5.5 * B);
+            SculptCheck first = w.Sculpt.TryBegin(p, w.Raise(p, spot));
+            Assert.That(first.Result, Is.EqualTo(SculptResult.Valid));
+            w.Step(2);
+            Assert.That(w.Sculpt.TryBegin(p, w.Raise(p, spot)).Result, Is.EqualTo(SculptResult.Busy), "second notch queues on the moving piece");
+            w.Step(first.WindupTicks - 2);
+            Assert.That(w.TopAt(spot.X, spot.Z), Is.EqualTo(B).Within(1e-9));
+            Assert.That(w.Sculpt.PendingOf(1)?.Action.Type, Is.EqualTo(SculptActionType.Raise), "the queued raise follows the piece up");
+            w.Step(w.Sculpt.PendingOf(1).CompleteTick - w.Sculpt.Tick);
+            Assert.That(w.TopAt(spot.X, spot.Z), Is.EqualTo(2 * B).Within(1e-9));
+        }
+
+        [Test]
+        public void RaiseAimedAtTheSideOfAWallRaisesItsTop()
+        {
+            var w = new SculptWorld();
+            w.Tiles.Fill(new Int3(8, 0, 5), new Int3(8, 1, 6), Tile.Solid); // 2-level wall
+            var p = w.AddPlayer(1, 1, 6, 0, 5.5);
+            // Aim at the lower level of the west face: rock sits above it, so the top level is raised instead.
+            var a = w.Raise(p, new Vec3d(8 * B, 0.5, 6.6));
+            Assert.That(a.Target.Y, Is.InRange(0, 3), "aimed at the lower level");
+            SculptCheck c = w.Sculpt.TryBegin(p, a);
+            Assert.That(c.Result, Is.EqualTo(SculptResult.Valid));
+            Assert.That(c.Cells.All(x => x.Y >= 4 && x.Y <= 7), Is.True, "the top level is the piece");
+            w.Step(c.WindupTicks);
+            Assert.That(w.TopAt(8.5 * B, 5.5 * B), Is.EqualTo(3 * B).Within(1e-9), "wall grows to 3 levels");
         }
 
         [Test]
@@ -248,7 +307,7 @@ namespace Sculpt.Core.Tests.Pieces
             var q = w.AddPlayer(2, 2, 5, 0, 7);
             var a = w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East);
             Assert.That(w.Sculpt.TryBegin(p, a).Result, Is.EqualTo(SculptResult.Valid));
-            w.Step(10);
+            w.Step(7);
             var b = w.Move(q, new Vec3d(8.4, 0.6, 7.2), Dir.East);
             SculptCheck locked = w.Sculpt.TryBegin(q, b);
             Assert.That(locked.Result, Is.EqualTo(SculptResult.Locked));
@@ -292,7 +351,7 @@ namespace Sculpt.Core.Tests.Pieces
             Vec3d start = victim.Position;
             w.Step(c.WindupTicks);
             Assert.That(w.Inside(victim), Is.False);
-            Assert.That(victim.Position.X - start.X, Is.InRange(0.01, B + 1e-6));
+            Assert.That(victim.Position.X - start.X, Is.InRange(0.01, w.Config.MaxShove));
             Assert.That(Math.Abs(victim.Position.Y - start.Y), Is.LessThan(0.31));
         }
 
@@ -300,9 +359,10 @@ namespace Sculpt.Core.Tests.Pieces
         public void ShoveIntoAWallIsInvalid()
         {
             var (w, p) = WallWorld();
-            w.Tiles.Fill(new Int3(9, 0, 4), new Int3(9, 2, 7), Tile.Solid); // wall one tile behind
+            // Rock 0.3 m past where the pushed piece ends (x 11.1): too little room for a player.
+            w.Grid.Fill(new Int3(38, 0, 16), new Int3(41, 11, 31), SubId.Natural);
             var victim = w.AddPlayer(2, 2, 8, 0, 5.5);
-            victim.Position = new Vec3d(10.8 - 0.36, 0, 6.6);
+            victim.Position = new Vec3d(11.4 - 0.36, 0, 6.6);
             Assert.That(w.Sculpt.Evaluate(p, w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East)).Result, Is.EqualTo(SculptResult.PlayerBlocked));
         }
 

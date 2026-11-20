@@ -395,7 +395,7 @@ namespace Sculpt.Core.Net
             }
             // A newer confirm replaces an older buffered one.
             if (old >= 0 && old != cmd.SculptSeq)
-                _worldEvents.Add(new WorldEvent { Type = WorldEventType.Rejected, PlayerId = p.Id, Seq = (byte)old, Result = SculptResult.Busy });
+                _worldEvents.Add(new WorldEvent { Type = WorldEventType.Rejected, PlayerId = p.Id, Seq = (byte)old, Result = SculptResult.Superseded });
         }
 
         /// <summary>Lock end for a windup that keeps the gun away: its completion, plus follow-through for a throw.</summary>

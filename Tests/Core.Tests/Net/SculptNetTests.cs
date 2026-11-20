@@ -273,6 +273,41 @@ namespace Sculpt.Core.Tests.Net
         [TestCase(0)]
         [TestCase(50)]
         [TestCase(120)]
+        public void ScrollSpamDuringYourOwnWindupsIsQueuedNeverRed(double oneWayMs)
+        {
+            // Play-test: wheel notches during your own windup came back red (Busy, then "Locked" every tick once the 3-tick
+            // buffer ran out, and every refusal twice: once locally, once from the server).
+            var h = SculptNetHarness.Flat();
+            var p = h.AddClient(SculptNetHarness.FeetIn(5, 5.5), 1, SculptNetHarness.Lag(oneWayMs), SculptNetHarness.Lag(oneWayMs));
+            int start = -1, confirms = 0;
+            p.Script = (peer, t) =>
+            {
+                var i = new SculptTickInput { Move = new MoveInput() };
+                if (peer.Sculpt.LocalBody == null) return i;
+                if (start < 0 && peer.Client.Predicted.Grounded && peer.Client.Predicted.Hand.Mode == HandMode.Weapon && t > 1000 + 150) i.Hand.SculptToggle = true;
+                if (peer.Client.Predicted.Hand.CanConfirmSculpt)
+                {
+                    if (start < 0) start = t;
+                    if (t - start < 12 && (t - start) % 3 == 0 && SculptNetHarness.Aim(peer, new Vec3d(8.5 * SubGrid.TileSize, 0, 6.6), out Int3 sub, out Vec3d aim))
+                    {
+                        i.Confirm = true;
+                        i.Action = SculptAction.Raise(sub, aim);
+                        confirms++;
+                    }
+                }
+                return i;
+            };
+            h.RunSeconds(4);
+            Assert.That(confirms, Is.GreaterThanOrEqualTo(4)); // four notches in 0.2 s on a 1-level wall: stays under the +4 cap
+            Assert.That(p.SculptEvents.Where(e => e.Type == ClientSculptEventType.Rejected).Select(e => e.Result), Is.Empty,
+                "no red: " + string.Join(", ", p.SculptEvents.Select(e => $"{e.Type}/{e.Action}/{e.Result}" + (e.Cells != null && e.Cells.Length > 0 ? $" y{e.Cells.Min(c => c.Y)}..{e.Cells.Max(c => c.Y)} n{e.Cells.Length}" : ""))));
+            Assert.That(p.SculptEvents.Count(e => e.Type == ClientSculptEventType.LocalLanded), Is.GreaterThanOrEqualTo(2), "queued raises chain");
+            h.AssertConverged();
+        }
+
+        [TestCase(0)]
+        [TestCase(50)]
+        [TestCase(120)]
         public void YourPushLandsInYourViewOnTheServersTickWithoutWaitingForTheRoundTrip(double oneWayMs)
         {
             var (h, p, seen) = PushScenario(oneWayMs);
@@ -281,7 +316,7 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(p.SculptEvents.Any(e => e.Type == ClientSculptEventType.Rejected), Is.False, "nothing rejected");
             int windup = h.SculptConfig.ScaledWindup(96);
             // The script for tick T + windup + 1 is the first to see it: it landed in BeforeMove(T + windup).
-            Assert.That(seen[0] - 1 - seen[1], Is.InRange(12, 12), "lands exactly one windup after the confirm, at any ping");
+            Assert.That(seen[0] - 1 - seen[1], Is.InRange(9, 9), "lands exactly one windup after the confirm, at any ping");
             Assert.That(p.SculptEvents.Count(e => e.Type == ClientSculptEventType.LocalLanded), Is.EqualTo(1));
             Assert.That(p.Sculpt.Mispredictions, Is.EqualTo(0));
             Assert.That(p.Sculpt.ServerRejections, Is.EqualTo(0));
@@ -409,7 +444,7 @@ namespace Sculpt.Core.Tests.Net
         public void AttackingAnEnemyPieceLocksTheGunUntilItLands()
         {
             var h = SculptNetHarness.Flat();
-            var a = h.AddClient(SculptNetHarness.FeetIn(5, 5.5), 1, SculptNetHarness.Lag(30), SculptNetHarness.Lag(30));
+            var a = h.AddClient(SculptNetHarness.FeetIn(4, 5.5), 1, SculptNetHarness.Lag(30), SculptNetHarness.Lag(30)); // clear of the wall once it is pushed 1.5 m west
             var b = h.AddClient(SculptNetHarness.FeetIn(11, 5.5), 2, SculptNetHarness.Lag(30), SculptNetHarness.Lag(30), seed: 5);
             int stage = 0, attackTick = -1, lockSeen = -1;
             // Team 2 pushes the wall west (it becomes theirs); then team 1 pushes it east and tries to leave sculpt mode.
@@ -435,7 +470,7 @@ namespace Sculpt.Core.Tests.Net
                 if (stage == 1 && hand.Mode == HandMode.Weapon) i.Hand.SculptToggle = true;
                 else if (stage == 1 && hand.CanConfirmSculpt)
                 {
-                    Assert.That(SculptNetHarness.Aim(pp, new Vec3d(7.2, 0.6, 6.6), out Int3 sub, out Vec3d aim), Is.True);
+                    Assert.That(SculptNetHarness.Aim(pp, new Vec3d(6.9, 0.6, 6.6), out Int3 sub, out Vec3d aim), Is.True);
                     i.Confirm = true;
                     i.Action = SculptAction.Move(sub, Dir.East, aim);
                     attackTick = t;
@@ -448,7 +483,7 @@ namespace Sculpt.Core.Tests.Net
             h.RunSeconds(6);
             Assert.That(attackTick, Is.GreaterThan(0));
             Assert.That(a.SculptEvents.Any(e => e.Type == ClientSculptEventType.Rejected), Is.False);
-            Assert.That(lockSeen - 1 - attackTick, Is.EqualTo(12), "stays in sculpt mode until the windup ends, then exits");
+            Assert.That(lockSeen - 1 - attackTick, Is.EqualTo(9), "stays in sculpt mode until the windup ends, then exits");
             Assert.That(a.Client.Corrections, Is.EqualTo(0), "the server agreed with the predicted hand");
             h.AssertConverged();
         }
