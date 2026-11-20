@@ -198,5 +198,85 @@ namespace Sculpt.Core.Tests
             Assert.That(p.Sculpt.Local.Count, Is.Zero, "the unanswered prediction is dropped");
             Assert.That(p.Grid.Hash(), Is.EqualTo(h.ServerGrid.Hash()), "and the phantom rock is gone");
         }
+
+        /// <summary>
+        /// ISSUE-10 (client crash): a sculpt confirm whose target sub-cell does not fit the wire's 16-bit cell throws
+        /// OverflowException inside NetClient.PredictTick (ByteWriter.Cell uses checked casts), killing the client's tick.
+        /// It happens in play: a dead player's body is parked at y = -10000 but their hand stays in sculpt mode, so aiming
+        /// from that eye targets sub-cell y = -33328 (weapons fuzz, seeds 6162 and 24615).
+        /// Expectation: no input can make PredictTick throw; an impossible target is simply refused (and a dead player
+        /// can't confirm sculpts at all).
+        /// </summary>
+        [Test]
+        [Ignore("ISSUE-10: a far-out-of-range sculpt target (e.g. aimed while dead) throws OverflowException in PredictTick")]
+        public void AnOutOfRangeSculptTargetNeverCrashesTheClient()
+        {
+            var h = Net.SculptNetHarness.Flat();
+            var p = h.AddClient(Net.SculptNetHarness.FeetIn(3, 10), 1, Net.SculptNetHarness.Lag(30), Net.SculptNetHarness.Lag(30));
+            bool sent = false;
+            p.Script = (peer, t) =>
+            {
+                var i = new Net.SculptTickInput();
+                if (peer.Sculpt.LocalBody == null) return i;
+                if (!sent && peer.Client.Predicted.Grounded && peer.Client.Predicted.Hand.Mode == HandMode.Weapon && t > 1150) i.Hand.SculptToggle = true;
+                if (!sent && peer.Client.Predicted.Hand.CanConfirmSculpt)
+                {
+                    i.Confirm = true;
+                    i.Action = SculptAction.Raise(new Int3(-1, -33328, -1), new Vec3d(0, -9998.4, 0)); // what aiming from the parked body gives
+                    sent = true;
+                }
+                return i;
+            };
+            Assert.DoesNotThrow(() => h.RunSeconds(3));
+            Assert.That(sent, Is.True, "setup: the confirm was made");
+        }
+
+        /// <summary>
+        /// ISSUE-11 (draw-time bypass, design call): tapping sculpt mode then a weapon key swaps faster than the weapon key
+        /// alone. From the AR, pressing 1 fires the pump after its 24-tick draw (0.4 s); pressing Q then 1 next tick fires it
+        /// after 13 ticks, because a weapon key in sculpt mode leaves straight to that gun for its 12-tick exit time instead
+        /// of its draw. Every swap gets about twice as fast with a Q tap, so draw times stop mattering for anyone who learns it.
+        /// Expectation (suggested): leaving sculpt mode to a gun other than the one you came from pays that gun's draw time;
+        /// the cheaper exit time is only for going back to the gun you were holding.
+        /// </summary>
+        [Test]
+        [Ignore("ISSUE-11: Q then a weapon key swaps about twice as fast as the weapon key (bypasses draw time)")]
+        public void TappingSculptModeNeverMakesASwapFaster()
+        {
+            int direct = FirstPumpShotAfterSwapFromAr(viaSculpt: false);
+            int viaQ = FirstPumpShotAfterSwapFromAr(viaSculpt: true);
+            Assert.That(direct, Is.GreaterThan(0));
+            Assert.That(viaQ, Is.GreaterThanOrEqualTo(direct), $"direct swap {direct} ticks, Q-tap swap {viaQ} ticks");
+        }
+
+        private static int FirstPumpShotAfterSwapFromAr(bool viaSculpt)
+        {
+            var mc = new MovementConfig();
+            var nc = new Sculpt.Core.Net.NetConfig();
+            var g = new SubGrid(4, 4, 4, -16);
+            g.FillBaseGround();
+            var spawn = new Vec3d(10, 0, 10);
+            var s = MotorState.At(spawn);
+            var shots = new System.Collections.Generic.List<WeaponShot>();
+            int tick = 1000;
+            void Step(MoveInput m, HandInput hand)
+            {
+                tick++;
+                Sculpt.Core.Net.NetSim.Simulate(g, mc, nc, ref s, Sculpt.Core.Net.InputCmd.Quantize(new Sculpt.Core.Net.InputCmd { Tick = tick, Move = m, Hand = hand }), spawn, null, shots);
+            }
+            for (int i = 0; i < 30; i++) Step(default, default);
+            Step(default, new HandInput { WeaponKey = (byte)(Weapon.Ar + 1) });
+            for (int i = 0; i < 40; i++) Step(default, default);
+            int start = tick + 1;
+            if (viaSculpt) Step(default, new HandInput { SculptToggle = true });
+            Step(default, new HandInput { WeaponKey = (byte)(Weapon.Pump + 1) });
+            shots.Clear();
+            for (int i = 0; i < 60; i++)
+            {
+                Step(new MoveInput { FireHeld = true, FirePressed = i == 0, WantsToShoot = true }, default);
+                if (shots.Count > 0) return tick - start;
+            }
+            return -1;
+        }
     }
 }
