@@ -287,14 +287,19 @@ Tests/Game.Check/                  compile-only check of Game + Core + FishNet a
 - Speed lines: faint white streaks only in the outer ring of the screen (from 62% of the half-diagonal outward), above sprint speed, on by default with a toggle. The existing FOV kick (up to +8 degrees above sprint speed) and 1.2 cm head bob stay, both with toggles.
 - Settings menu on Esc (replaces "Esc frees the mouse"): FOV 60-120 (default 95), sensitivity (shows degrees per count), weapon size 0.7-1.2, head bob, FOV kick, speed lines, master volume, and every bind (click, press the new key or button or scroll the wheel, Esc cancels, reset all). Movement is blocked while it is open; the game keeps running underneath.
 
+### Gun answers from Ben (2026-11-20)
+- Bloom is per gun, with a small penalty on swapping (replaces shared bloom).
+- Ammo and reloads: yes. R becomes reload and respawn moves to F1 (a keybind thread is finalising the table).
+- Light zoom on right mouse for the AR and pistol.
+- SMG headshot multiplier 1.25x (18.75 head).
+- Friendly fire stays off. Respawn delay stays 3 s (non-round modes).
+- Throw on E and the top-face rule (LMB moves the piece toward the edge you aim at) are approved.
+
 ## Balance baseline (2026-11-20)
 - 1v1 simulator and baseline spreadsheet live in `Tools/Balance/` (Python 3, run on any PC; `sculpt-1v1-balance-baseline-2026-11-20.xlsx` is the baseline to compare future analyses against). Equal aim; only sculpt speed and decisions differ.
 - Baseline results with the approved numbers (SMG 5 m): pro vs beginner 75%, pro vs non-sculptor 89% (94% with throws), speed alone pro vs beginner 69%, plain vs always-reinforcing pro 50%, pure turtle broken ~100% within ~8 s. One close fight uses 20-40% bar, so costs and regen don't decide single duels; below ~20% bar going in is a big disadvantage.
 - Geometry facts: 1-high + crouch is full cover; a standing peek over 1-high shows the top 0.6 m; +1/+2 height barely sees a crouched player hugging a 1-high wall. Enemy cover is only reachable when players are within ~7.8 m.
 
 ## Open questions
-- Guns: ammo and reloads? ADS / zoom on RMB? SMG headshot multiplier (spec gives none, so head = body = 15)? Friendly fire (off for now)? Respawn delay in non-round modes (3 s for now)?
-- Top-face direction: LMB moves the piece toward the edge whose triangle you aim at, RMB the opposite way. Ben to confirm this reads right in play.
-- Bloom is shared across all guns, so swapping AR to pump keeps up to 3 degrees of the AR's spray bloom on the pump. Keep shared (no spray-then-swap trick) or give each gun its own bloom?
 - Footsteps: only your own are heard right now. Should enemies hear each other's footsteps (normal for a competitive shooter, and crouch-walking would be the quiet option)?
 - Pump duels: sculpt skill matters least with the pump (pro vs beginner only ~55-63% in the sim; pump peeks over 1-high cover are mostly headshot pellets). Damage, headshot and fire-rate tweaks didn't move it. Needs Ben's play-test before tuning.
