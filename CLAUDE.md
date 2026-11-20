@@ -54,7 +54,8 @@ This file is the source of truth for every thread. Update it whenever Ben change
 - Faces shaded per axis: tops brightest, north/south darker, east/west darker again. Fixed sun direction. Compass strip (N/E/S/W) at the top of the HUD.
 
 ### Sculpt mode
-- Toggle key (default Q). Not a hotbar slot. Leaving sculpt mode returns instantly to the last-held weapon. Usable in any movement state (sprinting, sliding, airborne).
+- Toggle key (default Q). Not a hotbar slot. Usable in any movement state (sprinting, sliding, airborne).
+- **Competitive timings (Ben approved 2026-11-20, from the 1v1 balance sim):** nothing is instant. Entering sculpt mode takes 6 ticks (0.1 s): you can aim during it but can't confirm until it ends. Leaving sculpt mode returns to the last-held weapon after its exit time: pistol 6, SMG 9, AR 10, pump 12 ticks. Purpose: no "sculpt then instantly shotgun"; with these numbers the earliest pump shot after a sink lands about 0.49 s after the victim sees the tell, which is above human reaction.
 - Range: 5 blocks (6 m), measured from the player.
 - Sculptable blocks always have a faint purple edge glow within range. **Purple is reserved ONLY for "sculptable"**; no other purple anywhere in the game.
 - Entering sculpt mode: cosmetic purple ripple spreads along the ground to the range edge over ~0.1 s, sculptables light up brightly as it passes. Selection works instantly. Soft boundary at range edge, out-of-range blocks dim. Non-sculptable scenery slightly desaturated, but enemies always keep full colour and outlines and nothing is ever drawn over an enemy. Overlay is local to the sculpting player.
@@ -70,6 +71,9 @@ This file is the source of truth for every thread. Update it whenever Ben change
 - Always show a translucent ghost of the result in the destination cell. Red ghost if invalid.
 - Hovered block: edges bright white-purple, plus destination ghost and arrow.
 - Windup: 0.2 s normal (12 ticks). During windup the block's edges crackle in the sculptor's team colour and a positional hum plays that enemies can hear. The tile is LOCKED during windup (nobody else can target it).
+- **Gun lock (Ben approved 2026-11-20):** your gun is locked during the windup of any action on a piece that isn't yours or your team's (attacks) and during a throw windup; you stay in sculpt mode until it lands, then pay the exit time. Raising or reinforcing your own or your team's pieces does NOT lock the gun, so defence stays fast. This was the biggest lever in the sim for making sculpt speed decide fights.
+- The windup tell an enemy sees must show the action type (sink, push/pull with direction, raise, throw), not just "something is happening".
+- Locked and Busy rejections cost nothing (red feedback, no bar). A confirm pressed up to 3 ticks before a tile unlocks or your own windup ends is buffered and fires on the first valid tick, so re-timing is skill, not click spam.
 - Move animation: fast snap with tiny overshoot, dust puff, deep thunk.
 - Sculpted blocks carry a faint team tint that fades to neutral over time.
 
@@ -85,7 +89,7 @@ This file is the source of truth for every thread. Update it whenever Ben change
 - 0-100%, thin arc around the crosshair. While hovering an action, the cost portion flashes.
 - Costs: horizontal push/pull 5%, sink 7%, raise 10%, shape 5%, reinforce +15% on top of the base action.
 - Regen starts 1.5 s after the last sculpt, then refills 0 to 100% in 20 s.
-- Reinforced blocks: caster windup 0.35 s. An enemy changing a reinforced block needs 0.6 s windup and pays 2x normal cost. Reinforcement decays to normal after 20 s. Visual: crystalline veins, heavier sound, faint shimmer.
+- Reinforced blocks: caster windup 0.35 s. An enemy changing a reinforced block needs 0.4 s windup (24 ticks; was 0.6 s, changed by Ben 2026-11-20 after the balance sim) and pays 2x normal cost. Rule: this windup must stay below a pro's notice + aim + normal windup (~0.5 s); at 0.6 s a reinforced defender could always counter-break first and won 92-96% of pro mirrors. Reinforcement decays to normal after 20 s. Visual: crystalline veins, heavier sound, faint shimmer.
 
 ### Terrain v2: sub-cells, pieces and throw (Ben approved 2026-11-20)
 Ben's constraint: "it cannot become a cube fighting game, its meant to feel proper 3D and detailed". Gameplay stays exact and integer; the look hides the grid.
@@ -97,7 +101,7 @@ Ben's constraint: "it cannot become a cube fighting game, its meant to feel prop
 - **Scaling with size** (N = sub-cells, reference = a 2x2-tile, one-level piece): cost = base x N/ref clamped 0.5x..2x (reinforce +15% stays flat); windup = 12 ticks at or below ref, +1 tick per extra 1/8 of ref, max 20; reinforced windups stay as minimums. Reinforcement is per piece.
 - **Shove/carry:** same rules on the piece's real shape: lift onto the new surface if within one level, else shove at most one tile, else invalid. Never trapped.
 - **Support/gravity:** a piece stays up if at least a third of its underside rests on something (replaces "held only by the block directly below"). Unsupported pieces fall rigidly one level per 4 ticks, solved bottom-up in fixed order; a falling piece still waits above a player rather than crush them.
-- **Throw** (own bind): one non-reinforced piece at a time, launched along the full look direction with a slight upward lift. Starting numbers (tunable): windup 15 + N/4 ticks at one-tile scale; launch speed 22 - N/16 m/s; gravity 15 m/s^2 (~10 m range on flat); cost 10% + 0.25% per sub-cell at one-tile scale. Damage (20 + 0.6 N) x impact-speed factor (0.6..1.2), capped at 120. Slight splash, no friendly fire. Flight is fixed-point integer, client-predicted, server confirms impact. Breaks on first contact (terrain or player), destroyed, leaves the gap at launch. **Disarm (Ben, 2026-11-20):** a throw hit over 30 damage disarms the victim: no weapons and no sculpting for up to 0.5 s, scaled by how hard the hit was, then a forced redraw of the held weapon. Long-range hits are rare; in a close duel, a mistake that lets the opponent throw a wall into you should be punished. Starting curve (tunable, balance thread to refine): disarm ticks = 30 x clamp((damage - 30) / 60, 0, 1), so 30 dmg = 0, 90+ dmg = 0.5 s. Throwing a piece someone stands on is allowed: they are pushed along the throw direction and drop off immediately, never ride it. Launch warning: shake and team-colour cracks, rising positional grind, directional warning for enemies in the lane (never purple). Number scaling to be re-based on the 2x2 reference piece and checked by the balance thread.
+- **Throw** (own bind): one non-reinforced piece at a time, launched along the full look direction with a slight upward lift. Numbers (Ben approved 2026-11-20, re-based on the 2x2 reference piece by the balance sim; s = piece sub-cells / reference sub-cells): windup 0.40 + 0.20 x s seconds (24 + 12 x s ticks, round to nearest tick); launch speed 20 - 3 x s m/s; gravity 15 m/s^2; launch 8 degrees up; cost 12% + 13% x s; damage (30 + 40 x s) x impact-speed factor (0.6..1.2), capped at 120. So 1 tile (s 0.25): 27 ticks, 19 m/s, 15%, 40 dmg; 2x2 (s 1): 36 ticks, 17 m/s, 25%, 70 dmg; 3x3 (s 2.25): 51 ticks, 13 m/s, 41%, 120 dmg; range about 7 to 12 m. Throw direction is locked at confirm (start of windup), so the lane warning shows exactly where it will go and alert players can sidestep it; sliding, airborne and mantling players in the lane are the intended punish cases. After launch: 6 ticks of follow-through, then the weapon's exit time. The old starting formulas (15 + N/4 ticks, 22 - N/16 m/s, 10% + 0.25% N, 20 + 0.6 N) are replaced: at a 2x2 piece they gave 1.3 s, 6 m/s and 74%. Slight splash, no friendly fire. Flight is fixed-point integer, client-predicted, server confirms impact. Breaks on first contact (terrain or player), destroyed, leaves the gap at launch. **Disarm (Ben, 2026-11-20):** a throw hit over 30 damage disarms the victim: no weapons and no sculpting for up to 0.5 s, scaled by how hard the hit was, then a forced redraw of the held weapon. Long-range hits are rare; in a close duel, a mistake that lets the opponent throw a wall into you should be punished. Curve (checked in the balance sim; disarm barely changes win rates because a wall-yank hit is usually fatal anyway, so it is safe): disarm ticks = 30 x clamp((damage - 30) / 60, 0, 1), so 30 dmg = 0, 90+ dmg = 0.5 s. Throwing a piece someone stands on is allowed: they are pushed along the throw direction and drop off immediately, never ride it. Launch warning: shake and team-colour cracks, rising positional grind, directional warning for enemies in the lane (never purple).
 - **Netcode:** grid deltas are piece operations (moved, raised, sunk, fell, thrown, impact) by piece id; clients rebuild the surface locally. Initial map from seed plus snapshot for late joiners. Movement prediction codes against a terrain query interface, not the grid type.
 
 ### Movement (first person, snappy, never floaty)
@@ -117,11 +121,11 @@ Ben's constraint: "it cannot become a cube fighting game, its meant to feel prop
 - Health 150, no armour. Out-of-combat regen exists as an option but is OFF for now.
 - Hotbar 1-4 = Pump, SMG, AR, Pistol, always equipped. Slot 5 = empty utility slot for later. One of each weapon type max.
 - Blocks stop bullets completely (no penetration). Blocks have no health; only sculpting changes them.
-- Pump: 9 pellets x 11 dmg, headshot pellets 1.5x, 0.9 s between shots. Falloff from 5 m, heavy past 12 m. Fairly accurate in air and sliding. Swap-cancelling after a shot allowed.
+- Pump: 9 pellets x 11 dmg, headshot pellets 1.5x, 0.9 s (54 ticks) between shots. Falloff from 5 m, heavy past 12 m. Fairly accurate in air and sliding. Swap-cancel rule (Ben approved 2026-11-20): the 54-tick pump cycle keeps running if you swap weapons or enter sculpt mode; coming back early you wait out the remainder. Swapping to another gun after a pump shot is allowed but pays that gun's draw time.
 - SMG: 15 dmg, 12 shots/s, heavy falloff past 10 m.
 - AR: 25 body / 40 head, 5.5 shots/s. First shot accurate, then spread builds. Strongly penalised while sliding or airborne.
-- Pistol: 30 body / 50 head, semi-auto, max 5 shots/s, accurate.
-- Draw times: pistol 0.2 s, SMG 0.3 s, AR 0.4 s, pump 0.45 s.
+- Pistol: 30 body / 50 head, semi-auto, max 5 shots/s, accurate. Damage falloff from 25 m, down to 70% at 50 m (tunable; added 2026-11-20 because with no falloff it killed beginners mid-cover at 30 m about half the time).
+- Draw times (Ben approved 2026-11-20, max 0.4 s): pistol 12 ticks (0.2 s), SMG 18 (0.3 s), AR 21 (0.35 s), pump 24 (0.4 s). Exit from sculpt mode back to a weapon is shorter (see Sculpt mode).
 - Hit checks use the server's view from the player's head position.
 
 ### Later (don't design out)
@@ -213,5 +217,10 @@ Tests/Game.Check/                  compile-only check of Game + Core + FishNet a
 - Movement config is not synced yet: all players must run the same build. Live tuning in the Editor only affects that Editor's server and client.
 - Terrain is not networked in M3 (each side builds the same map). Sculpt/piece deltas come in M4 on top of terrain v2.
 
+## Balance baseline (2026-11-20)
+- 1v1 simulator and baseline spreadsheet live in `Tools/Balance/` (Python 3, run on any PC; `sculpt-1v1-balance-baseline-2026-11-20.xlsx` is the baseline to compare future analyses against). Equal aim; only sculpt speed and decisions differ.
+- Baseline results with the approved numbers (SMG 5 m): pro vs beginner 75%, pro vs non-sculptor 89% (94% with throws), speed alone pro vs beginner 69%, plain vs always-reinforcing pro 50%, pure turtle broken ~100% within ~8 s. One close fight uses 20-40% bar, so costs and regen don't decide single duels; below ~20% bar going in is a big disadvantage.
+- Geometry facts: 1-high + crouch is full cover; a standing peek over 1-high shows the top 0.6 m; +1/+2 height barely sees a crouched player hugging a 1-high wall. Enemy cover is only reachable when players are within ~7.8 m.
+
 ## Open questions
-- (none)
+- Pump duels: sculpt skill matters least with the pump (pro vs beginner only ~55-63% in the sim; pump peeks over 1-high cover are mostly headshot pellets). Damage, headshot and fire-rate tweaks didn't move it. Needs Ben's play-test before tuning.

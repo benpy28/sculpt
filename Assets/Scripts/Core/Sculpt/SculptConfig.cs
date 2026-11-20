@@ -12,7 +12,7 @@ namespace Sculpt.Core
 
         public int WindupTicks = 12;                   // 0.2 s
         public int ReinforcedCasterWindupTicks = 21;   // 0.35 s
-        public int EnemyReinforcedWindupTicks = 36;    // 0.6 s
+        public int EnemyReinforcedWindupTicks = 24;    // 0.4 s (balance sim 2026-11-20: must stay below a pro counter-break, ~0.5 s)
 
         public int CostMove = 500;      // 5%
         public int CostSink = 700;      // 7%
