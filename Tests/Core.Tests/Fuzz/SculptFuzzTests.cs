@@ -51,6 +51,49 @@ namespace Sculpt.Core.Tests.Fuzz
             TestContext.Out.WriteLine(f.Summary());
         }
 
+        /// <summary>
+        /// Players really move (bots through PlayerMovement) while everyone sculpts: sliding into shoves,
+        /// mantling onto rising blocks, crouching under falling ones. Sculpt and movement invariants every tick.
+        /// </summary>
+        [TestCaseSource(nameof(Seeds))]
+        public void MovingPlayers_SculptAndMovementInvariantsHold(ulong seed)
+        {
+            var f = new SculptFuzzScenario(seed + 4, playerCount: 6, driveMovement: true) { ActionChance = 0.35 };
+            f.Run(Ticks);
+            f.SettleAndAssertSupport();
+            TestContext.Out.WriteLine(f.Summary());
+        }
+
+        /// <summary>A brawl: moving players, infinite bar, and sculpts aimed at the ground around each other.</summary>
+        [TestCaseSource(nameof(Seeds))]
+        public void MovingPlayers_Brawl_InvariantsHold(ulong seed)
+        {
+            var f = new SculptFuzzScenario(seed + 6, playerCount: 8, driveMovement: true) { ActionChance = 0.5, AimAtPlayersChance = 0.7, InfiniteBar = true };
+            f.Run(Ticks);
+            f.SettleAndAssertSupport();
+            TestContext.Out.WriteLine(f.Summary());
+        }
+
+        /// <summary>Static players in a brawl (crouched or not), every sculpt aimed around someone.</summary>
+        [TestCaseSource(nameof(Seeds))]
+        public void StaticBrawl_InvariantsHold(ulong seed)
+        {
+            var f = new SculptFuzzScenario(seed + 7, crouchChance: 0.4, playerCount: 8) { ActionChance = 0.5, AimAtPlayersChance = 0.8, InfiniteBar = true, TeleportChance = 0.05 };
+            f.Run(Ticks);
+            f.SettleAndAssertSupport();
+            TestContext.Out.WriteLine(f.Summary());
+        }
+
+        [TestCaseSource(nameof(Seeds))]
+        public void MovingPlayers_SameSeedReplaysIdentically(ulong seed)
+        {
+            var a = new SculptFuzzScenario(seed + 5, playerCount: 4, driveMovement: true) { ActionChance = 0.35 };
+            var b = new SculptFuzzScenario(seed + 5, playerCount: 4, driveMovement: true) { ActionChance = 0.35 };
+            a.Run(600);
+            b.Run(600);
+            Assert.That(b.Trace, Is.EqualTo(a.Trace), "movement + sculpt trace diverged");
+        }
+
         [TestCaseSource(nameof(Seeds))]
         public void SameSeedReplaysIdentically(ulong seed)
         {
