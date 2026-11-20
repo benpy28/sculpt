@@ -2,27 +2,29 @@ namespace Sculpt.Core
 {
     public enum SculptActionType : byte
     {
-        /// <summary>Push or pull: the target block moves one cell along a horizontal direction.</summary>
+        /// <summary>Push or pull: the piece moves one tile (1.2 m) along a horizontal direction.</summary>
         Move = 0,
-        /// <summary>Add a block on top of the targeted column.</summary>
+        /// <summary>The piece rises one level; the level it leaves is filled with rock (the column grows).</summary>
         Raise = 1,
-        /// <summary>Remove the top block of the targeted column.</summary>
+        /// <summary>The piece sinks one level into the natural rock under it (the column shrinks).</summary>
         Sink = 2,
-        /// <summary>Toggle the target block's top between flat and a ramp low on Direction's side.</summary>
-        Shape = 3,
+        /// <summary>The piece is torn out and thrown along the look direction.</summary>
+        Throw = 3,
     }
 
     /// <summary>A sculpt command as sent by a client. The server re-validates all of it.</summary>
     public struct SculptAction
     {
         public SculptActionType Type;
-        /// <summary>The block the player aimed at.</summary>
+        /// <summary>The sub-cell the player aimed at (the solid sub-cell under the crosshair).</summary>
         public Int3 Target;
-        /// <summary>Move: direction the block travels. Shape: the side that becomes the ramp's low edge.</summary>
+        /// <summary>Move: direction the piece travels (horizontal only).</summary>
         public Dir Direction;
         public bool Reinforce;
-        /// <summary>Point on the target block's surface under the crosshair (for line-of-sight checks).</summary>
+        /// <summary>Point on the surface under the crosshair (for range and line-of-sight checks).</summary>
         public Vec3d AimPoint;
+        /// <summary>Throw: the look direction at confirm. Locked for the whole windup.</summary>
+        public Vec3d LookDir;
 
         public static SculptAction Move(Int3 target, Dir dir, Vec3d aim, bool reinforce = false) =>
             new SculptAction { Type = SculptActionType.Move, Target = target, Direction = dir, AimPoint = aim, Reinforce = reinforce };
@@ -33,27 +35,26 @@ namespace Sculpt.Core
         public static SculptAction Sink(Int3 target, Vec3d aim, bool reinforce = false) =>
             new SculptAction { Type = SculptActionType.Sink, Target = target, AimPoint = aim, Reinforce = reinforce };
 
-        public static SculptAction Shape(Int3 target, Dir low, Vec3d aim, bool reinforce = false) =>
-            new SculptAction { Type = SculptActionType.Shape, Target = target, Direction = low, AimPoint = aim, Reinforce = reinforce };
+        public static SculptAction Throw(Int3 target, Vec3d aim, Vec3d look) =>
+            new SculptAction { Type = SculptActionType.Throw, Target = target, AimPoint = aim, LookDir = look };
     }
 
     public enum SculptResult : byte
     {
         Valid = 0,
-        NoTarget,            // target cell is empty or out of the grid
+        NoTarget,            // aimed sub-cell is empty or out of the grid
         NotSculptable,       // anchor, bedrock, or outside the sculpt height range
-        BadDirection,        // vertical move, or a non-horizontal ramp side
-        DestinationBlocked,  // terrain in the destination cell
-        OutOfHeightRange,    // raise above the max / sink below the min
-        NotColumnTop,        // shape needs the top block of a column
+        BadDirection,        // vertical move
+        DestinationBlocked,  // terrain where the piece would go
+        OutOfHeightRange,    // raise above +4 / sink below -2
         OutOfRange,
         NoLineOfSight,
-        Locked,              // another player's windup holds this cell
-        Busy,                // this player already has a windup running
+        Locked,              // another player's windup holds these sub-cells (free; buffered)
+        Busy,                // this player already has a windup or a throw in flight (free; buffered)
         NotEnoughBar,
         PlayerBlocked,       // a player would have to be shoved into geometry
-        Disturbed,           // the cells changed during windup (resolution only)
-        NothingToReinforce,  // reinforced sink with no sculptable block left underneath
+        Disturbed,           // the sub-cells changed during windup (resolution only)
+        CannotThrowReinforced,
     }
 
     /// <summary>Everything the client needs to draw the ghost, and the server needs to start the windup.</summary>
@@ -61,14 +62,19 @@ namespace Sculpt.Core
     {
         public SculptResult Result;
         public SculptActionType Type;
-        /// <summary>The block that changes or moves (move source, column top for raise/sink, shaped block).</summary>
-        public Int3 Source;
-        /// <summary>Where the ghost goes: move destination, new block for raise, removed block for sink, shaped block.</summary>
-        public Int3 Destination;
+        /// <summary>Existing piece id, or 0 if the piece is natural rock that will be carved on confirm.</summary>
+        public ushort PieceId;
+        /// <summary>The piece's sub-cells (sorted Y, Z, X). The ghost outline.</summary>
+        public Int3[] Cells;
+        /// <summary>Sub-cell translation of the piece (zero for a throw). Ghost = Cells + Delta.</summary>
+        public Int3 Delta;
         public int Cost;
         public int WindupTicks;
         public bool EnemyReinforced;
+        /// <summary>Weapon layer: the gun stays locked during this windup (attacking an enemy piece, or a throw).</summary>
+        public bool LocksGun;
 
+        public int Size => Cells?.Length ?? 0;
         public bool IsValid => Result == SculptResult.Valid;
     }
 }

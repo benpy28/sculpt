@@ -248,8 +248,13 @@ namespace Sculpt.Core.Net
                 if (p.CarryRespawn) { cmd.Respawn = true; p.CarryRespawn = false; }
                 p.LastCmd = cmd;
 
-                // Sculpt shoves move the shared body between ticks.
+                // Sculpt shoves move the shared body between ticks; friction drags and throw kicks add velocity.
                 p.State.Position = p.Body.Position;
+                if (p.Body.Kick.LengthSquared > 0)
+                {
+                    p.State.Velocity += p.Body.Kick;
+                    p.Body.Kick = Vec3d.Zero;
+                }
                 NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events);
                 PlayerMovement.WriteBody(p.State, Movement, p.Body);
 

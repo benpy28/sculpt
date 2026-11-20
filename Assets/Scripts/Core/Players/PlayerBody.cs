@@ -19,6 +19,9 @@ namespace Sculpt.Core
         /// <summary>Current eye height above the feet, metres.</summary>
         public double EyeHeight = 1.62;
 
+        /// <summary>Velocity to add on the next movement tick (sculpt friction drag, throw kick). Movement clears it.</summary>
+        public Vec3d Kick;
+
         public PlayerBody(int id, int team, Vec3d position)
         {
             Id = id;

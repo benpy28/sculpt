@@ -123,8 +123,8 @@ namespace Sculpt.Core
                         Set(x, y, z, id);
         }
 
-        /// <summary>Lowest sculptable sub-cell layer (sculpt range bottom, level -2).</summary>
-        public const int SculptMinY = -2 * TileSubs;
+        /// <summary>Lowest sculptable sub-cell layer: a one-level slab here has its top at level -2 (-2.4 m), the range floor.</summary>
+        public const int SculptMinY = -3 * TileSubs;
 
         /// <summary>Bedrock below the sculpt range, natural rock from there up to the base ground top.</summary>
         public void FillBaseGround()

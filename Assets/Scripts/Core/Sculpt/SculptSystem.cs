@@ -4,39 +4,56 @@ using System.Collections.Generic;
 namespace Sculpt.Core
 {
     /// <summary>
-    /// Authoritative sculpt simulation: validation, windups and tile locks, the sculpt bar,
-    /// reinforcement, player shove/carry and block gravity. Fixed 60 Hz ticks, integer grid state.
+    /// Authoritative terrain v2 sculpt simulation: aim-time pieces, validation, windups and sub-cell locks, the bar,
+    /// size scaling, reinforcement, shove/carry/friction drag, the one-third support rule with rigid falling, and the
+    /// throw. Fixed 60 Hz ticks, integer grid state; every grid change goes through <see cref="PieceTable"/> ops.
     /// Usage per tick: TryBegin() for each confirmed command, then Step().
     /// </summary>
-    public sealed class SculptSystem
+    public sealed partial class SculptSystem
     {
-        public readonly VoxelGrid Grid;
+        public readonly SubGrid Grid;
         public readonly SculptConfig Config;
+        public readonly PieceTable Pieces;
 
         /// <summary>Current tick. Step() advances it.</summary>
         public int Tick { get; private set; }
 
-        /// <summary>Events produced since the last ClearEvents(). Game uses these for audio, effects and warnings.</summary>
+        /// <summary>Events produced since the last ClearEvents(). Game uses these for audio, effects, warnings and damage.</summary>
         public readonly List<SculptEvent> Events = new List<SculptEvent>();
 
         private readonly List<PlayerBody> _players = new List<PlayerBody>();
         private readonly Dictionary<int, SculptBar> _bars = new Dictionary<int, SculptBar>();
         private readonly Dictionary<int, PendingSculpt> _pending = new Dictionary<int, PendingSculpt>();
         private readonly Dictionary<Int3, int> _locks = new Dictionary<Int3, int>();
-        private readonly HashSet<long> _gravityColumns = new HashSet<long>();
-        private readonly Dictionary<Int3, int> _fallTimers = new Dictionary<Int3, int>();
+        private readonly Dictionary<int, BufferedConfirm> _buffered = new Dictionary<int, BufferedConfirm>();
 
-        // Scratch lists, reused to avoid per-tick allocation.
+        // Support and falling.
+        private readonly HashSet<ushort> _checkPieces = new HashSet<ushort>();
+        private readonly HashSet<Int3> _checkNatural = new HashSet<Int3>();
+        private readonly Dictionary<ushort, int> _falling = new Dictionary<ushort, int>();
+
+        // Scratch.
         private readonly List<PendingSculpt> _due = new List<PendingSculpt>();
-        private readonly List<long> _columnScratch = new List<long>();
+        private readonly List<Int3> _cellScratch = new List<Int3>();
+        private readonly HashSet<Int3> _setScratch = new HashSet<Int3>();
+        private readonly TerrainOverlay _overlay;
         private readonly List<KeyValuePair<PlayerBody, Vec3d>> _shoves = new List<KeyValuePair<PlayerBody, Vec3d>>();
+        private readonly List<PlayerBody> _drags = new List<PlayerBody>();
         private int _resolvingPlayer;
 
-        public SculptSystem(VoxelGrid grid, SculptConfig config, int startTick = 0)
+        private struct BufferedConfirm
+        {
+            public SculptAction Action;
+            public int ExpireTick;
+        }
+
+        public SculptSystem(SubGrid grid, SculptConfig config, int startTick = 0)
         {
             Grid = grid ?? throw new ArgumentNullException(nameof(grid));
             Config = config ?? throw new ArgumentNullException(nameof(config));
             Tick = startTick;
+            Pieces = new PieceTable(grid) { OnWrite = OnCellWritten };
+            _overlay = new TerrainOverlay(grid);
         }
 
         // ---------------- Players ----------------
@@ -54,6 +71,7 @@ namespace Sculpt.Core
         {
             if (_pending.TryGetValue(id, out var pend)) ReleaseLocks(pend);
             _pending.Remove(id);
+            _buffered.Remove(id);
             _bars.Remove(id);
             _players.RemoveAll(p => p.Id == id);
         }
@@ -62,23 +80,55 @@ namespace Sculpt.Core
 
         public PendingSculpt PendingOf(int playerId) => _pending.TryGetValue(playerId, out var p) ? p : null;
 
-        public bool IsLocked(Int3 cell, out int ownerId) => _locks.TryGetValue(cell, out ownerId);
+        public bool IsLocked(Int3 sub, out int ownerId) => _locks.TryGetValue(sub, out ownerId);
+
+        public bool HasBufferedConfirm(int playerId) => _buffered.ContainsKey(playerId);
 
         public void ClearEvents() => Events.Clear();
 
+        private PlayerBody FindPlayer(int id)
+        {
+            foreach (var p in _players) if (p.Id == id) return p;
+            return null;
+        }
+
         // ---------------- Validation ----------------
 
-        /// <summary>Full check of a command as it stands right now (drives the ghost colour). Changes nothing.</summary>
+        /// <summary>Full check of a command as it stands right now (drives the ghost). Changes nothing.</summary>
         public SculptCheck Evaluate(PlayerBody p, SculptAction a) => EvaluateInternal(p, a, false);
 
-        /// <summary>Validates and, if valid, charges the bar, locks the cells and starts the windup.</summary>
-        public SculptCheck TryBegin(PlayerBody p, SculptAction a)
+        /// <summary>
+        /// Validates and, if valid, carves the piece (natural rock), charges the bar, locks the sub-cells and starts the
+        /// windup. A Locked or Busy rejection is free and the confirm is buffered for ConfirmBufferTicks.
+        /// </summary>
+        public SculptCheck TryBegin(PlayerBody p, SculptAction a) => TryBeginInternal(p, a, true);
+
+        private SculptCheck TryBeginInternal(PlayerBody p, SculptAction a, bool allowBuffer)
         {
             SculptCheck c = EvaluateInternal(p, a, false);
-            if (!c.IsValid) return c;
+            if (!c.IsValid)
+            {
+                if (allowBuffer && (c.Result == SculptResult.Locked || c.Result == SculptResult.Busy) && Config.ConfirmBufferTicks > 0)
+                    _buffered[p.Id] = new BufferedConfirm { Action = a, ExpireTick = Tick + Config.ConfirmBufferTicks };
+                return c;
+            }
+            _buffered.Remove(p.Id);
+
+            if (c.PieceId == 0)
+            {
+                PieceInfo carved = Pieces.Carve(c.Cells);
+                c.PieceId = carved.Id;
+            }
 
             _bars[p.Id].Spend(c.Cost, Tick);
-            var cells = c.Source == c.Destination ? new[] { c.Source } : new[] { c.Source, c.Destination };
+            var cells = new List<Int3>(c.Cells);
+            if (c.Delta != Int3.Zero)
+            {
+                _setScratch.Clear();
+                foreach (var x in c.Cells) _setScratch.Add(x);
+                foreach (var x in c.Cells)
+                    if (!_setScratch.Contains(x + c.Delta)) cells.Add(x + c.Delta);
+            }
             var pend = new PendingSculpt
             {
                 PlayerId = p.Id,
@@ -86,9 +136,9 @@ namespace Sculpt.Core
                 Check = c,
                 StartTick = Tick,
                 CompleteTick = Tick + c.WindupTicks,
-                LockedCells = cells,
+                LockedCells = cells.ToArray(),
             };
-            foreach (var cell in cells) _locks[cell] = p.Id;
+            foreach (var cell in pend.LockedCells) _locks[cell] = p.Id;
             _pending[p.Id] = pend;
 
             Events.Add(new SculptEvent
@@ -98,97 +148,9 @@ namespace Sculpt.Core
                 PlayerId = p.Id,
                 Action = a,
                 Check = c,
-                Cell = c.Source,
-                WarnedPlayers = PlayersTouching(c.Source, p.Id),
+                Piece = c.PieceId,
+                WarnedPlayers = Warned(p, a, c),
             });
-            return c;
-        }
-
-        private bool IsSculptable(Int3 cell)
-        {
-            if (!Grid.InBounds(cell)) return false;
-            if (cell.Y < Config.MinCellY || cell.Y > Config.MaxCellY) return false;
-            return Grid.Get(cell).Kind == BlockKind.Solid;
-        }
-
-        private SculptCheck EvaluateInternal(PlayerBody p, SculptAction a, bool resolving)
-        {
-            var c = new SculptCheck { Type = a.Type, Source = a.Target, Destination = a.Target };
-
-            if (!resolving && _pending.ContainsKey(p.Id)) return Fail(c, SculptResult.Busy);
-            if (resolving && _pending.TryGetValue(p.Id, out var own) && own.Disturbed) return Fail(c, SculptResult.Disturbed);
-            if (!Grid.InBounds(a.Target) || Grid.Get(a.Target).IsEmpty) return Fail(c, SculptResult.NoTarget);
-
-            switch (a.Type)
-            {
-                case SculptActionType.Move:
-                {
-                    if (!a.Direction.IsHorizontal()) return Fail(c, SculptResult.BadDirection);
-                    if (!IsSculptable(a.Target)) return Fail(c, SculptResult.NotSculptable);
-                    Int3 dst = a.Target + a.Direction.ToInt3();
-                    c.Destination = dst;
-                    if (!Grid.InBounds(dst) || !Grid.Get(dst).IsEmpty) return Fail(c, SculptResult.DestinationBlocked);
-                    break;
-                }
-                case SculptActionType.Raise:
-                {
-                    Int3 top = Grid.TopOfStack(a.Target);
-                    c.Source = top;
-                    if (Grid.Get(top).Kind == BlockKind.Anchor && top.Y >= Config.MinCellY) return Fail(c, SculptResult.NotSculptable);
-                    Int3 dst = top + Int3.Up;
-                    c.Destination = dst;
-                    if (dst.Y > Config.MaxCellY || dst.Y < Config.MinCellY || !Grid.InBounds(dst)) return Fail(c, SculptResult.OutOfHeightRange);
-                    break;
-                }
-                case SculptActionType.Sink:
-                {
-                    Int3 top = Grid.TopOfStack(a.Target);
-                    c.Source = top;
-                    c.Destination = top;
-                    if (top.Y < Config.MinCellY) return Fail(c, SculptResult.OutOfHeightRange);
-                    if (!IsSculptable(top)) return Fail(c, SculptResult.NotSculptable);
-                    if (a.Reinforce && !IsSculptable(top + Int3.Down)) return Fail(c, SculptResult.NothingToReinforce);
-                    break;
-                }
-                case SculptActionType.Shape:
-                {
-                    if (!a.Direction.IsHorizontal()) return Fail(c, SculptResult.BadDirection);
-                    if (!IsSculptable(a.Target)) return Fail(c, SculptResult.NotSculptable);
-                    if (!Grid.Get(a.Target + Int3.Up).IsEmpty) return Fail(c, SculptResult.NotColumnTop);
-                    break;
-                }
-                default:
-                    return Fail(c, SculptResult.NoTarget);
-            }
-
-            // Locks: another player's windup holds the cell.
-            if (LockedByOther(c.Source, p.Id) || LockedByOther(c.Destination, p.Id)) return Fail(c, SculptResult.Locked);
-
-            if (!resolving)
-            {
-                // Range and line of sight: from the server's view of the eye.
-                Vec3d eye = p.Eye;
-                Aabb targetBox = VoxelGrid.CellBounds(a.Target);
-                if ((targetBox.ClosestPoint(eye) - eye).Length > Config.RangeMeters + 1e-9) return Fail(c, SculptResult.OutOfRange);
-                if (!targetBox.Contains(a.AimPoint, Config.AimTolerance)) return Fail(c, SculptResult.NoLineOfSight);
-                Vec3d toAim = a.AimPoint - eye;
-                VoxelHit hit = VoxelGeometry.Raycast(Grid, eye, toAim, toAim.Length + 0.05);
-                if (!hit.Hit || hit.Cell != a.Target) return Fail(c, SculptResult.NoLineOfSight);
-            }
-
-            // Cost and windup.
-            Block affected = Grid.Get(c.Source);
-            c.EnemyReinforced = affected.IsEnemyReinforced(p.Team, Tick);
-            int baseCost = Config.CostFor(a.Type);
-            c.Cost = baseCost * (c.EnemyReinforced ? Config.EnemyReinforcedCostMultiplier : 1) + (a.Reinforce ? Config.CostReinforce : 0);
-            c.WindupTicks = a.Reinforce ? Config.ReinforcedCasterWindupTicks : Config.WindupTicks;
-            if (c.EnemyReinforced) c.WindupTicks = Math.Max(c.WindupTicks, Config.EnemyReinforcedWindupTicks);
-
-            if (!resolving && !_bars[p.Id].CanAfford(c.Cost)) return Fail(c, SculptResult.NotEnoughBar);
-
-            if (!PlanShoves(a, c)) return Fail(c, SculptResult.PlayerBlocked);
-
-            c.Result = SculptResult.Valid;
             return c;
         }
 
@@ -200,163 +162,294 @@ namespace Sculpt.Core
 
         private bool LockedByOther(Int3 cell, int playerId) => _locks.TryGetValue(cell, out int owner) && owner != playerId;
 
-        // ---------------- Shove / carry ----------------
-
-        /// <summary>The block that will occupy a cell after the action, and any cells it reshapes.</summary>
-        private VoxelGeometry.Override[] ResultOverrides(SculptAction a, SculptCheck c, out Int3 grownCell, out Block grownBlock, out Int3 extraCell, out Block extraBlock, out bool hasExtra)
+        private bool HasProjectile(int playerId)
         {
-            hasExtra = false;
-            extraCell = default;
-            extraBlock = default;
+            foreach (var t in _thrown) if (t.Owner == playerId) return true;
+            return false;
+        }
+
+        private SculptCheck EvaluateInternal(PlayerBody p, SculptAction a, bool resolving)
+        {
+            var c = new SculptCheck { Type = a.Type };
+
+            if (!resolving && (_pending.ContainsKey(p.Id) || (a.Type == SculptActionType.Throw && HasProjectile(p.Id)))) return Fail(c, SculptResult.Busy);
+            if (resolving && _pending.TryGetValue(p.Id, out var own) && own.Disturbed) return Fail(c, SculptResult.Disturbed);
+
+            if (!Grid.InBounds(a.Target)) return Fail(c, SculptResult.NoTarget);
+            ushort id = Grid.Get(a.Target);
+            if (id == SubId.Empty) return Fail(c, SculptResult.NoTarget);
+            if (!SubId.IsSculptable(id)) return Fail(c, SculptResult.NotSculptable);
+            if (a.Target.Y < Config.MinSubY || a.Target.Y > Config.MaxSubY) return Fail(c, SculptResult.NotSculptable);
+
+            // The piece: an existing one, or the natural rock this aim would carve.
+            PieceInfo info = null;
+            if (SubId.IsPiece(id))
+            {
+                info = Pieces.Get(id);
+                if (info == null) return Fail(c, SculptResult.NoTarget);
+                c.PieceId = id;
+                c.Cells = info.Cells.ToArray();
+            }
+            else
+            {
+                PieceFinder.FindNatural(Grid, a.Target, Config, _cellScratch);
+                if (_cellScratch.Count == 0) return Fail(c, SculptResult.NoTarget);
+                c.Cells = _cellScratch.ToArray();
+            }
+
+            int minY = int.MaxValue, maxY = int.MinValue;
+            foreach (var x in c.Cells) { minY = Math.Min(minY, x.Y); maxY = Math.Max(maxY, x.Y); }
+            if (minY < Config.MinSubY || maxY > Config.MaxSubY) return Fail(c, SculptResult.NotSculptable);
+
             switch (a.Type)
             {
                 case SculptActionType.Move:
-                {
-                    grownCell = c.Destination;
-                    grownBlock = Grid.Get(c.Source);
-                    if (!Grid.Get(c.Destination + Int3.Up).IsEmpty) grownBlock.MakeFlat();
-                    Int3 below = c.Destination + Int3.Down;
-                    Block belowB = Grid.Get(below);
-                    if (belowB.IsRamp)
-                    {
-                        belowB.MakeFlat();
-                        hasExtra = true;
-                        extraCell = below;
-                        extraBlock = belowB;
-                        return new[] { new VoxelGeometry.Override(c.Source, Block.Empty), new VoxelGeometry.Override(grownCell, grownBlock), new VoxelGeometry.Override(below, belowB) };
-                    }
-                    return new[] { new VoxelGeometry.Override(c.Source, Block.Empty), new VoxelGeometry.Override(grownCell, grownBlock) };
-                }
+                    if (!a.Direction.IsHorizontal()) return Fail(c, SculptResult.BadDirection);
+                    c.Delta = a.Direction.ToInt3() * SubGrid.TileSubs;
+                    break;
                 case SculptActionType.Raise:
-                {
-                    Block top = Grid.Get(c.Source);
-                    grownCell = c.Destination;
-                    grownBlock = Block.Solid;
-                    if (top.IsRamp)
-                    {
-                        grownBlock = Block.Ramp(top.RampLow);
-                        top.MakeFlat();
-                        hasExtra = true;
-                        extraCell = c.Source;
-                        extraBlock = top;
-                        return new[] { new VoxelGeometry.Override(grownCell, grownBlock), new VoxelGeometry.Override(c.Source, top) };
-                    }
-                    return new[] { new VoxelGeometry.Override(grownCell, grownBlock) };
-                }
-                case SculptActionType.Shape:
-                {
-                    grownCell = c.Source;
-                    grownBlock = Grid.Get(c.Source);
-                    if (grownBlock.IsRamp && grownBlock.RampLow == a.Direction) grownBlock.MakeFlat();
-                    else
-                    {
-                        grownBlock.IsRamp = true;
-                        grownBlock.RampLow = a.Direction;
-                    }
-                    return new[] { new VoxelGeometry.Override(grownCell, grownBlock) };
-                }
-                default: // Sink only removes volume.
-                    grownCell = c.Source;
-                    grownBlock = Block.Empty;
-                    return new[] { new VoxelGeometry.Override(c.Source, Block.Empty) };
+                    c.Delta = new Int3(0, SubGrid.TileSubs, 0);
+                    if (maxY + SubGrid.TileSubs > Config.MaxSubY) return Fail(c, SculptResult.OutOfHeightRange);
+                    break;
+                case SculptActionType.Sink:
+                    c.Delta = new Int3(0, -SubGrid.TileSubs, 0);
+                    if (minY - SubGrid.TileSubs < Config.MinSubY) return Fail(c, SculptResult.OutOfHeightRange);
+                    break;
+                case SculptActionType.Throw:
+                    c.Delta = Int3.Zero;
+                    break;
+                default:
+                    return Fail(c, SculptResult.NoTarget);
             }
+
+            // Where the piece goes must be empty (or itself; a sink also pushes into natural rock).
+            _setScratch.Clear();
+            foreach (var x in c.Cells) _setScratch.Add(x);
+            if (c.Delta != Int3.Zero)
+                foreach (var x in c.Cells)
+                {
+                    Int3 dst = x + c.Delta;
+                    if (_setScratch.Contains(dst)) continue;
+                    if (!Grid.InBounds(dst)) return Fail(c, SculptResult.DestinationBlocked);
+                    ushort d = Grid.Get(dst);
+                    if (d == SubId.Empty) continue;
+                    if (a.Type == SculptActionType.Sink && d == SubId.Natural) continue;
+                    return Fail(c, SculptResult.DestinationBlocked);
+                }
+
+            // Locks: another player's windup holds any of the sub-cells.
+            foreach (var x in c.Cells)
+                if (LockedByOther(x, p.Id) || (c.Delta != Int3.Zero && LockedByOther(x + c.Delta, p.Id))) return Fail(c, SculptResult.Locked);
+
+            if (!resolving)
+            {
+                // Range and line of sight from the server's view of the eye.
+                Vec3d eye = p.Eye;
+                Aabb targetBox = SubGrid.SubBounds(a.Target);
+                if ((targetBox.ClosestPoint(eye) - eye).Length > Config.RangeMeters + 1e-9) return Fail(c, SculptResult.OutOfRange);
+                if (!targetBox.Contains(a.AimPoint, Config.AimTolerance)) return Fail(c, SculptResult.NoLineOfSight);
+                Vec3d toAim = a.AimPoint - eye;
+                TerrainHit hit = Grid.Raycast(eye, toAim, toAim.Length + 0.05);
+                if (!hit.Hit) return Fail(c, SculptResult.NoLineOfSight);
+                bool samePiece = info != null ? hit.Id == id : (hit.Id == SubId.Natural && _setScratch.Contains(hit.Sub));
+                if (!samePiece) return Fail(c, SculptResult.NoLineOfSight);
+            }
+
+            // Cost and windup, scaled by size.
+            int n = c.Cells.Length;
+            c.EnemyReinforced = info != null && info.IsEnemyReinforced(p.Team, Tick);
+            if (a.Type == SculptActionType.Throw)
+            {
+                if (info != null && info.IsReinforced(Tick)) return Fail(c, SculptResult.CannotThrowReinforced);
+                c.Cost = Config.ThrowCost(n);
+                c.WindupTicks = Config.ThrowWindup(n);
+                c.LocksGun = true;
+            }
+            else
+            {
+                int baseCost = Config.ScaledCost(Config.CostFor(a.Type), n);
+                c.Cost = baseCost * (c.EnemyReinforced ? Config.EnemyReinforcedCostMultiplier : 1) + (a.Reinforce ? Config.CostReinforce : 0);
+                c.WindupTicks = Config.ScaledWindup(n);
+                if (a.Reinforce) c.WindupTicks = Math.Max(c.WindupTicks, Config.ReinforcedCasterWindupTicks);
+                if (c.EnemyReinforced) c.WindupTicks = Math.Max(c.WindupTicks, Config.EnemyReinforcedWindupTicks);
+                c.LocksGun = info != null && info.Team != 0 && info.Team != p.Team;
+            }
+
+            if (!resolving && !_bars[p.Id].CanAfford(c.Cost)) return Fail(c, SculptResult.NotEnoughBar);
+
+            if (a.Type != SculptActionType.Throw && !PlanShoves(a, c)) return Fail(c, SculptResult.PlayerBlocked);
+
+            c.Result = SculptResult.Valid;
+            return c;
+        }
+
+        // ---------------- Shove, carry and friction drag ----------------
+
+        /// <summary>Loads the overlay with the terrain as it will be after the move/raise/sink.</summary>
+        private void LoadResultOverlay(SculptActionType type, SculptCheck c)
+        {
+            _overlay.Clear();
+            ushort id = c.PieceId != 0 ? c.PieceId : ushort.MaxValue;
+            foreach (var x in c.Cells) _overlay.Set(x, type == SculptActionType.Raise ? SubId.Natural : SubId.Empty);
+            foreach (var x in c.Cells) _overlay.Set(x + c.Delta, id);
         }
 
         /// <summary>
-        /// Works out where every affected player ends up. Fills _shoves. Returns false if anyone
-        /// would end up inside geometry (the action is then invalid).
+        /// Works out where every affected player ends up (fills _shoves and _drags). False if anyone would end up inside
+        /// geometry. In the path of the piece: lifted (raise/sink: up to one level; push: only a chamfer's worth) or
+        /// shoved at most one tile; standing on a piece that moves sideways: a friction kick only.
         /// </summary>
         private bool PlanShoves(SculptAction a, SculptCheck c)
         {
             _shoves.Clear();
-            if (a.Type == SculptActionType.Sink) return true;
-
-            var overrides = ResultOverrides(a, c, out Int3 grownCell, out Block grownBlock, out Int3 extraCell, out Block extraBlock, out bool hasExtra);
-            Aabb cellBox = VoxelGrid.CellBounds(grownCell);
+            _drags.Clear();
+            LoadResultOverlay(a.Type, c);
+            Aabb near = CellsBounds(c.Cells, c.Delta).Expand(0.5);
 
             foreach (var p in _players)
             {
                 Aabb box = p.Bounds;
-                bool hitsGrown = VoxelGeometry.BoxOverlapsBlock(grownBlock, grownCell, box);
-                bool hitsExtra = hasExtra && VoxelGeometry.BoxOverlapsBlock(extraBlock, extraCell, box);
-                if (!hitsGrown && !hitsExtra) continue;
+                if (!box.Overlaps(near)) continue;
+                if (!_overlay.BoxOverlapsSolid(box))
+                {
+                    if (a.Type == SculptActionType.Move && StandsOn(p, c.Cells)) _drags.Add(p);
+                    continue;
+                }
 
                 Vec3d pos = p.Position;
+                if (a.Type == SculptActionType.Move)
+                {
+                    Vec3d dir = a.Direction.ToVec();
+                    if (TryLift(p, Config.SmallLift, out pos) || TryShove(p, dir, out pos)) { _shoves.Add(new KeyValuePair<PlayerBody, Vec3d>(p, pos)); continue; }
+                    return false;
+                }
+
+                if (TryLift(p, Config.MaxLift, out pos)) { _shoves.Add(new KeyValuePair<PlayerBody, Vec3d>(p, pos)); continue; }
                 bool placed = false;
-
-                // Lift onto the new surface (raise, shape, and a moved ramp sliding under someone on its slope).
-                // Repeated because lifting onto one changed cell can meet the other (e.g. a raised ramp column).
-                if (a.Type != SculptActionType.Move || grownBlock.IsRamp)
+                double best = double.PositiveInfinity;
+                Vec3d bestPos = pos;
+                foreach (Dir d in DirUtil.Horizontal)
                 {
-                    Vec3d lifted = pos;
-                    for (int iter = 0; iter < 3; iter++)
-                    {
-                        Aabb lb = p.BoundsAt(lifted);
-                        double top = lifted.Y;
-                        if (VoxelGeometry.BoxOverlapsBlock(grownBlock, grownCell, lb)) top = Math.Max(top, SurfaceUnderBox(grownBlock, grownCell, lb));
-                        if (hasExtra && VoxelGeometry.BoxOverlapsBlock(extraBlock, extraCell, lb)) top = Math.Max(top, SurfaceUnderBox(extraBlock, extraCell, lb));
-                        if (top <= lifted.Y) break;
-                        lifted = new Vec3d(lifted.X, top, lifted.Z);
-                    }
-                    bool withinCell = lifted.Y - pos.Y <= VoxelGrid.BlockSize + 1e-6;
-                    if (withinCell && !VoxelGeometry.BoxOverlapsSolid(Grid, p.BoundsAt(lifted), overrides))
-                    {
-                        pos = lifted;
-                        placed = true;
-                    }
-                    else if (a.Type != SculptActionType.Move) return false;
+                    if (!TryShove(p, d.ToVec(), out Vec3d sp)) continue;
+                    double dist = (sp - p.Position).HorizontalLength;
+                    if (dist < best - 1e-9) { best = dist; bestPos = sp; placed = true; }
                 }
-
-                if (!placed)
-                {
-                    // Minimal horizontal shove that clears the destination cell. Capped at one cell.
-                    double d;
-                    switch (a.Direction)
-                    {
-                        case Dir.East: d = cellBox.Max.X - box.Min.X; pos = new Vec3d(pos.X + d, pos.Y, pos.Z); break;
-                        case Dir.West: d = box.Max.X - cellBox.Min.X; pos = new Vec3d(pos.X - d, pos.Y, pos.Z); break;
-                        case Dir.North: d = cellBox.Max.Z - box.Min.Z; pos = new Vec3d(pos.X, pos.Y, pos.Z + d); break;
-                        default: d = box.Max.Z - cellBox.Min.Z; pos = new Vec3d(pos.X, pos.Y, pos.Z - d); break;
-                    }
-                    if (d > VoxelGrid.BlockSize + 1e-6) return false;
-                }
-
-                if (VoxelGeometry.BoxOverlapsSolid(Grid, p.BoundsAt(pos), overrides)) return false;
-                _shoves.Add(new KeyValuePair<PlayerBody, Vec3d>(p, pos));
+                if (!placed) return false;
+                _shoves.Add(new KeyValuePair<PlayerBody, Vec3d>(p, bestPos));
             }
             return true;
         }
 
-        /// <summary>Highest point of a block's surface under the footprint of a box.</summary>
-        private static double SurfaceUnderBox(Block b, Int3 cell, Aabb box)
+        /// <summary>Lowest lift (up to max) that frees the player's box in the result terrain.</summary>
+        private bool TryLift(PlayerBody p, double max, out Vec3d pos)
         {
-            Aabb c = VoxelGrid.CellBounds(cell);
-            if (!b.IsRamp) return c.Max.Y;
-            double hx = 0, hz = 0;
-            // Sample at the box corner nearest the ramp's high side.
-            switch (b.RampLow)
-            {
-                case Dir.East: hx = box.Min.X; hz = c.Center.Z; break;
-                case Dir.West: hx = box.Max.X; hz = c.Center.Z; break;
-                case Dir.North: hx = c.Center.X; hz = box.Min.Z; break;
-                case Dir.South: hx = c.Center.X; hz = box.Max.Z; break;
-            }
-            return VoxelGeometry.SurfaceHeight(b, cell, hx, hz);
+            return TrySlide(p, new Vec3d(0, 1, 0), max, out pos);
         }
 
-        private int[] PlayersTouching(Int3 cell, int exceptId)
+        /// <summary>
+        /// Shortest horizontal shove (up to one tile) that frees the player, allowing a small lift at the end so a player
+        /// pushed against the piece's 0.15 m base fillet stands on it instead of counting as blocked.
+        /// </summary>
+        private bool TryShove(PlayerBody p, Vec3d dir, out Vec3d pos)
         {
-            Aabb zone = VoxelGrid.CellBounds(cell).Expand(Config.TouchMarginMeters);
+            const double step = 0.05;
+            double max = Config.MaxShove;
+            double lo = 0;
+            for (double d = step; d <= max + 1e-9; d += step)
+            {
+                double dd = Math.Min(d, max);
+                Vec3d at = p.Position + dir * dd;
+                if (!_overlay.BoxOverlapsSolid(p.BoundsAt(at)))
+                {
+                    double hi = dd;
+                    for (int k = 0; k < 20; k++)
+                    {
+                        double mid = (lo + hi) * 0.5;
+                        if (_overlay.BoxOverlapsSolid(p.BoundsAt(p.Position + dir * mid))) lo = mid; else hi = mid;
+                    }
+                    pos = p.Position + dir * hi;
+                    return true;
+                }
+                if (!_overlay.BoxOverlapsSolid(p.BoundsAt(at + new Vec3d(0, Config.SmallLift, 0))))
+                {
+                    double l0 = 0, l1 = Config.SmallLift;
+                    for (int k = 0; k < 20; k++)
+                    {
+                        double mid = (l0 + l1) * 0.5;
+                        if (_overlay.BoxOverlapsSolid(p.BoundsAt(at + new Vec3d(0, mid, 0)))) l0 = mid; else l1 = mid;
+                    }
+                    pos = at + new Vec3d(0, l1, 0);
+                    return true;
+                }
+                lo = dd;
+            }
+            pos = p.Position;
+            return false;
+        }
+
+        private bool TrySlide(PlayerBody p, Vec3d dir, double max, out Vec3d pos)
+        {
+            const double step = 0.05;
+            double lo = 0;
+            for (double d = step; d <= max + 1e-9; d += step)
+            {
+                double dd = Math.Min(d, max);
+                if (_overlay.BoxOverlapsSolid(p.BoundsAt(p.Position + dir * dd))) { lo = dd; continue; }
+                double hi = dd;
+                for (int k = 0; k < 20; k++)
+                {
+                    double mid = (lo + hi) * 0.5;
+                    if (_overlay.BoxOverlapsSolid(p.BoundsAt(p.Position + dir * mid))) lo = mid; else hi = mid;
+                }
+                pos = p.Position + dir * hi;
+                return true;
+            }
+            pos = p.Position;
+            return false;
+        }
+
+        /// <summary>Is the player's box resting on top of these sub-cells (voxel tops, within RiderTolerance)?</summary>
+        private bool StandsOn(PlayerBody p, Int3[] cells)
+        {
+            Aabb foot = p.Bounds;
+            foot = new Aabb(new Vec3d(foot.Min.X, foot.Min.Y - Config.RiderTolerance, foot.Min.Z), new Vec3d(foot.Max.X, foot.Min.Y + 0.01, foot.Max.Z));
+            foreach (var x in cells)
+                if (SubGrid.SubBounds(x).Overlaps(foot)) return true;
+            return false;
+        }
+
+        private static Aabb CellsBounds(Int3[] cells, Int3 delta)
+        {
+            int x0 = int.MaxValue, y0 = int.MaxValue, z0 = int.MaxValue, x1 = int.MinValue, y1 = int.MinValue, z1 = int.MinValue;
+            foreach (var c in cells)
+            {
+                x0 = Math.Min(x0, Math.Min(c.X, c.X + delta.X)); x1 = Math.Max(x1, Math.Max(c.X, c.X + delta.X));
+                y0 = Math.Min(y0, Math.Min(c.Y, c.Y + delta.Y)); y1 = Math.Max(y1, Math.Max(c.Y, c.Y + delta.Y));
+                z0 = Math.Min(z0, Math.Min(c.Z, c.Z + delta.Z)); z1 = Math.Max(z1, Math.Max(c.Z, c.Z + delta.Z));
+            }
+            const double s = SubGrid.SubSize;
+            return new Aabb(new Vec3d(x0 * s, y0 * s, z0 * s), new Vec3d((x1 + 1) * s, (y1 + 1) * s, (z1 + 1) * s));
+        }
+
+        /// <summary>Everyone (but the sculptor) standing on or touching the piece; for a throw, enemies in its lane too.</summary>
+        private int[] Warned(PlayerBody sculptor, SculptAction a, SculptCheck c)
+        {
             var ids = new List<int>();
+            Aabb zone = CellsBounds(c.Cells, Int3.Zero).Expand(Config.TouchMarginMeters);
             foreach (var p in _players)
-                if (p.Id != exceptId && p.Bounds.Overlaps(zone)) ids.Add(p.Id);
+            {
+                if (p.Id == sculptor.Id) continue;
+                if (p.Bounds.Overlaps(zone)) { ids.Add(p.Id); continue; }
+                if (a.Type == SculptActionType.Throw && p.Team != sculptor.Team && InThrowLane(sculptor, a, c, p)) ids.Add(p.Id);
+            }
             ids.Sort();
             return ids.ToArray();
         }
 
         // ---------------- Tick ----------------
 
-        /// <summary>Advances one tick: resolves due windups, runs block gravity, regenerates bars.</summary>
+        /// <summary>Advances one tick: resolves due windups, retries buffered confirms, flies thrown pieces, runs support
+        /// and falling, regenerates bars.</summary>
         public void Step()
         {
             Tick++;
@@ -367,15 +460,26 @@ namespace Sculpt.Core
             _due.Sort((x, y) => x.CompleteTick != y.CompleteTick ? x.CompleteTick.CompareTo(y.CompleteTick) : x.PlayerId.CompareTo(y.PlayerId));
             foreach (var pend in _due) Resolve(pend);
 
-            StepGravity();
+            if (_buffered.Count > 0)
+            {
+                var ids = new List<int>(_buffered.Keys);
+                ids.Sort();
+                foreach (int id in ids)
+                {
+                    BufferedConfirm b = _buffered[id];
+                    _buffered.Remove(id);
+                    if (Tick > b.ExpireTick) continue;
+                    PlayerBody p = FindPlayer(id);
+                    if (p == null) continue;
+                    SculptCheck c = TryBeginInternal(p, b.Action, false);
+                    if (c.Result == SculptResult.Locked || c.Result == SculptResult.Busy) _buffered[id] = b; // keep waiting until it expires
+                }
+            }
+
+            StepThrown();
+            StepSupport();
 
             foreach (var p in _players) _bars[p.Id].Tick(Tick, Config);
-        }
-
-        private PlayerBody FindPlayer(int id)
-        {
-            foreach (var p in _players) if (p.Id == id) return p;
-            return null;
         }
 
         private void Resolve(PendingSculpt pend)
@@ -388,117 +492,43 @@ namespace Sculpt.Core
             if (!c.IsValid)
             {
                 if (p != null) _bars[p.Id].Refund(pend.Check.Cost);
-                Events.Add(new SculptEvent { Type = SculptEventType.Cancelled, Tick = Tick, PlayerId = pend.PlayerId, Action = pend.Action, Check = c, Result = c.Result, Cell = c.Source });
+                Events.Add(new SculptEvent { Type = SculptEventType.Cancelled, Tick = Tick, PlayerId = pend.PlayerId, Action = pend.Action, Check = c, Result = c.Result, Piece = pend.Check.PieceId });
                 return;
             }
 
-            // _shoves was filled by EvaluateInternal for this exact state.
+            // _shoves and _drags were filled by EvaluateInternal for this exact state.
             var shoves = new List<KeyValuePair<PlayerBody, Vec3d>>(_shoves);
+            var drags = new List<PlayerBody>(_drags);
             _resolvingPlayer = p.Id;
-            Apply(p, pend.Action, c);
+            PieceInfo info = Pieces.Get(c.PieceId);
+
+            if (pend.Action.Type == SculptActionType.Throw)
+            {
+                Launch(p, pend.Action, c, info);
+            }
+            else
+            {
+                Pieces.Translate(c.PieceId, c.Delta, pend.Action.Type == SculptActionType.Raise);
+                byte rTeam = info.ReinforceTeam;
+                int rUntil = info.ReinforceUntilTick;
+                if (c.EnemyReinforced) { rTeam = 0; rUntil = 0; }
+                if (pend.Action.Reinforce) { rTeam = (byte)p.Team; rUntil = Tick + Config.ReinforceDurationTicks; }
+                Pieces.Stamp(c.PieceId, (byte)p.Team, Tick, rTeam, rUntil);
+                _checkPieces.Add(c.PieceId);
+            }
             _resolvingPlayer = 0;
 
             foreach (var s in shoves)
             {
                 s.Key.Position = s.Value;
-                Events.Add(new SculptEvent { Type = SculptEventType.PlayerShoved, Tick = Tick, PlayerId = s.Key.Id, Action = pend.Action, Check = c, Cell = c.Destination });
+                Events.Add(new SculptEvent { Type = SculptEventType.PlayerShoved, Tick = Tick, PlayerId = s.Key.Id, Action = pend.Action, Check = c, Piece = c.PieceId });
             }
-            Events.Add(new SculptEvent { Type = SculptEventType.Completed, Tick = Tick, PlayerId = p.Id, Action = pend.Action, Check = c, Cell = c.Destination });
-        }
-
-        private void Stamp(ref Block b, PlayerBody p, SculptAction a, bool enemyChange)
-        {
-            if (enemyChange) b.ClearReinforcement();
-            if (a.Reinforce)
+            foreach (var d in drags)
             {
-                b.ReinforceTeam = (byte)p.Team;
-                b.ReinforceUntilTick = Tick + Config.ReinforceDurationTicks;
+                d.Kick += pend.Action.Direction.ToVec() * Config.RiderDragSpeed;
+                Events.Add(new SculptEvent { Type = SculptEventType.PlayerDragged, Tick = Tick, PlayerId = d.Id, Action = pend.Action, Check = c, Piece = c.PieceId });
             }
-            b.TintTeam = (byte)p.Team;
-            b.TintTick = Tick;
-        }
-
-        private void Apply(PlayerBody p, SculptAction a, SculptCheck c)
-        {
-            switch (a.Type)
-            {
-                case SculptActionType.Move:
-                {
-                    Block b = Grid.Get(c.Source);
-                    Stamp(ref b, p, a, c.EnemyReinforced);
-                    SetCell(c.Source, Block.Empty);
-                    SetCell(c.Destination, b);
-                    NormalizeRamps(c.Destination);
-                    break;
-                }
-                case SculptActionType.Raise:
-                {
-                    Block top = Grid.Get(c.Source);
-                    Block nb = Block.Solid;
-                    if (top.IsRamp)
-                    {
-                        nb = Block.Ramp(top.RampLow);
-                        top.MakeFlat();
-                    }
-                    if (c.EnemyReinforced) top.ClearReinforcement();
-                    SetCell(c.Source, top);
-                    Stamp(ref nb, p, a, false);
-                    SetCell(c.Destination, nb);
-                    break;
-                }
-                case SculptActionType.Sink:
-                {
-                    SetCell(c.Source, Block.Empty);
-                    Int3 below = c.Source + Int3.Down;
-                    if (a.Reinforce && IsSculptable(below))
-                    {
-                        Block bb = Grid.Get(below);
-                        Stamp(ref bb, p, a, bb.IsEnemyReinforced(p.Team, Tick));
-                        SetCell(below, bb);
-                    }
-                    break;
-                }
-                case SculptActionType.Shape:
-                {
-                    Block b = Grid.Get(c.Source);
-                    if (b.IsRamp && b.RampLow == a.Direction) b.MakeFlat();
-                    else
-                    {
-                        b.IsRamp = true;
-                        b.RampLow = a.Direction;
-                    }
-                    Stamp(ref b, p, a, c.EnemyReinforced);
-                    SetCell(c.Source, b);
-                    break;
-                }
-            }
-        }
-
-        /// <summary>A ramp only exists as a column's top block: anything sitting on a ramp flattens it.</summary>
-        private void NormalizeRamps(Int3 cell)
-        {
-            Int3 below = cell + Int3.Down;
-            Block bb = Grid.Get(below);
-            if (Grid.InBounds(below) && bb.IsRamp && !Grid.Get(cell).IsEmpty)
-            {
-                bb.MakeFlat();
-                SetCell(below, bb);
-            }
-            Block b = Grid.Get(cell);
-            if (b.IsRamp && !Grid.Get(cell + Int3.Up).IsEmpty)
-            {
-                b.MakeFlat();
-                SetCell(cell, b);
-            }
-        }
-
-        /// <summary>All sculpt-driven grid writes go through here so locks can detect disturbance.</summary>
-        private void SetCell(Int3 cell, Block b)
-        {
-            if (_locks.TryGetValue(cell, out int owner) && owner != _resolvingPlayer && _pending.TryGetValue(owner, out var pend))
-                pend.Disturbed = true;
-            Grid.Set(cell, b);
-            _gravityColumns.Add(ColumnKey(cell.X, cell.Z));
+            Events.Add(new SculptEvent { Type = SculptEventType.Completed, Tick = Tick, PlayerId = p.Id, Action = pend.Action, Check = c, Piece = c.PieceId });
         }
 
         private void ReleaseLocks(PendingSculpt pend)
@@ -507,107 +537,165 @@ namespace Sculpt.Core
                 if (_locks.TryGetValue(cell, out int owner) && owner == pend.PlayerId) _locks.Remove(cell);
         }
 
-        // ---------------- Gravity ----------------
-
-        /// <summary>Call after editing the grid directly (map setup, net deltas) so gravity re-checks those columns.</summary>
-        public void NotifyCellChanged(Int3 cell) => _gravityColumns.Add(ColumnKey(cell.X, cell.Z));
-
-        private static long ColumnKey(int x, int z) => ((long)x << 32) | (uint)z;
-        private static int ColumnX(long k) => (int)(k >> 32);
-        private static int ColumnZ(long k) => (int)(uint)k;
-
-        public bool HasFallingBlocks => _gravityColumns.Count > 0;
-
-        private void StepGravity()
+        /// <summary>Every grid write: lock disturbance and support bookkeeping.</summary>
+        private void OnCellWritten(Int3 c)
         {
-            if (_gravityColumns.Count == 0) return;
-            _columnScratch.Clear();
-            _columnScratch.AddRange(_gravityColumns);
-            _columnScratch.Sort();
-            foreach (long key in _columnScratch)
+            if (_locks.TryGetValue(c, out int owner) && owner != _resolvingPlayer && _pending.TryGetValue(owner, out var pend))
+                pend.Disturbed = true;
+            ushort here = Grid.Get(c);
+            if (SubId.IsPiece(here)) _checkPieces.Add(here);
+            Int3 above = c + Int3.Up;
+            ushort up = Grid.Get(above);
+            if (SubId.IsPiece(up)) _checkPieces.Add(up);
+            else if (up == SubId.Natural) _checkNatural.Add(above);
+        }
+
+        // ---------------- Support and falling ----------------
+
+        /// <summary>Call after editing the grid directly (map setup, tests) so support re-checks that sub-cell's surroundings.</summary>
+        public void NotifyCellChanged(Int3 c) => OnCellWritten(c);
+
+        public bool HasFallingPieces => _falling.Count > 0 || _checkPieces.Count > 0 || _checkNatural.Count > 0;
+
+        public bool IsFalling(ushort id) => _falling.ContainsKey(id);
+
+        /// <summary>At least a third of the underside (sub-cells with nothing of the piece below) rests on something solid.</summary>
+        public bool IsSupported(IList<Int3> cells)
+        {
+            _setScratch.Clear();
+            foreach (var x in cells) _setScratch.Add(x);
+            int under = 0, held = 0;
+            foreach (var x in cells)
             {
-                if (!StepColumn(ColumnX(key), ColumnZ(key)))
+                Int3 b = x + Int3.Down;
+                if (_setScratch.Contains(b)) continue;
+                under++;
+                if (Grid.Get(b) != SubId.Empty) held++;
+            }
+            return held * Config.SupportDenominator >= under * Config.SupportNumerator;
+        }
+
+        private void StepSupport()
+        {
+            // Loose natural rock: small unsupported clumps become pieces and fall.
+            if (_checkNatural.Count > 0)
+            {
+                var seeds = new List<Int3>(_checkNatural);
+                _checkNatural.Clear();
+                seeds.Sort(Int3.CompareYZX);
+                var visited = new HashSet<Int3>();
+                foreach (var s in seeds)
                 {
-                    _gravityColumns.Remove(key);
-                    ClearColumnTimers(ColumnX(key), ColumnZ(key));
+                    if (visited.Contains(s) || Grid.Get(s) != SubId.Natural) continue;
+                    var comp = new List<Int3>();
+                    bool grounded = FloodNatural(s, visited, comp);
+                    if (grounded || IsSupported(comp)) continue;
+                    PieceInfo pc = Pieces.Carve(comp);
+                    _falling[pc.Id] = 0;
                 }
+            }
+
+            if (_checkPieces.Count > 0)
+            {
+                var ids = new List<ushort>(_checkPieces);
+                _checkPieces.Clear();
+                ids.Sort();
+                foreach (ushort id in ids)
+                {
+                    PieceInfo pc = Pieces.Get(id);
+                    if (pc == null || _falling.ContainsKey(id)) continue;
+                    if (!IsSupported(pc.Cells)) _falling[id] = 0;
+                }
+            }
+
+            if (_falling.Count == 0) return;
+
+            // Bottom-up, then by id.
+            var order = new List<ushort>(_falling.Keys);
+            order.Sort((a, b) =>
+            {
+                int ya = Pieces.Get(a)?.MinY ?? int.MaxValue, yb = Pieces.Get(b)?.MinY ?? int.MaxValue;
+                return ya != yb ? ya.CompareTo(yb) : a.CompareTo(b);
+            });
+            foreach (ushort id in order)
+            {
+                PieceInfo pc = Pieces.Get(id);
+                if (pc == null) { _falling.Remove(id); continue; }
+                if (IsSupported(pc.Cells)) { Land(id); continue; }
+
+                int t = _falling[id] + 1;
+                if (t < Config.FallTicksPerSubCell) { _falling[id] = t; continue; }
+
+                // Rigid drop by one sub-cell, only into empty space, never into a player.
+                bool blocked = false;
+                _setScratch.Clear();
+                foreach (var x in pc.Cells) _setScratch.Add(x);
+                foreach (var x in pc.Cells)
+                {
+                    Int3 b = x + Int3.Down;
+                    if (_setScratch.Contains(b)) continue;
+                    if (!Grid.InBounds(b) || Grid.Get(b) != SubId.Empty) { blocked = true; break; }
+                }
+                if (blocked) { Land(id); continue; }
+
+                var tmp = new SculptCheck { PieceId = id, Cells = pc.Cells.ToArray(), Delta = Int3.Down };
+                LoadResultOverlay(SculptActionType.Sink, tmp);
+                Aabb near = CellsBounds(tmp.Cells, Int3.Down).Expand(0.05);
+                bool hitsPlayer = false;
+                foreach (var p in _players)
+                    if (p.Bounds.Overlaps(near) && _overlay.BoxOverlapsSolid(p.Bounds) && !Grid.BoxOverlapsSolid(p.Bounds)) { hitsPlayer = true; break; }
+                if (hitsPlayer) { _falling[id] = t; continue; } // wait above them
+
+                Pieces.Translate(id, Int3.Down, false);
+                _falling[id] = 0;
+                Events.Add(new SculptEvent { Type = SculptEventType.PieceFell, Tick = Tick, Piece = id });
             }
         }
 
-        /// <summary>Steps one column. Returns true while anything in it is still falling.</summary>
-        private bool StepColumn(int x, int z)
+        private void Land(ushort id)
         {
-            bool falling = false;
-            int y = Grid.MinY;
-            int maxY = Grid.MaxYExclusive;
-            while (y < maxY)
+            _falling.Remove(id);
+            Events.Add(new SculptEvent { Type = SculptEventType.PieceLanded, Tick = Tick, Piece = id });
+        }
+
+        /// <summary>Flood fill of natural rock. True if it is "the ground": too big, or touching bedrock or an anchor.</summary>
+        private bool FloodNatural(Int3 seed, HashSet<Int3> visited, List<Int3> comp)
+        {
+            var stack = new Stack<Int3>();
+            stack.Push(seed);
+            visited.Add(seed);
+            bool grounded = false;
+            while (stack.Count > 0)
             {
-                if (Grid.Get(x, y, z).IsEmpty) { y++; continue; }
-                int bottom = y;
-                int lowestAnchor = int.MaxValue;
-                while (y < maxY && !Grid.Get(x, y, z).IsEmpty)
+                Int3 c = stack.Pop();
+                comp.Add(c);
+                if (comp.Count > Config.NaturalGroundedLimit) grounded = true;
+                for (int k = 0; k < 6; k++)
                 {
-                    if (Grid.Get(x, y, z).Kind == BlockKind.Anchor && lowestAnchor == int.MaxValue) lowestAnchor = y;
-                    y++;
+                    Int3 n = c + Step6(k);
+                    ushort id = Grid.Get(n);
+                    if (id == SubId.Bedrock || id == SubId.Anchor) { grounded = true; continue; }
+                    if (id != SubId.Natural || visited.Contains(n)) continue;
+                    if (grounded) continue; // keep the visited set small once we know
+                    visited.Add(n);
+                    stack.Push(n);
                 }
-                // An anchor holds what is on top of it, never what hangs under it.
-                int top = lowestAnchor == int.MaxValue ? y - 1 : lowestAnchor - 1;
-                var bottomCell = new Int3(x, bottom, z);
-
-                if (bottom == Grid.MinY || top < bottom)
-                {
-                    _fallTimers.Remove(bottomCell);
-                    continue;
-                }
-
-                falling = true;
-                if (!_fallTimers.TryGetValue(bottomCell, out int t))
-                {
-                    _fallTimers[bottomCell] = 0;
-                    continue;
-                }
-                if (t < Config.BlockFallIntervalTicks) t++;
-                if (t < Config.BlockFallIntervalTicks)
-                {
-                    _fallTimers[bottomCell] = t;
-                    continue;
-                }
-
-                Int3 landing = new Int3(x, bottom - 1, z);
-                Int3 under = landing + Int3.Down;
-                Block underB = Grid.Get(under);
-                bool flattensRamp = underB.IsRamp && Grid.InBounds(under);
-                if (flattensRamp) underB.MakeFlat();
-                if (AnyPlayerOverlaps(Grid.Get(bottomCell), landing) || (flattensRamp && AnyPlayerOverlaps(underB, under)))
-                {
-                    // Never crush: wait above the player until the cell is clear.
-                    _fallTimers[bottomCell] = t;
-                    continue;
-                }
-
-                for (int yy = bottom; yy <= top; yy++) SetCell(new Int3(x, yy - 1, z), Grid.Get(x, yy, z));
-                SetCell(new Int3(x, top, z), Block.Empty);
-                _fallTimers.Remove(bottomCell);
-                _fallTimers[landing] = 0;
-                NormalizeRamps(landing);
-                Events.Add(new SculptEvent { Type = SculptEventType.BlockFell, Tick = Tick, Cell = landing });
+                if (grounded && comp.Count > Config.NaturalGroundedLimit) break;
             }
-            return falling;
+            return grounded;
         }
 
-        private bool AnyPlayerOverlaps(Block b, Int3 cell)
+        private static Int3 Step6(int k)
         {
-            foreach (var p in _players)
-                if (VoxelGeometry.BoxOverlapsBlock(b, cell, p.Bounds)) return true;
-            return false;
-        }
-
-        private void ClearColumnTimers(int x, int z)
-        {
-            if (_fallTimers.Count == 0) return;
-            var remove = new List<Int3>();
-            foreach (var k in _fallTimers.Keys) if (k.X == x && k.Z == z) remove.Add(k);
-            foreach (var k in remove) _fallTimers.Remove(k);
+            switch (k)
+            {
+                case 0: return new Int3(1, 0, 0);
+                case 1: return new Int3(-1, 0, 0);
+                case 2: return new Int3(0, 1, 0);
+                case 3: return new Int3(0, -1, 0);
+                case 4: return new Int3(0, 0, 1);
+                default: return new Int3(0, 0, -1);
+            }
         }
     }
 }
