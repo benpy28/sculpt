@@ -9,6 +9,7 @@ Accuracy and testability matter more than speed.
 - Absolutely heavy focus on low latency. Input-to-response must feel instant: predict locally, keep tick work cheap, never add avoidable frames of delay.
 - Sculpting must feel fair and clean: clear tells, no surprise deaths from geometry, crisp predictable results.
 - Guns feel heavy and realistic: weight in recoil, sound and impact, not toy-like.
+- **Project rule:** go hard early on making the feel amazing and on skill cap. Don't rush: a good base matters more than speed. Feel work is not deferred to M6; every milestone that touches movement, sculpting or guns gets tuned until it feels right.
 
 This file is the source of truth for every thread. Update it whenever Ben changes a decision.
 
@@ -150,6 +151,16 @@ Tests/Core.Check/                  netstandard2.1 compile check of Core
 16. Slide-land: crouch down at touchdown or pressed within 150 ms after; ignores flat-slide cooldown; keeps horizontal speed.
 17. Air control: 15% of ground acceleration.
 18. Fall damage: 10 per level beyond 6.
+
+### Smaller calls made by Claude in M1 (tell Ben; change if he disagrees)
+- A falling block never enters a cell overlapping a player: it waits above until the cell is clear.
+- A stack with empty space under it falls together as one unit.
+- Raise treats the column's top block as the block being changed (for enemy reinforcement cost and windup).
+- Reinforced sink reinforces the newly exposed top block.
+- One windup per player at a time. A new confirm during a windup is rejected (Busy).
+- If anything writes to a locked cell during windup (e.g. a falling block), the action cancels at resolution and refunds.
+- Pushing a block horizontally does not drag a player standing on it; they fall through movement gravity.
+- Sculpt tint fades over 10 s (cosmetic, tunable).
 
 ## Open questions
 - (none)
