@@ -4,6 +4,8 @@ Competitive first-person PvP shooter in Unity 6 (6000.4.1f1, URP, Universal 3D t
 The hook: a terrain-sculpting system with a very high skill ceiling. Players push grid-aligned blocks around mid-fight.
 Accuracy and testability matter more than speed.
 
+**Core vision (Ben, 2026-11-20, his words):** "you can quickly edit the environment around you in a way that feels fair and lets you take a defensive/attacking playstyle in a 1v1 and try to outsmart or outmechanics you opponent in a 1v1 that typically takes place in a short distance. it also gives the option to quickly take cover from long distance fire". So: quick, fair environment editing; both defensive and attacking styles; close-range 1v1s won by outsmarting or out-mechanicing the opponent; fast cover from long-range fire.
+
 **Design pillars (from Ben):**
 - High skill cap that still works at beginner level. Satisfying and fair at every level. When a choice is close, pick the option that is readable and fair for the victim and rewards mastery for the skilled player.
 - Absolutely heavy focus on low latency. Input-to-response must feel instant: predict locally, keep tick work cheap, never add avoidable frames of delay.
