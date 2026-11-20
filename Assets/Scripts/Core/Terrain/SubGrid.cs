@@ -55,7 +55,10 @@ namespace Sculpt.Core
         public int SizeZ => ChunksZ * ChunkSize;
         public int MaxYExclusive => MinY + SizeY;
 
+        // Sparse storage: a chunk that is all one id (air, solid rock) has no array, only its uniform id. Arrays are
+        // allocated on the first differing write, so big maps only pay for chunks with surface detail.
         private readonly ushort[][] _chunks;
+        private readonly ushort[] _uniform;
         private readonly HashSet<int> _dirtyChunks = new HashSet<int>();
         private readonly List<Int3> _changes = new List<Int3>();
 
@@ -68,10 +71,43 @@ namespace Sculpt.Core
             ChunksZ = chunksZ;
             MinY = minY;
             _chunks = new ushort[chunksX * chunksY * chunksZ][];
-            for (int i = 0; i < _chunks.Length; i++) _chunks[i] = new ushort[ChunkVolume];
+            _uniform = new ushort[_chunks.Length];
         }
 
         public int ChunkCount => _chunks.Length;
+
+        /// <summary>Chunks that hold their own sub-cell array (the rest are uniform).</summary>
+        public int AllocatedChunks
+        {
+            get
+            {
+                int n = 0;
+                foreach (var c in _chunks) if (c != null) n++;
+                return n;
+            }
+        }
+
+        /// <summary>Gives uniform chunks back their memory (call after map generation).</summary>
+        public void Compact()
+        {
+            for (int i = 0; i < _chunks.Length; i++)
+            {
+                ushort[] a = _chunks[i];
+                if (a == null) continue;
+                ushort v = a[0];
+                bool same = true;
+                for (int k = 1; k < ChunkVolume && same; k++) same = a[k] == v;
+                if (!same) continue;
+                _chunks[i] = null;
+                _uniform[i] = v;
+            }
+        }
+
+        private ushort ReadRaw(int chunk, int k)
+        {
+            ushort[] a = _chunks[chunk];
+            return a != null ? a[k] : _uniform[chunk];
+        }
 
         public bool InBounds(int x, int y, int z) =>
             x >= 0 && x < SizeX && z >= 0 && z < SizeZ && y >= MinY && y < MaxYExclusive;
@@ -84,7 +120,9 @@ namespace Sculpt.Core
                 return y >= MaxYExclusive && x >= 0 && x < SizeX && z >= 0 && z < SizeZ ? SubId.Empty : SubId.Bedrock;
             int ly = y - MinY;
             int cx = x >> 4, cy = ly >> 4, cz = z >> 4;
-            return _chunks[(cy * ChunksZ + cz) * ChunksX + cx][(((ly & 15) << 4) + (z & 15) << 4) + (x & 15)];
+            int ci = (cy * ChunksZ + cz) * ChunksX + cx;
+            ushort[] a = _chunks[ci];
+            return a != null ? a[(((ly & 15) << 4) + (z & 15) << 4) + (x & 15)] : _uniform[ci];
         }
 
         public ushort Get(Int3 c) => Get(c.X, c.Y, c.Z);
@@ -97,7 +135,16 @@ namespace Sculpt.Core
             if (!InBounds(x, y, z)) throw new ArgumentOutOfRangeException(nameof(x), $"Sub-cell out of bounds: ({x}, {y}, {z})");
             int ly = y - MinY;
             int cx = x >> 4, cy = ly >> 4, cz = z >> 4;
-            ref ushort slot = ref _chunks[(cy * ChunksZ + cz) * ChunksX + cx][(((ly & 15) << 4) + (z & 15) << 4) + (x & 15)];
+            int ci = (cy * ChunksZ + cz) * ChunksX + cx;
+            ushort[] arr = _chunks[ci];
+            if (arr == null)
+            {
+                if (_uniform[ci] == id) return;
+                arr = new ushort[ChunkVolume];
+                if (_uniform[ci] != 0) for (int k = 0; k < ChunkVolume; k++) arr[k] = _uniform[ci];
+                _chunks[ci] = arr;
+            }
+            ref ushort slot = ref arr[(((ly & 15) << 4) + (z & 15) << 4) + (x & 15)];
             if (slot == id) return;
             slot = id;
             _changes.Add(new Int3(x, y, z));
@@ -117,20 +164,44 @@ namespace Sculpt.Core
         /// <summary>Fills a box of sub-cells (inclusive bounds).</summary>
         public void Fill(Int3 min, Int3 max, ushort id)
         {
+            // Whole chunks inside the box become uniform without allocating (map generation on big maps).
+            for (int cy = 0; cy < ChunksY; cy++)
+                for (int cz = 0; cz < ChunksZ; cz++)
+                    for (int cx = 0; cx < ChunksX; cx++)
+                    {
+                        Int3 o = ChunkOrigin(new Int3(cx, cy, cz));
+                        if (o.X < min.X || o.Y < min.Y || o.Z < min.Z || o.X + ChunkSize - 1 > max.X || o.Y + ChunkSize - 1 > max.Y || o.Z + ChunkSize - 1 > max.Z) continue;
+                        int ci = ChunkIndex(new Int3(cx, cy, cz));
+                        if (_chunks[ci] == null && _uniform[ci] == id) continue;
+                        _chunks[ci] = null;
+                        _uniform[ci] = id;
+                        _dirtyChunks.Add(ci);
+                        if (cx + 1 < ChunksX) _dirtyChunks.Add(ChunkIndex(new Int3(cx + 1, cy, cz)));
+                        if (cy + 1 < ChunksY) _dirtyChunks.Add(ChunkIndex(new Int3(cx, cy + 1, cz)));
+                        if (cz + 1 < ChunksZ) _dirtyChunks.Add(ChunkIndex(new Int3(cx, cy, cz + 1)));
+                    }
             for (int y = min.Y; y <= max.Y; y++)
                 for (int z = min.Z; z <= max.Z; z++)
                     for (int x = min.X; x <= max.X; x++)
+                    {
+                        int ly = y - MinY;
+                        if (ly >= 0 && ly < SizeY && x >= 0 && x < SizeX && z >= 0 && z < SizeZ && _chunks[((ly >> 4) * ChunksZ + (z >> 4)) * ChunksX + (x >> 4)] == null &&
+                            _uniform[((ly >> 4) * ChunksZ + (z >> 4)) * ChunksX + (x >> 4)] == id) continue;
                         Set(x, y, z, id);
+                    }
         }
 
         /// <summary>Lowest sculptable sub-cell layer: a one-level slab here has its top at level -2 (-2.4 m), the range floor.</summary>
         public const int SculptMinY = -3 * TileSubs;
 
-        /// <summary>Bedrock below the sculpt range, natural rock from there up to the base ground top.</summary>
+        /// <summary>
+        /// Rock from sub-cell -16 up to the base ground top (whole chunks, so a flat map allocates nothing), bedrock
+        /// below. Only layers from SculptMinY up are ever carved; the rock under them just holds the world up.
+        /// </summary>
         public void FillBaseGround()
         {
-            Fill(new Int3(0, MinY, 0), new Int3(SizeX - 1, SculptMinY - 1, SizeZ - 1), SubId.Bedrock);
-            Fill(new Int3(0, SculptMinY, 0), new Int3(SizeX - 1, -1, SizeZ - 1), SubId.Natural);
+            if (MinY < -ChunkSize) Fill(new Int3(0, MinY, 0), new Int3(SizeX - 1, -ChunkSize - 1, SizeZ - 1), SubId.Bedrock);
+            Fill(new Int3(0, Math.Max(MinY, -ChunkSize), 0), new Int3(SizeX - 1, -1, SizeZ - 1), SubId.Natural);
         }
 
         // ---- Coordinates ----
@@ -187,7 +258,11 @@ namespace Sculpt.Core
         public SubGrid Clone()
         {
             var g = new SubGrid(ChunksX, ChunksY, ChunksZ, MinY);
-            for (int i = 0; i < _chunks.Length; i++) Array.Copy(_chunks[i], g._chunks[i], ChunkVolume);
+            for (int i = 0; i < _chunks.Length; i++)
+            {
+                g._uniform[i] = _uniform[i];
+                if (_chunks[i] != null) g._chunks[i] = (ushort[])_chunks[i].Clone();
+            }
             return g;
         }
 
@@ -196,10 +271,8 @@ namespace Sculpt.Core
         {
             if (o.ChunksX != ChunksX || o.ChunksY != ChunksY || o.ChunksZ != ChunksZ || o.MinY != MinY) return false;
             for (int i = 0; i < _chunks.Length; i++)
-            {
-                ushort[] a = _chunks[i], b = o._chunks[i];
-                for (int k = 0; k < ChunkVolume; k++) if (a[k] != b[k]) return false;
-            }
+                for (int k = 0; k < ChunkVolume; k++)
+                    if (ReadRaw(i, k) != o.ReadRaw(i, k)) return false;
             return true;
         }
 
@@ -207,10 +280,10 @@ namespace Sculpt.Core
         public ulong Hash()
         {
             ulong h = 1469598103934665603UL;
-            foreach (var chunk in _chunks)
+            for (int i = 0; i < _chunks.Length; i++)
                 for (int k = 0; k < ChunkVolume; k++)
                 {
-                    h ^= chunk[k];
+                    h ^= ReadRaw(i, k);
                     h *= 1099511628211UL;
                 }
             return h;

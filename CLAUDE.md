@@ -128,6 +128,15 @@ Ben's constraint: "it cannot become a cube fighting game, its meant to feel prop
 - Draw times (Ben approved 2026-11-20, max 0.4 s): pistol 12 ticks (0.2 s), SMG 18 (0.3 s), AR 21 (0.35 s), pump 24 (0.4 s). Exit from sculpt mode back to a weapon is shorter (see Sculpt mode).
 - Hit checks use the server's view from the player's head position.
 
+### Game modes (Ben, 2026-11-20; not built yet)
+- **5v5 (main mode):** round based, like a more action-packed Valorant. First to 7 rounds, max 3 minutes per round, one life per round.
+  - Objective, the **golden ball**: it spawns in the middle of the map. The team holding it when the round timer ends wins the round; wiping out the enemy team first also wins.
+  - The carrier can shoot but cannot sculpt (normal movement speed unless Ben says otherwise). A killed carrier drops the ball where they died.
+  - If nobody holds it at time-out, the last team to have held it wins.
+  - A dropped ball returns to the nearest living player (either team) if it lies on the floor for more than 5 s, or if players are within 3 m of it but can't reach it for 5 s (deemed unreachable).
+- **Small battle royale:** 16 players, a map about 2 minutes across (~700 m at run speed, ~600 x 600 tiles), with a storm.
+- Scale plan for the battle royale terrain (Claude, M3.5): sub-cell chunks are sparse already: a chunk that is all one id (air, or solid rock below the surface) stores no array, and flat base ground sits on a chunk boundary, so only chunks with real surface detail cost memory (8 KB each). Next steps when the mode is built: per-chunk palettes (most surface chunks use 2-4 ids, so 2-4 bits per sub-cell), streaming meshes by distance on clients, map generation from a seed on both sides (only piece ops travel), and interest management so each client only receives piece ops and players near it. Sim cost is per change, not per tick (support checks and falls only run where something moved), so 16 players stay cheap.
+
 ### Later (don't design out)
 Riot shield + pistol (frontal block, no sprint or mantle, hip-fire pistol); special objects (bounce pad, mirror block, bridge segment, heavy block) using the same six directions plus Shape; lag compensation; replay/kill-cam and free spectator camera; matchmaking.
 
@@ -216,6 +225,21 @@ Tests/Game.Check/                  compile-only check of Game + Core + FishNet a
 - Spawns: the 3x3 spawn pad, centre first; teams alternate 1, 2. Remote players are team-coloured boxes the size of their collision box (blue, orange; never purple) with a dark visor showing look direction.
 - Movement config is not synced yet: all players must run the same build. Live tuning in the Editor only affects that Editor's server and client.
 - Terrain is not networked in M3 (each side builds the same map). Sculpt/piece deltas come in M4 on top of terrain v2.
+
+### Terrain v2 calls made by Claude in M3.5 (tell Ben; change if he disagrees)
+- Surface kernel: each 0.3 m dual cell (around a sub-cell lattice vertex) is one convex shape: the hull of its occupied sub-cell centres grown by 0.15 m (an L1 ball), cut by 26 fixed plane directions. Flat floors and walls are exact; convex edges get 45 degree chamfers 0.15 m wide and concave edges matching fillets; a lone sub-cell is a small diamond. Tie-break: diagonal contacts connect (no hairline gaps for bullets). Box tests are exact separating-axis checks, so render, collision and bullets agree.
+- Ramp tiles in hand-built maps are 4-step staircases, so the slope sits 0.15 m toward the low side compared with the old wedge.
+- Movement on chamfers: pressing into a wall never lifts you onto its 0.15 m base fillet (and you step back off it if you land there); ramp launch fires after at least 4 ticks of climbing when the ground ahead falls away (a crest chamfer or a drop), while plateaus and short bumps keep you grounded; slopes never trigger a vault; vault and mantle ledges are found on the 0.3 m lattice, so in-between heights work.
+- Pieces: aiming at a carved piece grabs that whole piece; aiming at natural rock grabs the aimed tile's level grown up to one tile out (reach per compass sector from a hash of the tile), only columns whose rock top is within 0.3 m of the aimed one, flood-connected. Natural rock is carved into a piece on confirm and stays carved if the windup is cancelled.
+- Raise moves the piece up one level and fills the level it left with rock (the column grows). Sink moves it down one level into the natural rock below, which it replaces (the column shrinks); another piece, an anchor or bedrock below blocks a sink.
+- Height range: sub-cells from -12 up are sculptable, so a one-level slab bottoms out with its top at level -2; tops go up to +4. Rock below -12 just holds the world up.
+- Reinforce applies to the piece being acted on for every action (a reinforced sink reinforces the sunk piece, so the old "nothing to reinforce" rejection is gone). It moves with the piece; any enemy change removes it.
+- Gun lock: a piece's owner is the team that last sculpted it. Acting on an enemy-owned piece or throwing locks the gun; natural rock and your own or your team's pieces don't.
+- In the path of a push: lifted at most 0.3 m (clipping a chamfer), else shoved at most one tile (ending on the piece's base fillet is fine), else invalid. Raise/sink: lifted up to one level, else the shortest of the four horizontal shoves up to a tile, else invalid. Riders on a sideways move get the 7.7 m/s friction kick only.
+- Support: a piece under the one-third rule falls one sub-cell per tick (one level per 4 ticks), bottom-up. If something blocks it straight below it stays put. Natural rock left floating (up to 2048 sub-cells, not touching bedrock or an anchor) becomes a piece and falls the same way.
+- Throw details: the flight box is the piece's bounds shrunk by 0.15 m per side; the piece is lifted out of its socket in 0.3 m steps before launch; riders get a 4 m/s kick along the throw and are ignored by it for 12 ticks; the impact-speed factor is impact speed / launch speed; splash is 40% of the damage to enemies within 1 m of the impact box; one throw in flight per player; the lane warning goes to enemies within 1.5 m of the predicted path.
+- The 3-tick click buffer lives in Core (server and prediction agree): a Locked or Busy confirm is retried each tick until it fires or expires.
+- MotorState gained UphillTicks (ramp launch), so the net protocol is version 2.
 
 ## Balance baseline (2026-11-20)
 - 1v1 simulator and baseline spreadsheet live in `Tools/Balance/` (Python 3, run on any PC; `sculpt-1v1-balance-baseline-2026-11-20.xlsx` is the baseline to compare future analyses against). Equal aim; only sculpt speed and decisions differ.
