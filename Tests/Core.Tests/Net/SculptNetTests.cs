@@ -74,7 +74,29 @@ namespace Sculpt.Core.Tests.Net
             HandRules.Step(ref h, 11, new HandInput { WeaponKey = 4 }, Cfg);
             Assert.That(h.Mode, Is.EqualTo(HandMode.SculptExit));
             Assert.That(h.Held, Is.EqualTo(Weapon.Pistol));
-            Assert.That(h.ReadyTick, Is.EqualTo(11 + 6));
+            Assert.That(h.ReadyTick, Is.EqualTo(11 + 12), "a different gun pays its full draw (ISSUE-11)");
+        }
+
+        [Test]
+        public void WeaponKeyForTheGunYouCameFromUsesTheExitTime()
+        {
+            var h = HandState.Initial; // pump out
+            h = Run(h, 0, 10, t => new HandInput { SculptToggle = t == 0 });
+            HandRules.Step(ref h, 11, new HandInput { WeaponKey = 1 }, Cfg);
+            Assert.That(h.Mode, Is.EqualTo(HandMode.SculptExit));
+            Assert.That(h.ReadyTick, Is.EqualTo(11 + 12), "pump exit time");
+        }
+
+        [Test]
+        public void EnteringSculptModeMidDrawStillOwesTheDraw()
+        {
+            var h = HandState.Initial;
+            HandRules.Step(ref h, 0, new HandInput { WeaponKey = 3 }, Cfg); // AR draw, 21 ticks
+            HandRules.Step(ref h, 1, new HandInput { SculptToggle = true }, Cfg);
+            h = Run(h, 2, 9, _ => default);
+            HandRules.Step(ref h, 10, new HandInput { SculptToggle = true }, Cfg);
+            Assert.That(h.Mode, Is.EqualTo(HandMode.SculptExit));
+            Assert.That(h.ReadyTick, Is.EqualTo(10 + 21), "the AR was never out, so leaving draws it");
         }
 
         [Test]

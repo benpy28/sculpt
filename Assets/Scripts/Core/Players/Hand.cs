@@ -21,7 +21,7 @@ namespace Sculpt.Core
         SculptEnter = 2,
         /// <summary>In sculpt mode, confirms allowed.</summary>
         Sculpt = 3,
-        /// <summary>Leaving sculpt mode back to the held weapon (its exit time). Ready at ReadyTick.</summary>
+        /// <summary>Leaving sculpt mode to the held weapon: its exit time if it was out when you entered, else its draw time. Ready at ReadyTick.</summary>
         SculptExit = 4,
         /// <summary>A throw hit knocked weapons and sculpting out. Redraws the held weapon at ReadyTick.</summary>
         Disarmed = 5,
@@ -42,6 +42,12 @@ namespace Sculpt.Core
         public int SculptLockUntil;
         /// <summary>Leave sculpt mode as soon as the lock ends (toggle or a weapon key pressed while locked).</summary>
         public bool ExitQueued;
+        /// <summary>
+        /// The held weapon was out and ready when you went into sculpt mode, so leaving goes back to it for its short
+        /// exit time. Picking another gun in sculpt mode, or entering mid-draw, clears it: leaving then pays the full draw
+        /// (ISSUE-11: a Q tap must never make a swap faster).
+        /// </summary>
+        public bool HeldReady;
 
         public static HandState Initial => new HandState { Mode = HandMode.Weapon, Held = Weapon.Pump, ReadyTick = int.MinValue / 2, SculptLockUntil = int.MinValue / 2 };
 
@@ -51,7 +57,7 @@ namespace Sculpt.Core
         public bool CanFire => Mode == HandMode.Weapon;
 
         public bool Equals(in HandState o) => Mode == o.Mode && Held == o.Held && ReadyTick == o.ReadyTick &&
-                                               SculptLockUntil == o.SculptLockUntil && ExitQueued == o.ExitQueued;
+                                               SculptLockUntil == o.SculptLockUntil && ExitQueued == o.ExitQueued && HeldReady == o.HeldReady;
     }
 
     /// <summary>Per-tick hand input. Presses only; a weapon key is 1-4 (0 = none).</summary>
@@ -93,14 +99,14 @@ namespace Sculpt.Core
             {
                 if (input.SculptToggle || pick.HasValue)
                 {
-                    if (pick.HasValue) h.Held = pick.Value;
+                    if (pick.HasValue && pick.Value != h.Held) { h.Held = pick.Value; h.HeldReady = false; }
                     h.ExitQueued = true;
                 }
                 if (h.ExitQueued && tick >= h.SculptLockUntil)
                 {
                     h.ExitQueued = false;
                     h.Mode = HandMode.SculptExit;
-                    h.ReadyTick = tick + cfg.Exit(h.Held);
+                    h.ReadyTick = tick + (h.HeldReady ? cfg.Exit(h.Held) : cfg.Draw(h.Held));
                 }
                 return;
             }
@@ -108,6 +114,8 @@ namespace Sculpt.Core
             // Weapon, Drawing or SculptExit.
             if (input.SculptToggle)
             {
+                // Out and ready only if the gun was drawn, or you were on your way back to a gun that was.
+                h.HeldReady = h.Mode == HandMode.Weapon || (h.Mode == HandMode.SculptExit && h.HeldReady);
                 h.Mode = HandMode.SculptEnter;
                 h.ReadyTick = tick + cfg.SculptEnterTicks;
                 h.ExitQueued = false;

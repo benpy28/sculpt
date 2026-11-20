@@ -208,7 +208,6 @@ namespace Sculpt.Core.Tests
         /// can't confirm sculpts at all).
         /// </summary>
         [Test]
-        [Ignore("ISSUE-10: a far-out-of-range sculpt target (e.g. aimed while dead) throws OverflowException in PredictTick")]
         public void AnOutOfRangeSculptTargetNeverCrashesTheClient()
         {
             var h = Net.SculptNetHarness.Flat();
@@ -240,7 +239,6 @@ namespace Sculpt.Core.Tests
         /// the cheaper exit time is only for going back to the gun you were holding.
         /// </summary>
         [Test]
-        [Ignore("ISSUE-11: Q then a weapon key swaps about twice as fast as the weapon key (bypasses draw time)")]
         public void TappingSculptModeNeverMakesASwapFaster()
         {
             int direct = FirstPumpShotAfterSwapFromAr(viaSculpt: false);

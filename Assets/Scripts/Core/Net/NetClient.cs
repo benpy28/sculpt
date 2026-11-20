@@ -333,6 +333,9 @@ namespace Sculpt.Core.Net
         {
             if (!Joined) return 0;
             Tick++;
+            // ISSUE-10: the dead can't sculpt (their body is parked far below the map), and a target the wire can't
+            // carry is impossible anyway: drop the confirm instead of letting the send throw.
+            if (confirm && (_pred.Dead || !InputCmd.TargetFits(sculpt.Target))) confirm = false;
             byte seq = confirm && Sculpt != null ? Sculpt.NextSeq() : (byte)0;
             double view = RemoteRenderTick;
             int viewTick = (int)Math.Floor(view);

@@ -69,7 +69,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 4;
+        public const byte Version = 5;
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
@@ -235,7 +235,7 @@ namespace Sculpt.Core.Net
             w.Vec(s.ActionKeepVelocity);
             w.I32(s.ShootReadyTick);
             w.U8((byte)s.Hand.Mode);
-            w.U8((byte)((byte)s.Hand.Held | (s.Hand.ExitQueued ? 0x80 : 0)));
+            w.U8((byte)((byte)s.Hand.Held | (s.Hand.HeldReady ? 0x40 : 0) | (s.Hand.ExitQueued ? 0x80 : 0)));
             w.I32(s.Hand.ReadyTick);
             w.I32(s.Hand.SculptLockUntil);
             WeaponState g = s.Weapon;
@@ -276,8 +276,9 @@ namespace Sculpt.Core.Net
             if (hm > (byte)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
             s.Hand.Mode = (HandMode)hm;
             byte hw = r.U8();
-            if ((hw & 0x7F) > (byte)Weapon.Pistol) throw new NetFormatException("Bad weapon.");
-            s.Hand.Held = (Weapon)(hw & 0x7F);
+            if ((hw & 0x3F) > (byte)Weapon.Pistol) throw new NetFormatException("Bad weapon.");
+            s.Hand.Held = (Weapon)(hw & 0x3F);
+            s.Hand.HeldReady = (hw & 0x40) != 0;
             s.Hand.ExitQueued = (hw & 0x80) != 0;
             s.Hand.ReadyTick = r.I32();
             s.Hand.SculptLockUntil = r.I32();

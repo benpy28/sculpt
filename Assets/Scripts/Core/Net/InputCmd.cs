@@ -36,6 +36,7 @@ namespace Sculpt.Core.Net
             c.Move.Yaw = QuantizeYaw(c.Move.Yaw);
             c.Pitch = (float)Clamp(double.IsNaN(c.Pitch) ? 0 : c.Pitch, -MaxPitch, MaxPitch);
             if (c.Hand.WeaponKey > 4) c.Hand.WeaponKey = 0;
+            if (c.HasSculpt && !TargetFits(c.Sculpt.Target)) c.HasSculpt = false;
             if (c.HasSculpt)
             {
                 c.Sculpt.AimPoint = QuantizeVec(c.Sculpt.AimPoint);
@@ -46,6 +47,10 @@ namespace Sculpt.Core.Net
             else { c.SculptSeq = 0; c.Sculpt = default; }
             return c;
         }
+
+        /// <summary>The wire carries sculpt targets as 16-bit sub-cell coordinates.</summary>
+        public static bool TargetFits(Int3 c) => Fits(c.X) && Fits(c.Y) && Fits(c.Z);
+        private static bool Fits(int v) => v >= short.MinValue && v <= short.MaxValue;
 
         public static Vec3d QuantizeVec(Vec3d v) => new Vec3d((float)v.X, (float)v.Y, (float)v.Z);
 
