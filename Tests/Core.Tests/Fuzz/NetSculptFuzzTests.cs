@@ -23,11 +23,7 @@ namespace Sculpt.Core.Tests.Fuzz
             for (int i = 0; i < n; i++) yield return 17 + i * 7919;
         }
 
-        // ISSUE-7 (KnownIssueTests): resting crouched players can sit 1e-6 m inside rock. Tolerated until fixed.
-        private const double Slack = 1e-5;
-
-        private static bool Inside(ITerrain g, PlayerBody b) =>
-            g.BoxOverlapsSolid(b.Bounds) && g.BoxOverlapsSolid(b.BoundsAt(b.Position + new Vec3d(0, Slack, 0)));
+        private static bool Inside(ITerrain g, PlayerBody b) => g.BoxOverlapsSolid(b.Bounds);
 
         private sealed class Fight
         {
