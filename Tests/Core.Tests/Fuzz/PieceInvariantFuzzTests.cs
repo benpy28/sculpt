@@ -34,8 +34,8 @@ namespace Sculpt.Core.Tests.Fuzz
             public readonly List<PlayerBody> Players = new List<PlayerBody>();
 
             public bool Move;              // drive players with PlayerMovement
-            /// <summary>ISSUE-7 (KnownIssueTests): a crouch at rest can sit 1e-6 m inside rock. Tolerated for moving players until fixed.</summary>
-            public const double Slack = 1e-5;
+            /// <summary>Penetration tolerated (metres). Zero: ISSUE-7 (crouch at rest inside rock) is fixed.</summary>
+            public const double Slack = 0;
             public bool InfiniteBar;
             public double ActionChance = 0.15;
             public double AimAtPlayersChance = 0.5;
@@ -50,7 +50,7 @@ namespace Sculpt.Core.Tests.Fuzz
             private readonly List<MoveEvent> _moveEvents = new List<MoveEvent>();
             public ulong Trace = 1469598103934665603UL;
 
-            public int ThrowStaleShoves, RaiseHoleFills;
+            public int RaiseHoleFills;
             public int Begun, Completed, Cancelled, Throws, ThrowHits, Falls, Shoves, Drags, Raises, Sinks, Moves, MoveTicks;
             public readonly Dictionary<SculptResult, int> Rejected = new Dictionary<SculptResult, int>();
 
@@ -247,7 +247,7 @@ namespace Sculpt.Core.Tests.Fuzz
                 // ---- Players ----
                 foreach (var p in Players)
                 {
-                    bool inside = Grid.BoxOverlapsSolid(p.Bounds) && (!Move || Grid.BoxOverlapsSolid(p.BoundsAt(p.Position + new Vec3d(0, Slack, 0))));
+                    bool inside = Grid.BoxOverlapsSolid(p.Bounds);
                     Assert.That(inside, Is.False, Ctx($"player {p.Id} (h {p.Height}) inside terrain at {p.Position}"));
                     Vec3d d = p.Position - before[p.Id];
                     if (!shoved.Contains(p.Id))
@@ -255,9 +255,6 @@ namespace Sculpt.Core.Tests.Fuzz
                         Assert.That(d.LengthSquared, Is.EqualTo(0.0), Ctx($"player {p.Id} moved by the sculpt step without a shove event"));
                         continue;
                     }
-                    // ISSUE-6 (KnownIssueTests): a throw replays a stale shove plan. Until fixed, its "shoves" are only held
-                    // to the never-inside-terrain rule above.
-                    if (shoveWhy[p.Id].Contains("Throw")) { ThrowStaleShoves++; continue; }
                     Assert.That(d.HorizontalLength, Is.LessThanOrEqualTo(Config.MaxShove + 1e-6), Ctx($"player {p.Id} shoved {d.HorizontalLength:0.###} m, more than one tile"));
                     Assert.That(d.Y, Is.GreaterThanOrEqualTo(-1e-6), Ctx($"player {p.Id} (h {p.Height}) pushed down by {d.Y:R} m from {Inspect.Fmt(before[p.Id])} (horizontal {d.HorizontalLength:0.###}); {shoveWhy[p.Id]}"));
                     Assert.That(d.Y, Is.LessThanOrEqualTo(Config.MaxLift + 1e-6), Ctx($"player {p.Id} lifted {d.Y:0.###} m, more than one level"));
@@ -561,7 +558,7 @@ namespace Sculpt.Core.Tests.Fuzz
             Assert.That(falls, Is.GreaterThan(0), "falls");
             Assert.That(shoves, Is.GreaterThan(0), "shoves");
             Assert.That(drags, Is.GreaterThan(0), "rider drags");
-            Assert.That(raises * sinks * moves, Is.GreaterThan(0), "every action type completed");
+            Assert.That(Math.Min(raises, Math.Min(sinks, moves)), Is.GreaterThan(0), "every action type completed");
             Assert.That(rej, Does.Contain(SculptResult.Locked));
             Assert.That(rej, Does.Contain(SculptResult.PlayerBlocked));
             Assert.That(rej, Does.Contain(SculptResult.DestinationBlocked));

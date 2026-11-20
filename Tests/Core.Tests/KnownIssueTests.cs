@@ -115,5 +115,88 @@ namespace Sculpt.Core.Tests
             Assert.That(samples, Is.GreaterThan(1000));
             Assert.That(violations, Is.Zero, $"{violations} of {samples} resting spots: crouch box overlaps, standing box does not");
         }
+
+        /// <summary>
+        /// ISSUE-8 (own sculpt shoves not predicted): when your own predicted sculpt lands in your view, the client moves
+        /// the rock but not you. The server shoves or lifts you by the sculpt rule; your prediction instead relies on
+        /// movement's Depenetrate, which only ever goes straight up (at most 1.3 m). So pulling a wall into yourself pops
+        /// you on top of it in your view, then the server's correction drags you back a round trip later, and a lift that
+        /// needs more than 1.3 m (raising a piece you stand on at a chamfer) leaves you inside rock until the correction
+        /// (seen in the networked sculpt fuzz, seed 47531: 9 ticks inside, 1.5 m deep). The same happens for one tick when
+        /// someone else's sculpt reaches you before your prediction is corrected.
+        /// Expectation: your own sculpt moves you in your view exactly as the server does (no pop, no correction).
+        /// </summary>
+        [Test]
+        [Ignore("ISSUE-8: your own sculpt's shove or lift is not predicted; the view pops or clips until the server corrects it")]
+        public void PullingAWallIntoYourselfShovesYouBackInYourViewWithoutACorrection()
+        {
+            var h = Net.SculptNetHarness.Flat();
+            // Box max x = 8.35: 5 cm from the wall's west face at x 8.4.
+            var p = h.AddClient(Net.SculptNetHarness.FeetIn(8.0 / Net.SculptNetHarness.B - 0.5, 5.5), 1, Net.SculptNetHarness.Lag(50), Net.SculptNetHarness.Lag(50));
+            int confirmAt = -1, corrBefore = -1;
+            double maxY = double.NegativeInfinity;
+            p.Script = (peer, t) =>
+            {
+                var i = new Net.SculptTickInput { Move = new MoveInput() };
+                if (peer.Sculpt.LocalBody == null) return i;
+                if (confirmAt >= 0 && t > confirmAt) maxY = System.Math.Max(maxY, peer.Client.Predicted.Position.Y);
+                if (confirmAt < 0 && peer.Client.Predicted.Grounded && peer.Client.Predicted.Hand.Mode == HandMode.Weapon && t > 1150) i.Hand.SculptToggle = true;
+                if (confirmAt < 0 && peer.Client.Predicted.Hand.CanConfirmSculpt)
+                {
+                    i.Confirm = true;
+                    i.Action = Net.SculptNetHarness.PushWall(peer, Dir.West); // pull it toward you
+                    confirmAt = t;
+                    corrBefore = peer.Client.Corrections;
+                }
+                return i;
+            };
+            h.RunSeconds(5);
+            Assert.That(confirmAt, Is.GreaterThan(0), "setup: confirmed");
+            Assert.That(h.ServerSculpt.Pieces.Count, Is.GreaterThan(0), "setup: the server pulled the wall");
+            Assert.That(p.ServerSide.Body.Position.X, Is.LessThan(7.65 - 0.5), "setup: the server shoved the player back");
+            Assert.That(maxY, Is.LessThan(0.3), "your view never pops up onto the wall");
+            Assert.That(p.Client.Corrections - corrBefore, Is.Zero, "no correction: you predicted the shove");
+        }
+
+        /// <summary>
+        /// ISSUE-9 (phantom sculpt): if the server never gets a sculpt confirm (every packet carrying it lost, or it arrives
+        /// later than the 8-tick carry window), it never answers: no Began, no Rejected. The client's prediction of that
+        /// sculpt stays in its world until SpecTimeoutTicks (240 ticks = 4 s) after it landed. For those 4 s you see rock
+        /// that is not there for anyone else, and if the phantom raise is under you, your prediction sits inside it
+        /// (networked sculpt fuzz, seed 134640: 78+ ticks inside a phantom raise, 1.5 m deep, 120 corrections).
+        /// Expectation: a confirm the server never saw is rolled back about a round trip after it should have begun.
+        /// </summary>
+        [Test]
+        [Ignore("ISSUE-9: a lost sculpt confirm leaves a phantom predicted sculpt in your world for 4 s")]
+        public void ALostConfirmIsRolledBackWithinARoundTrip()
+        {
+            var h = Net.SculptNetHarness.Flat();
+            var p = h.AddClient(Net.SculptNetHarness.FeetIn(3, 10), 1, Net.SculptNetHarness.Lag(50), Net.SculptNetHarness.Lag(50));
+            int confirmAt = -1;
+            p.Script = (peer, t) =>
+            {
+                var i = new Net.SculptTickInput { Move = new MoveInput() };
+                if (peer.Sculpt.LocalBody == null) return i;
+                if (confirmAt < 0 && peer.Client.Predicted.Grounded && peer.Client.Predicted.Hand.Mode == HandMode.Weapon && t > 1150) i.Hand.SculptToggle = true;
+                if (confirmAt < 0 && peer.Client.Predicted.Hand.CanConfirmSculpt)
+                {
+                    i.Confirm = true;
+                    i.Action = Net.SculptNetHarness.RaiseFloor(peer, 4.5 * Net.SculptNetHarness.B, 10.5 * Net.SculptNetHarness.B);
+                    confirmAt = t;
+                    peer.Up.Conditions.LossPercent = 100; // every packet that carries the confirm is lost
+                }
+                return i;
+            };
+            for (int k = 0; k < 400 && confirmAt < 0; k++) h.RunMs(10);
+            Assert.That(confirmAt, Is.GreaterThan(0), "setup: confirmed");
+            h.RunMs(400);                       // past the windup, and longer than the 8-command redundancy window
+            p.Up.Conditions.LossPercent = 0;
+            Assert.That(p.SculptEvents.Exists(e => e.Type == Sculpt.Core.Net.ClientSculptEventType.LocalLanded), Is.True, "setup: the prediction landed in the client view; events: " + string.Join(",", p.SculptEvents.ConvertAll(e => e.Type + ":" + e.Result)));
+            Assert.That(h.ServerSculpt.Pieces.Count, Is.Zero, "setup: the server never saw it");
+
+            h.RunMs(600);                       // a round trip and change after the link recovers
+            Assert.That(p.Sculpt.Local.Count, Is.Zero, "the unanswered prediction is dropped");
+            Assert.That(p.Grid.Hash(), Is.EqualTo(h.ServerGrid.Hash()), "and the phantom rock is gone");
+        }
     }
 }
