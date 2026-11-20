@@ -131,7 +131,6 @@ namespace Sculpt.Core.Tests
         /// on every tick and the client is corrected on every snapshot. Higher pings snap and settle within a second; lower pings are close enough to start.
         /// Expectation: within 1.5 s of joining, inputs arrive in time.
         /// </summary>
-        [Ignore("ISSUE-5: clock takes up to 4 s to catch up after a mid-latency join; every input is late until then")]
         [TestCase(90.0)]
         [TestCase(100.0)]
         [TestCase(110.0)]

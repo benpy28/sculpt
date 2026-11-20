@@ -190,7 +190,9 @@ namespace Sculpt.Core.Net
             if (serverTick < _clockHoldUntilServerTick) { Dilation = 0; return; }
 
             int err = lead - Config.TargetLeadTicks;
-            if (Math.Abs(err) > Config.ClockSnapTicks)
+            // Late inputs (lead below zero) cost a correction on every snapshot, so jump straight to the target
+            // however small the error; slewing at a few percent would take seconds (ISSUE-5).
+            if (Math.Abs(err) > Config.ClockSnapTicks || lead < 0)
             {
                 // Positive err: we are too far ahead, so stall; negative: run extra ticks now.
                 _accum -= err * TickSeconds;
