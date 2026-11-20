@@ -42,6 +42,8 @@ namespace Sculpt.Game.Player
             Shader shader = Shader.Find("SCULPT/Voxel");
             if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
             _material = new Material(shader) { name = "Remote player (runtime)" };
+            // Drawn after every transparent sculpt overlay (ghosts, tells, dust): nothing is ever drawn over an enemy.
+            _material.renderQueue = 3100;
             _boxMesh = BuildBox();
         }
 
@@ -136,7 +138,7 @@ namespace Sculpt.Game.Player
                 if (QualitySettings.activeColorSpace == ColorSpace.Linear) s = s.linear;
                 s.a = 1;
                 cols.Add(s); cols.Add(s); cols.Add(s); cols.Add(s);
-                uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(0, 1)); uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(1, 0));
+                uvs.Add(Vector2.zero); uvs.Add(Vector2.zero); uvs.Add(Vector2.zero); uvs.Add(Vector2.zero); // no seam, never "sculptable"
                 tris.Add(i); tris.Add(i + 1); tris.Add(i + 2);
                 tris.Add(i); tris.Add(i + 2); tris.Add(i + 3);
             }

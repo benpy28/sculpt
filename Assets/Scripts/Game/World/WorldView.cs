@@ -1,23 +1,38 @@
 using System.Collections.Generic;
 using Sculpt.Core;
+using Sculpt.Core.Net;
 using UnityEngine;
 
 namespace Sculpt.Game.World
 {
-    /// <summary>Owns one GameObject + mesh per sub-cell chunk and rebuilds only chunks the grid marks dirty.</summary>
+    /// <summary>
+    /// Owns one GameObject + mesh per sub-cell chunk and rebuilds only chunks the grid marks dirty. Also drives the
+    /// local sculpt overlay on the terrain material (purple edge glow, ripple, range dimming) and the fading team tint.
+    /// </summary>
     public sealed class WorldView : MonoBehaviour
     {
         private SubGrid _grid;
         private ChunkMesher _mesher;
         private Material _material;
         private Mesh[] _meshes;
+        private GameObject[] _chunkObjects;
         private readonly List<int> _dirty = new List<int>();
+        private SculptClient _sculpt;
+        private float _tintTimer;
+        private float _mode;
+        private float _rippleStart = -10f;
+        private bool _wasInMode;
+
+        private static readonly int IdMode = Shader.PropertyToID("_SculptMode");
+        private static readonly int IdEye = Shader.PropertyToID("_SculptEye");
+        private static readonly int IdRange = Shader.PropertyToID("_SculptRange");
+        private static readonly int IdRipple = Shader.PropertyToID("_SculptRipple");
+
+        public Material Material => _material;
 
         public void Init(SubGrid grid, SculptConfig sculpt)
         {
-            _grid = grid;
             _mesher = new ChunkMesher();
-
             Shader shader = Shader.Find("SCULPT/Voxel");
             if (shader == null)
             {
@@ -25,22 +40,37 @@ namespace Sculpt.Game.World
                 shader = Shader.Find("Universal Render Pipeline/Unlit");
             }
             _material = new Material(shader) { name = "Terrain (runtime)" };
+            _material.SetFloat(IdRange, (float)sculpt.RangeMeters);
+        }
 
-            _meshes = new Mesh[grid.ChunkCount];
-            for (int i = 0; i < grid.ChunkCount; i++)
+        /// <summary>Switches to another grid (a new client has its own copy of the map).</summary>
+        public void Bind(SubGrid grid, SculptClient sculpt)
+        {
+            _sculpt = sculpt;
+            _mesher.PieceTint = sculpt == null ? (System.Func<ushort, (int, float)>)null : id => sculpt.TintOf(id, sculpt.Tick);
+            if (_grid == null || grid.ChunkCount != _grid.ChunkCount || grid.ChunksX != _grid.ChunksX)
             {
-                Int3 cc = grid.ChunkCoordFromIndex(i);
-                var go = new GameObject($"Chunk {cc.X},{cc.Y},{cc.Z}");
-                go.transform.SetParent(transform, false);
-                go.transform.localPosition = grid.ChunkOrigin(cc).ToUnity() * (float)SubGrid.SubSize;
-                var mf = go.AddComponent<MeshFilter>();
-                var mr = go.AddComponent<MeshRenderer>();
-                mr.sharedMaterial = _material;
-                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                mr.receiveShadows = false;
-                _meshes[i] = new Mesh { name = go.name };
-                mf.sharedMesh = _meshes[i];
+                if (_chunkObjects != null) foreach (var go in _chunkObjects) Destroy(go);
+                if (_meshes != null) foreach (var m in _meshes) Destroy(m);
+                _meshes = new Mesh[grid.ChunkCount];
+                _chunkObjects = new GameObject[grid.ChunkCount];
+                for (int i = 0; i < grid.ChunkCount; i++)
+                {
+                    Int3 cc = grid.ChunkCoordFromIndex(i);
+                    var go = new GameObject($"Chunk {cc.X},{cc.Y},{cc.Z}");
+                    go.transform.SetParent(transform, false);
+                    go.transform.localPosition = grid.ChunkOrigin(cc).ToUnity() * (float)SubGrid.SubSize;
+                    var mf = go.AddComponent<MeshFilter>();
+                    var mr = go.AddComponent<MeshRenderer>();
+                    mr.sharedMaterial = _material;
+                    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    mr.receiveShadows = false;
+                    _meshes[i] = new Mesh { name = go.name };
+                    mf.sharedMesh = _meshes[i];
+                    _chunkObjects[i] = go;
+                }
             }
+            _grid = grid;
             grid.MarkAllDirty();
             RebuildDirty();
         }
@@ -48,11 +78,46 @@ namespace Sculpt.Game.World
         /// <summary>Rebuild every chunk the grid changed since the last call.</summary>
         public int RebuildDirty()
         {
-            if (_grid == null || !_grid.HasDirtyChunks) return 0;
+            if (_grid == null) return 0;
+            RefreshTints();
+            if (!_grid.HasDirtyChunks) return 0;
             _dirty.Clear();
             _grid.DrainDirtyChunks(_dirty);
             foreach (int i in _dirty) _mesher.Build(_grid, _grid.ChunkCoordFromIndex(i), _meshes[i]);
             return _dirty.Count;
+        }
+
+        /// <summary>The team tint is baked into vertex colours; re-mesh tinted pieces a few times a second while it fades.</summary>
+        private void RefreshTints()
+        {
+            if (_sculpt == null) return;
+            _tintTimer += Time.unscaledDeltaTime;
+            if (_tintTimer < 0.5f) return;
+            _tintTimer = 0;
+            foreach (PieceInfo p in _sculpt.Mirror.Pieces.All)
+            {
+                if (p.Team == 0) continue;
+                int age = _sculpt.Tick - p.TintTick;
+                if (age < 0 || age > _sculpt.Config.TintFadeTicks + 40) continue;
+                // One sub-cell per 8 is plenty to touch every chunk the piece is in.
+                for (int k = 0; k < p.Cells.Count; k += 8) _grid.MarkDirty(p.Cells[k]);
+                _grid.MarkDirty(p.Cells[p.Cells.Count - 1]);
+            }
+        }
+
+        /// <summary>Per frame: the local player's eye and whether sculpt mode is on (ripple on entering).</summary>
+        public void SetSculptView(Vector3 eye, bool inSculptMode, float range)
+        {
+            if (_material == null) return;
+            if (inSculptMode && !_wasInMode) _rippleStart = Time.unscaledTime;
+            _wasInMode = inSculptMode;
+            _mode = Mathf.MoveTowards(_mode, inSculptMode ? 1f : 0f, Time.unscaledDeltaTime / 0.08f);
+            float t = (Time.unscaledTime - _rippleStart) / 0.1f; // spreads to the range edge over ~0.1 s
+            float ripple = t < 0 || t > 1.6f ? 100f : t * (range + 0.5f);
+            _material.SetFloat(IdMode, _mode);
+            _material.SetVector(IdEye, eye);
+            _material.SetFloat(IdRange, range);
+            _material.SetFloat(IdRipple, ripple);
         }
 
         private void OnDestroy()

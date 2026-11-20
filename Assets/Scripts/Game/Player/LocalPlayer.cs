@@ -4,6 +4,7 @@ using Sculpt.Core.Net;
 using Sculpt.Game.Config;
 using Sculpt.Game.Input;
 using Sculpt.Game.Net;
+using Sculpt.Game.Sculpting;
 using Sculpt.Game.Settings;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -11,9 +12,10 @@ using UnityEngine.InputSystem;
 namespace Sculpt.Game.Player
 {
     /// <summary>
-    /// The local player: samples input every frame and predicts Core movement through the NetClient at 60 Hz
-    /// (the server, local or remote, is always authoritative). Mouse look is applied every rendered frame for
-    /// minimum latency; the simulation reads the latest yaw on each tick.
+    /// The local player: samples input every frame and predicts Core movement, hand state and sculpting through the
+    /// NetClient at 60 Hz (the server, local or remote, is always authoritative). Mouse look is applied every rendered
+    /// frame for minimum latency; the simulation reads the latest yaw on each tick. Sculpt targeting also runs every
+    /// frame, and a sculpt press is turned into a confirm with the aim of the frame it was pressed in.
     /// </summary>
     public sealed class LocalPlayer : MonoBehaviour
     {
@@ -21,6 +23,8 @@ namespace Sculpt.Game.Player
         public MovementConfig Config => _cfg;
         public readonly List<MoveEvent> Events = new List<MoveEvent>();
         public NetClient Net => _session.Client;
+        public SculptClient Sculpt => _session.Client.Sculpt;
+        public SculptConfig SculptConfig => _session.SculptConfig;
 
         /// <summary>View angles in degrees. Yaw 0 = north, positive turns toward east.</summary>
         public float Yaw { get; private set; }
@@ -33,12 +37,24 @@ namespace Sculpt.Game.Player
         /// <summary>Set by UI that takes the keyboard (e.g. the join box). Movement input is ignored meanwhile.</summary>
         public bool InputBlocked { get; set; }
 
+        // ---- Sculpt (read by the sculpt view and HUD) ----
+        public bool InSculptMode => State.Hand.InSculptMode;
+        public SculptTarget Target { get; private set; }
+        /// <summary>The action a left click would confirm right now, and its full check (drives ghost and cost flash).</summary>
+        public SculptAction HoverAction { get; private set; }
+        public SculptCheck HoverCheck { get; private set; }
+        public bool HasHover { get; private set; }
+        public bool ReinforceHeld { get; private set; }
+
         private NetSession _session;
         private MovementConfig _cfg;
         private MovementSettings _settingsAsset;
         private GameInput _input;
         private ClientSettings _client;
-        private bool _jumpLatch, _crouchLatch, _respawnLatch;
+        private bool _jumpLatch, _crouchLatch, _respawnLatch, _toggleLatch;
+        private byte _weaponLatch;
+        private bool _confirmLatch;
+        private SculptAction _confirmAction;
         private bool _hadJoined;
 
         public void Init(NetSession session, MovementConfig cfg, MovementSettings settingsAsset, GameInput input, ClientSettings client)
@@ -65,6 +81,10 @@ namespace Sculpt.Game.Player
             Pitch = 0;
         }
 
+        /// <summary>Eye position the simulation (and the server) uses, and the look direction.</summary>
+        public Vec3d SimEye => State.Position + new Vec3d(0, PlayerMovement.EyeOf(State, _cfg), 0);
+        public Vec3d LookDir => SculptAim.LookDir(Yaw * Mathf.Deg2Rad, Pitch);
+
         /// <summary>Called once per rendered frame before any ticks.</summary>
         public void SampleFrame()
         {
@@ -78,7 +98,8 @@ namespace Sculpt.Game.Player
             var kb = Keyboard.current;
             var mouse = Mouse.current;
             if (kb != null && kb.escapeKey.wasPressedThisFrame) LockCursor(false);
-            if (!CursorLocked && !InputBlocked && mouse != null && mouse.leftButton.wasPressedThisFrame) LockCursor(true);
+            bool clickToLock = !CursorLocked && !InputBlocked && mouse != null && mouse.leftButton.wasPressedThisFrame;
+            if (clickToLock) LockCursor(true);
 
             if (CursorLocked)
             {
@@ -88,10 +109,48 @@ namespace Sculpt.Game.Player
                 Pitch = Mathf.Clamp(Pitch - d.y * k, -89f, 89f);
             }
 
-            if (InputBlocked) return;
+            UpdateSculptAim();
+
+            if (InputBlocked || !CursorLocked) return;
             if (_input.Jump.WasPressedThisFrame()) _jumpLatch = true;
             if (_input.Crouch.WasPressedThisFrame()) _crouchLatch = true;
             if (_input.Respawn.WasPressedThisFrame()) _respawnLatch = true;
+            if (_input.SculptToggle.WasPressedThisFrame()) _toggleLatch = true;
+            for (int i = 0; i < 4; i++) if (_input.Hotbar[i].WasPressedThisFrame()) _weaponLatch = (byte)(i + 1);
+
+            if (!InSculptMode || clickToLock) return;
+            // The direction press IS the confirm, with this frame's aim. The newest press in a frame wins.
+            SculptTarget t = Target;
+            if (!t.Valid) return;
+            bool reinforce = ReinforceHeld;
+            if (_input.SculptPush.WasPressedThisFrame()) Confirm(SculptAction.Move(t.Sub, t.PushDir, t.Point, reinforce));
+            if (_input.SculptPull.WasPressedThisFrame()) Confirm(SculptAction.Move(t.Sub, t.PushDir.Opposite(), t.Point, reinforce));
+            if (_input.SculptRaise.WasPressedThisFrame()) Confirm(SculptAction.Raise(t.Sub, t.Point, reinforce));
+            if (_input.SculptSink.WasPressedThisFrame()) Confirm(SculptAction.Sink(t.Sub, t.Point, reinforce));
+            if (_input.SculptThrow.WasPressedThisFrame()) Confirm(SculptAction.Throw(t.Sub, t.Point, LookDir));
+        }
+
+        private void Confirm(SculptAction a)
+        {
+            _confirmLatch = true;
+            _confirmAction = a;
+        }
+
+        private void UpdateSculptAim()
+        {
+            HasHover = false;
+            ReinforceHeld = CursorLocked && !InputBlocked && _input.SculptReinforce.IsPressed();
+            if (!Net.Joined || Sculpt == null || Sculpt.LocalBody == null || !InSculptMode)
+            {
+                Target = default;
+                return;
+            }
+            Target = SculptAim.Find(Net.Grid, Sculpt.Grid, SimEye, LookDir, SculptConfig, Pitch);
+            if (!Target.Valid) return;
+            Sculpt.SetLocalBody(State);
+            HoverAction = SculptAction.Move(Target.Sub, Target.PushDir, Target.Point, ReinforceHeld);
+            HoverCheck = Sculpt.Evaluate(HoverAction, Net.Tick + 1);
+            HasHover = true;
         }
 
         /// <summary>One 60 Hz prediction tick.</summary>
@@ -102,6 +161,7 @@ namespace Sculpt.Game.Player
 #endif
             bool active = CursorLocked && !InputBlocked;
             Vector2 move = active ? _input.Move.ReadValue<Vector2>() : Vector2.zero;
+            bool sculpting = State.Hand.InSculptMode;
             var mi = new MoveInput
             {
                 MoveX = move.x,
@@ -112,15 +172,22 @@ namespace Sculpt.Game.Player
                 CrouchPressed = _crouchLatch && active,
                 CrouchHeld = active && _input.Crouch.IsPressed(),
                 SprintHeld = active && _input.Sprint.IsPressed(),
-                WantsToShoot = active && (_input.Fire.IsPressed() || _input.Aim.IsPressed()),
+                // In sculpt mode the mouse buttons sculpt; they never stop your sprint.
+                WantsToShoot = active && !sculpting && (_input.Fire.IsPressed() || _input.Aim.IsPressed()),
             };
+            var hand = new HandInput { SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0 };
             bool respawn = _respawnLatch;
+            bool confirm = _confirmLatch && active;
+            SculptAction action = _confirmAction;
             _jumpLatch = false;
             _crouchLatch = false;
             _respawnLatch = false;
+            _toggleLatch = false;
+            _weaponLatch = 0;
+            _confirmLatch = false;
 
             int before = Events.Count;
-            Net.PredictTick(mi, Pitch, respawn, Events);
+            Net.PredictTick(mi, Pitch, respawn, hand, confirm, action, Events);
             for (int i = before; i < Events.Count; i++)
                 if (Events[i].Type == MoveEventType.Respawned) FaceSpawn();
         }
