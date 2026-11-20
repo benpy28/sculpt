@@ -47,7 +47,11 @@ namespace Sculpt.Core
     {
         /// <summary>Natural rock sub-cells become a new piece.</summary>
         Carve,
-        /// <summary>A piece moves by Delta. FillVacated: sub-cells it leaves become natural rock (raise).</summary>
+        /// <summary>
+        /// A piece moves by Delta, sweeping through the sub-cells in between. Raise (FillVacated): the swept volume under its
+        /// new position fills with natural rock (the column grows). Otherwise the swept volume it leaves becomes empty (a sink
+        /// absorbs the natural rock it passes through, so the column shrinks).
+        /// </summary>
         Translate,
         /// <summary>Owner team, tint and reinforcement change.</summary>
         Stamp,
@@ -149,14 +153,7 @@ namespace Sculpt.Core
                 case PieceOpType.Translate:
                 {
                     PieceInfo p = _pieces[op.Id];
-                    _scratchNew.Clear();
-                    for (int i = 0; i < p.Cells.Count; i++)
-                    {
-                        Int3 n = p.Cells[i] + op.Delta;
-                        _scratchNew.Add(n);
-                    }
-                    foreach (var c in p.Cells)
-                        if (!_scratchNew.Contains(c)) Write(c, op.FillVacated ? SubId.Natural : SubId.Empty);
+                    ForEachSwept(p.Cells, op.Delta, op.FillVacated, _scratchNew, (c, id) => { if (Grid.Get(c) != id) Write(c, id); });
                     for (int i = 0; i < p.Cells.Count; i++)
                     {
                         p.Cells[i] = p.Cells[i] + op.Delta;
@@ -198,6 +195,25 @@ namespace Sculpt.Core
                         p.Cells.Add(new Int3(x, y, z));
                         if (id >= _nextId) _nextId = id + 1;
                     }
+        }
+
+        /// <summary>
+        /// The sub-cells a translation empties or fills, outside the piece's new position (which the caller writes).
+        /// <paramref name="newSet"/> is filled with the new position.
+        /// </summary>
+        public static void ForEachSwept(IList<Int3> cells, Int3 delta, bool fillBelow, HashSet<Int3> newSet, Action<Int3, ushort> set)
+        {
+            newSet.Clear();
+            for (int i = 0; i < cells.Count; i++) newSet.Add(cells[i] + delta);
+            int steps = Math.Max(Math.Abs(delta.X), Math.Max(Math.Abs(delta.Y), Math.Abs(delta.Z)));
+            if (steps == 0) return;
+            var unit = new Int3(delta.X / steps, delta.Y / steps, delta.Z / steps);
+            for (int i = 0; i < cells.Count; i++)
+                for (int k = 0; k < steps; k++)
+                {
+                    Int3 x = cells[i] + unit * k;
+                    if (!newSet.Contains(x)) set(x, fillBelow && delta.Y > 0 ? SubId.Natural : SubId.Empty);
+                }
         }
 
         public static Int3[] SortedCopy(IList<Int3> cells)

@@ -121,14 +121,14 @@ namespace Sculpt.Core
             }
 
             _bars[p.Id].Spend(c.Cost, Tick);
-            var cells = new List<Int3>(c.Cells);
-            if (c.Delta != Int3.Zero)
-            {
-                _setScratch.Clear();
-                foreach (var x in c.Cells) _setScratch.Add(x);
-                foreach (var x in c.Cells)
-                    if (!_setScratch.Contains(x + c.Delta)) cells.Add(x + c.Delta);
-            }
+            // Lock the piece and everything it will sweep through.
+            var lockSet = new HashSet<Int3>(c.Cells);
+            int lsteps = Math.Abs(c.Delta.X) + Math.Abs(c.Delta.Y) + Math.Abs(c.Delta.Z);
+            Int3 lunit = lsteps == 0 ? Int3.Zero : new Int3(Math.Sign(c.Delta.X), Math.Sign(c.Delta.Y), Math.Sign(c.Delta.Z));
+            foreach (var x in c.Cells)
+                for (int k = 1; k <= lsteps; k++) lockSet.Add(x + lunit * k);
+            var cells = new List<Int3>(lockSet);
+            cells.Sort(Int3.CompareYZX);
             var pend = new PendingSculpt
             {
                 PlayerId = p.Id,
@@ -225,10 +225,13 @@ namespace Sculpt.Core
             // Where the piece goes must be empty (or itself; a sink also pushes into natural rock).
             _setScratch.Clear();
             foreach (var x in c.Cells) _setScratch.Add(x);
-            if (c.Delta != Int3.Zero)
-                foreach (var x in c.Cells)
+            // Everything it sweeps through must be clear (no tunnelling through thin walls).
+            Int3 unit = c.Delta == Int3.Zero ? Int3.Zero : new Int3(Math.Sign(c.Delta.X), Math.Sign(c.Delta.Y), Math.Sign(c.Delta.Z));
+            int steps = Math.Abs(c.Delta.X) + Math.Abs(c.Delta.Y) + Math.Abs(c.Delta.Z);
+            foreach (var x in c.Cells)
+                for (int k = 1; k <= steps; k++)
                 {
-                    Int3 dst = x + c.Delta;
+                    Int3 dst = x + unit * k;
                     if (_setScratch.Contains(dst)) continue;
                     if (!Grid.InBounds(dst)) return Fail(c, SculptResult.DestinationBlocked);
                     ushort d = Grid.Get(dst);
@@ -237,9 +240,10 @@ namespace Sculpt.Core
                     return Fail(c, SculptResult.DestinationBlocked);
                 }
 
-            // Locks: another player's windup holds any of the sub-cells.
+            // Locks: another player's windup holds any of the sub-cells it touches.
             foreach (var x in c.Cells)
-                if (LockedByOther(x, p.Id) || (c.Delta != Int3.Zero && LockedByOther(x + c.Delta, p.Id))) return Fail(c, SculptResult.Locked);
+                for (int k = 0; k <= steps; k++)
+                    if (LockedByOther(x + unit * k, p.Id)) return Fail(c, SculptResult.Locked);
 
             if (!resolving)
             {
@@ -290,7 +294,7 @@ namespace Sculpt.Core
         {
             _overlay.Clear();
             ushort id = c.PieceId != 0 ? c.PieceId : ushort.MaxValue;
-            foreach (var x in c.Cells) _overlay.Set(x, type == SculptActionType.Raise ? SubId.Natural : SubId.Empty);
+            PieceTable.ForEachSwept(c.Cells, c.Delta, type == SculptActionType.Raise, _setScratch, (x, v) => _overlay.Set(x, v));
             foreach (var x in c.Cells) _overlay.Set(x + c.Delta, id);
         }
 
@@ -640,7 +644,7 @@ namespace Sculpt.Core
 
                 var tmp = new SculptCheck { PieceId = id, Cells = pc.Cells.ToArray(), Delta = Int3.Down };
                 LoadResultOverlay(SculptActionType.Sink, tmp);
-                Aabb near = CellsBounds(tmp.Cells, Int3.Down).Expand(0.05);
+                Aabb near = CellsBounds(tmp.Cells, Int3.Down).Expand(0.35); // chamfers and bridges reach 0.15 m past the sub-cells
                 bool hitsPlayer = false;
                 foreach (var p in _players)
                     if (p.Bounds.Overlaps(near) && _overlay.BoxOverlapsSolid(p.Bounds) && !Grid.BoxOverlapsSolid(p.Bounds)) { hitsPlayer = true; break; }
