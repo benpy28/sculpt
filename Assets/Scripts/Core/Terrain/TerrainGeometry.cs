@@ -137,6 +137,9 @@ namespace Sculpt.Core
                         if (!Hits(p, lx, ly - probe / H, lz, ex, ey, ez)) continue;
                         any = true;
                         Vec3d n = ContactNormal(p, lx, ly, lz, ex, ey, ez);
+                        // A flat top on the cell's upper boundary with solid continuing above is inside the rock,
+                        // not a surface: the cell above reports the real contact.
+                        if (n.Y > 0.999999 && p.Max[1] >= 2 && TerrainShape.ConfigAt(g, vx, vy + 1, vz) != 0) continue;
                         if (n.Y > 0.5 && n.Y > bestY + 1e-9)
                         {
                             bestY = n.Y;

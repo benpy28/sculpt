@@ -9,7 +9,8 @@ namespace Sculpt.Core
     /// </summary>
     public static class PlayerMovement
     {
-        private const double Bs = VoxelGrid.BlockSize;
+        private const double Bs = SubGrid.TileSize;
+        private const double Sub = SubGrid.SubSize;
 
         public static double HeightOf(in MotorState s, MovementConfig c) => s.Crouched ? c.CrouchHeight : c.StandHeight;
         public static double EyeOf(in MotorState s, MovementConfig c) => s.Crouched ? c.CrouchEye : c.StandEye;
@@ -18,8 +19,8 @@ namespace Sculpt.Core
             new Vec3d(feet.X - halfWidth, feet.Y, feet.Z - halfWidth),
             new Vec3d(feet.X + halfWidth, feet.Y + height, feet.Z + halfWidth));
 
-        private static bool Blocked(VoxelGrid g, MovementConfig c, Vec3d feet, double height) =>
-            VoxelGeometry.BoxOverlapsSolid(g, Box(feet, c.HalfWidth, height));
+        private static bool Blocked(ITerrain g, MovementConfig c, Vec3d feet, double height) =>
+            g.BoxOverlapsSolid(Box(feet, c.HalfWidth, height));
 
         /// <summary>Copies the motor's box into the shared player body used by sculpting and hit checks.</summary>
         public static void WriteBody(in MotorState s, MovementConfig c, PlayerBody body)
@@ -44,7 +45,7 @@ namespace Sculpt.Core
 
         // =====================================================================
 
-        public static void Step(VoxelGrid g, MovementConfig c, ref MotorState s, in MoveInput input, List<MoveEvent> events = null)
+        public static void Step(ITerrain g, MovementConfig c, ref MotorState s, in MoveInput input, List<MoveEvent> events = null)
         {
             s.Tick++;
             if (input.JumpPressed) s.JumpBufferedTick = s.Tick;
@@ -103,7 +104,7 @@ namespace Sculpt.Core
 
         // ---- Ground ----
 
-        private static void StepGround(VoxelGrid g, MovementConfig c, ref MotorState s, in MoveInput input, Vec3d wish, bool jumpBuffered, List<MoveEvent> events)
+        private static void StepGround(ITerrain g, MovementConfig c, ref MotorState s, in MoveInput input, Vec3d wish, bool jumpBuffered, List<MoveEvent> events)
         {
             // Slide from a sprint.
             if (input.CrouchPressed && s.Sprinting && s.HorizontalSpeed >= c.SlideMinStartSpeed)
@@ -163,7 +164,7 @@ namespace Sculpt.Core
 
         // ---- Slide ----
 
-        private static void StartSlide(VoxelGrid g, MovementConfig c, ref MotorState s, bool allowBoost, List<MoveEvent> events)
+        private static void StartSlide(ITerrain g, MovementConfig c, ref MotorState s, bool allowBoost, List<MoveEvent> events)
         {
             s.Mode = MoveMode.Slide;
             s.Sprinting = false;
@@ -187,7 +188,7 @@ namespace Sculpt.Core
             Emit(events, MoveEventType.SlideStarted, s.Tick, boosted ? 1 : 0);
         }
 
-        private static void StepSlide(VoxelGrid g, MovementConfig c, ref MotorState s, in MoveInput input, Vec3d wish, bool jumpBuffered, List<MoveEvent> events)
+        private static void StepSlide(ITerrain g, MovementConfig c, ref MotorState s, in MoveInput input, Vec3d wish, bool jumpBuffered, List<MoveEvent> events)
         {
             double dt = c.Dt;
             Vec3d vh = Horizontal(s.Velocity);
@@ -236,7 +237,7 @@ namespace Sculpt.Core
 
         // ---- Air ----
 
-        private static void StepAir(VoxelGrid g, MovementConfig c, ref MotorState s, in MoveInput input, Vec3d wish, bool jumpBuffered, List<MoveEvent> events)
+        private static void StepAir(ITerrain g, MovementConfig c, ref MotorState s, in MoveInput input, Vec3d wish, bool jumpBuffered, List<MoveEvent> events)
         {
             double dt = c.Dt;
             Vec3d vh = Horizontal(s.Velocity);
@@ -287,7 +288,7 @@ namespace Sculpt.Core
 
         // ---- Vault ----
 
-        private static bool TryVault(VoxelGrid g, MovementConfig c, ref MotorState s, List<MoveEvent> events)
+        private static bool TryVault(ITerrain g, MovementConfig c, ref MotorState s, List<MoveEvent> events)
         {
             Vec3d vh = Horizontal(s.Velocity);
             double speed = vh.Length;
@@ -297,11 +298,13 @@ namespace Sculpt.Core
             Vec3d pos = s.Position;
 
             if (!Blocked(g, c, pos + dir * (speed * c.Dt + 0.02), h)) return false; // nothing ahead
+            if (!Blocked(g, c, pos + dir * (speed * c.Dt + 0.02 + c.FilletIgnore) + new Vec3d(0, 2 * c.MaxStepUp, 0), h)) return false; // a slope or step: just walk up it
 
-            double top = Math.Ceiling((pos.Y + 0.3) / Bs) * Bs;
-            if (top - pos.Y > Bs + 0.05) return false; // only 1-level obstacles
-            double targetY = top + 0.01;
-            if (!LedgeClear(g, c, pos, dir, targetY, h)) return false;
+            // Ledge tops sit on the sub-cell lattice. Try each one above a step-up and up to one level.
+            double targetY = double.NaN;
+            for (double top = Math.Ceiling((pos.Y + c.MaxStepUp + 1e-6) / Sub) * Sub; top <= pos.Y + Bs + 0.05; top += Sub)
+                if (LedgeClear(g, c, pos, dir, top + 0.01, h)) { targetY = top + 0.01; break; }
+            if (double.IsNaN(targetY)) return false;
 
             s.Mode = MoveMode.Vault;
             s.ActionTick = 0;
@@ -314,7 +317,7 @@ namespace Sculpt.Core
             return true;
         }
 
-        private static void StepVault(VoxelGrid g, MovementConfig c, ref MotorState s, List<MoveEvent> events)
+        private static void StepVault(ITerrain g, MovementConfig c, ref MotorState s, List<MoveEvent> events)
         {
             s.ActionTick++;
             double h = HeightOf(s, c);
@@ -334,7 +337,7 @@ namespace Sculpt.Core
 
         // ---- Mantle ----
 
-        private static bool TryMantle(VoxelGrid g, MovementConfig c, ref MotorState s, double yaw, bool airborne, List<MoveEvent> events)
+        private static bool TryMantle(ITerrain g, MovementConfig c, ref MotorState s, double yaw, bool airborne, List<MoveEvent> events)
         {
             Vec3d dir = Forward(yaw);
             double h = HeightOf(s, c);
@@ -342,8 +345,8 @@ namespace Sculpt.Core
             if (!Blocked(g, c, pos + dir * 0.1, h)) return false; // must be touching a wall in front
 
             double minH = airborne ? c.AirMantleMinHeight : c.JumpApex - 0.05;
-            double first = Math.Ceiling((pos.Y + minH) / Bs) * Bs;
-            for (double top = first; top <= pos.Y + c.MantleMaxHeight + 1e-9; top += Bs)
+            double first = Math.Ceiling((pos.Y + minH) / Sub) * Sub;
+            for (double top = first; top <= pos.Y + c.MantleMaxHeight + 1e-9; top += Sub)
             {
                 double targetY = top + 0.01;
                 if (!LedgeClear(g, c, pos, dir, targetY, h)) continue;
@@ -368,7 +371,7 @@ namespace Sculpt.Core
             return false;
         }
 
-        private static void StepMantle(VoxelGrid g, MovementConfig c, ref MotorState s, List<MoveEvent> events)
+        private static void StepMantle(ITerrain g, MovementConfig c, ref MotorState s, List<MoveEvent> events)
         {
             s.ActionTick++;
             double h = HeightOf(s, c);
@@ -400,7 +403,7 @@ namespace Sculpt.Core
         }
 
         /// <summary>Room to stand at targetY both here and a short step forward, with something to stand on ahead.</summary>
-        private static bool LedgeClear(VoxelGrid g, MovementConfig c, Vec3d pos, Vec3d dir, double targetY, double h)
+        private static bool LedgeClear(ITerrain g, MovementConfig c, Vec3d pos, Vec3d dir, double targetY, double h)
         {
             Vec3d here = new Vec3d(pos.X, targetY, pos.Z);
             Vec3d ahead = here + dir * c.MantleForwardDistance;
@@ -411,7 +414,7 @@ namespace Sculpt.Core
 
         // ---- Integration and collision ----
 
-        private static void Integrate(VoxelGrid g, MovementConfig c, ref MotorState s)
+        private static void Integrate(ITerrain g, MovementConfig c, ref MotorState s)
         {
             double h = HeightOf(s, c);
             Vec3d d = s.Velocity * c.Dt;
@@ -420,9 +423,31 @@ namespace Sculpt.Core
             if (groundMode)
             {
                 // Move along the ground: horizontal with step-up (climbs ramp slopes, never full blocks), then stick down.
+                SlipOffFillet(g, c, ref s, h);
                 double startY = s.Position.Y;
+                s.UphillTicks = s.Velocity.Y > c.RampLaunchMinRiseSpeed ? Math.Min(s.UphillTicks + 1, 1000) : 0;
                 MoveHorizontalWithStep(g, c, ref s, 0, d.X, h);
                 MoveHorizontalWithStep(g, c, ref s, 2, d.Z, h);
+
+                // Ramp launch: after a sustained climb, if the ground ahead falls away (the 45 degree chamfer on a
+                // ramp's crest, or a plain drop), leave it with the full velocity including the climb's vertical part.
+                // Plateaus (flat ground ahead at the same height) and short bumps keep you on the ground.
+                if (s.UphillTicks >= c.RampLaunchMinTicks && s.Position.Y - startY < s.Velocity.Y * c.Dt - 0.02)
+                {
+                    Vec3d dirH = Horizontal(s.Velocity).Normalized;
+                    // Look where the front of the feet will be next tick.
+                    double half = Math.Max(c.RampLaunchProbeHalf, Horizontal(d).Length * 0.5);
+                    Aabb front = Box(s.Position + dirH * (c.HalfWidth + half), half, h);
+                    if (!g.GroundContact(front, c.RampLaunchProbeDepth, out _))
+                    {
+                        s.Mode = MoveMode.Air;
+                        s.Grounded = false;
+                        s.AirPeakY = s.Position.Y;
+                        s.UphillTicks = 0;
+                        return;
+                    }
+                }
+
                 double snap = c.MaxStepUp + Horizontal(d).Length + (s.Position.Y - startY);
                 if (ProbeDown(g, c, s.Position, h, snap, out double drop))
                     s.Position = new Vec3d(s.Position.X, s.Position.Y - drop, s.Position.Z);
@@ -431,6 +456,7 @@ namespace Sculpt.Core
             }
             else
             {
+                s.UphillTicks = 0;
                 // Exact constant-gravity step: the apex matches the configured jump height.
                 double vy0 = s.Velocity.Y;
                 double vy1 = Math.Max(-c.MaxFallSpeed, vy0 - c.Gravity * c.Dt);
@@ -445,7 +471,28 @@ namespace Sculpt.Core
             }
         }
 
-        private static void MoveHorizontalWithStep(VoxelGrid g, MovementConfig c, ref MotorState s, int axis, double delta, double h)
+        /// <summary>
+        /// Standing on the 0.15 m fillet at the foot of a wall (a slope that runs straight into the wall, e.g. after
+        /// landing against it): step off it back onto the floor, so walls never hold you up off the ground.
+        /// </summary>
+        private static void SlipOffFillet(ITerrain g, MovementConfig c, ref MotorState s, double h)
+        {
+            if (s.Velocity.HorizontalLength > c.FilletSlipMaxSpeed) return;
+            for (int k = 0; k < 4; k++)
+            {
+                var d = k == 0 ? new Vec3d(1, 0, 0) : k == 1 ? new Vec3d(-1, 0, 0) : k == 2 ? new Vec3d(0, 0, 1) : new Vec3d(0, 0, -1);
+                // Touching a wall (still blocked a step higher) on this side?
+                if (!Blocked(g, c, s.Position + d * c.FilletIgnore, h)) continue;
+                if (!Blocked(g, c, s.Position + d * c.FilletIgnore + new Vec3d(0, c.MaxStepUp + 0.01, 0), h)) continue;
+                Vec3d p = s.Position;
+                MoveAxis(g, c, ref p, k < 2 ? 0 : 2, -(k < 2 ? d.X : d.Z) * c.FilletSlipPerTick, h, out _);
+                if (!ProbeDown(g, c, p, h, c.FilletIgnore, out double drop) || drop < 1e-4) continue;
+                s.Position = new Vec3d(p.X, p.Y - drop, p.Z);
+                return;
+            }
+        }
+
+        private static void MoveHorizontalWithStep(ITerrain g, MovementConfig c, ref MotorState s, int axis, double delta, double h)
         {
             if (delta == 0) return;
             Vec3d start = s.Position;
@@ -456,7 +503,19 @@ namespace Sculpt.Core
             Vec3d alt = start;
             MoveAxis(g, c, ref alt, 1, c.MaxStepUp, h, out _);
             double altMoved = MoveAxis(g, c, ref alt, axis, delta, h, out bool altBlocked);
-            if (Math.Abs(altMoved) > Math.Abs(moved) + 1e-6)
+            // A step that only gains the 0.15 m fillet at the foot of a wall is not taken: pressing into a wall must
+            // not lift the player onto its base.
+            // So the stepped path must keep going for a little while at the raised height (a slope or a ledge top does;
+            // a fillet ends in the wall).
+            double gain = Math.Abs(altMoved) - Math.Abs(moved);
+            bool keepsGoing = false;
+            if (gain > 1e-6)
+            {
+                Vec3d look = alt;
+                double ahead = MoveAxis(g, c, ref look, axis, Math.Sign(delta) * c.FilletIgnore, h, out bool lookBlocked);
+                keepsGoing = !lookBlocked || Math.Abs(ahead) + gain > c.FilletIgnore;
+            }
+            if (keepsGoing)
             {
                 MoveAxis(g, c, ref alt, 1, -(alt.Y - start.Y), h, out _);
                 s.Position = alt;
@@ -470,7 +529,7 @@ namespace Sculpt.Core
         }
 
         /// <summary>Moves along one axis (0 = X, 1 = Y, 2 = Z) until contact. Returns the distance moved.</summary>
-        public static double MoveAxis(VoxelGrid g, MovementConfig c, ref Vec3d pos, int axis, double delta, double h, out bool blocked)
+        public static double MoveAxis(ITerrain g, MovementConfig c, ref Vec3d pos, int axis, double delta, double h, out bool blocked)
         {
             blocked = false;
             if (delta == 0) return 0;
@@ -505,7 +564,7 @@ namespace Sculpt.Core
             axis == 0 ? new Vec3d(p.X + d, p.Y, p.Z) : axis == 1 ? new Vec3d(p.X, p.Y + d, p.Z) : new Vec3d(p.X, p.Y, p.Z + d);
 
         /// <summary>Finds ground within maxDrop below the feet. drop = distance down to it.</summary>
-        private static bool ProbeDown(VoxelGrid g, MovementConfig c, Vec3d pos, double h, double maxDrop, out double drop)
+        private static bool ProbeDown(ITerrain g, MovementConfig c, Vec3d pos, double h, double maxDrop, out double drop)
         {
             Vec3d p = pos;
             MoveAxis(g, c, ref p, 1, -maxDrop, h, out bool hit);
@@ -514,57 +573,10 @@ namespace Sculpt.Core
         }
 
         /// <summary>Is there ground just under the feet, and what is its normal?</summary>
-        public static bool ProbeGround(VoxelGrid g, MovementConfig c, Vec3d pos, double h, out Vec3d normal)
-        {
-            normal = new Vec3d(0, 1, 0);
-            Aabb probe = Box(pos - new Vec3d(0, c.GroundProbe, 0), c.HalfWidth, h);
-            if (!VoxelGeometry.BoxOverlapsSolid(g, probe)) return false;
+        public static bool ProbeGround(ITerrain g, MovementConfig c, Vec3d pos, double h, out Vec3d normal)
+            => g.GroundContact(Box(pos, c.HalfWidth, h), c.GroundProbe, out normal);
 
-            // Supporting block: the highest surface under the footprint.
-            Aabb foot = Box(pos, c.HalfWidth, h);
-            int y = VoxelGrid.CellAt(new Vec3d(pos.X, pos.Y - c.GroundProbe, pos.Z)).Y;
-            Int3 lo = VoxelGrid.CellAt(foot.Min + new Vec3d(Aabb.Epsilon, 0, Aabb.Epsilon));
-            Int3 hi = VoxelGrid.CellAt(foot.Max - new Vec3d(Aabb.Epsilon, 0, Aabb.Epsilon));
-            double best = double.NegativeInfinity;
-            bool bestRamp = false;
-            Dir bestLow = Dir.East;
-            for (int z = lo.Z; z <= hi.Z; z++)
-                for (int x = lo.X; x <= hi.X; x++)
-                {
-                    var cell = new Int3(x, y, z);
-                    Block b = g.Get(cell);
-                    if (b.IsEmpty) continue;
-                    double top = SurfaceUnder(b, cell, foot);
-                    bool better = top > best + 1e-6 || (Math.Abs(top - best) <= 1e-6 && bestRamp && !b.IsRamp);
-                    if (better)
-                    {
-                        best = top;
-                        bestRamp = b.IsRamp;
-                        bestLow = b.RampLow;
-                    }
-                }
-            if (bestRamp)
-            {
-                Int3 d = bestLow.ToInt3();
-                normal = new Vec3d(d.X, 1, d.Z).Normalized;
-            }
-            return true;
-        }
-
-        private static double SurfaceUnder(Block b, Int3 cell, Aabb box)
-        {
-            Aabb c = VoxelGrid.CellBounds(cell);
-            if (!b.IsRamp) return c.Max.Y;
-            switch (b.RampLow)
-            {
-                case Dir.East: return VoxelGeometry.SurfaceHeight(b, cell, box.Min.X, c.Center.Z);
-                case Dir.West: return VoxelGeometry.SurfaceHeight(b, cell, box.Max.X, c.Center.Z);
-                case Dir.North: return VoxelGeometry.SurfaceHeight(b, cell, c.Center.X, box.Min.Z);
-                default: return VoxelGeometry.SurfaceHeight(b, cell, c.Center.X, box.Max.Z);
-            }
-        }
-
-        private static void SetCrouched(VoxelGrid g, MovementConfig c, ref MotorState s, bool want)
+        private static void SetCrouched(ITerrain g, MovementConfig c, ref MotorState s, bool want)
         {
             if (want == s.Crouched) return;
             if (!want && Blocked(g, c, s.Position, c.StandHeight)) return; // no headroom: stay crouched
@@ -572,7 +584,7 @@ namespace Sculpt.Core
         }
 
         /// <summary>Safety net: if the box starts inside geometry (e.g. a late net correction), lift it out.</summary>
-        private static void Depenetrate(VoxelGrid g, MovementConfig c, ref MotorState s)
+        private static void Depenetrate(ITerrain g, MovementConfig c, ref MotorState s)
         {
             double h = HeightOf(s, c);
             if (!Blocked(g, c, s.Position, h)) return;

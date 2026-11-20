@@ -58,7 +58,7 @@ namespace Sculpt.Core.Net
     {
         public delegate void SendFn(int connectionId, byte[] data, bool reliable);
 
-        public readonly VoxelGrid Grid;
+        public readonly ITerrain Grid;
         public readonly MovementConfig Movement;
         public readonly NetConfig Config;
         public int Tick { get; private set; }
@@ -76,7 +76,7 @@ namespace Sculpt.Core.Net
         private int _nextId = 1;
         private readonly int _ringSize;
 
-        public NetServer(VoxelGrid grid, MovementConfig movement, NetConfig config, SendFn send, int startTick = 1000)
+        public NetServer(ITerrain grid, MovementConfig movement, NetConfig config, SendFn send, int startTick = 1000)
         {
             Grid = grid;
             Movement = movement;

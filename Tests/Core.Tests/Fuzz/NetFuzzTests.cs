@@ -101,7 +101,7 @@ namespace Sculpt.Core.Tests.Fuzz
                 Peers.Add(p);
 
                 // Spawn somewhere legal on this arena.
-                VoxelGrid g = Server.Grid;
+                var g = (VoxelGrid)Server.Grid;
                 Vec3d spawn = default;
                 for (int i = 0; i < 500; i++)
                 {

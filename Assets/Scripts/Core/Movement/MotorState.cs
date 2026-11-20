@@ -48,6 +48,8 @@ namespace Sculpt.Core
         public Vec3d LandVelocity;   // horizontal velocity at touchdown, for late slide-land
         public bool LandSlideUsed;
         public double AirPeakY;
+        /// <summary>Consecutive ground ticks spent climbing (for ramp launches off chamfered crests).</summary>
+        public int UphillTicks;
 
         // Vault / mantle progress
         public int ActionTick;       // ticks since the vault or mantle started

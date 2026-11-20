@@ -119,7 +119,7 @@ namespace Sculpt.Core.Net
     /// <summary>The one function both client prediction and the server use to advance a player by one command.</summary>
     public static class NetSim
     {
-        public static void Simulate(VoxelGrid grid, MovementConfig mc, NetConfig nc, ref MotorState s, in InputCmd cmd, Vec3d spawn, List<MoveEvent> events)
+        public static void Simulate(ITerrain grid, MovementConfig mc, NetConfig nc, ref MotorState s, in InputCmd cmd, Vec3d spawn, List<MoveEvent> events)
         {
             if (cmd.Respawn)
             {

@@ -419,7 +419,7 @@ namespace Sculpt.Core.Tests
             _g.Fill(new Int3(6, 0, 0), new Int3(6, 0, 31), Block.Solid);
             Run(90, Fwd());
             Assert.That(_events.Any(e => e.Type == MoveEventType.Vaulted), Is.False);
-            Assert.That(_s.Position.X, Is.EqualTo(6 * B - 0.35).Within(1e-3));
+            Assert.That(_s.Position.X, Is.EqualTo(6 * B - 0.35 - 0.15).Within(1e-3), "stops against the wall's 0.15 m base fillet, not lifted onto it");
             Assert.That(_s.Position.Y, Is.EqualTo(0).Within(1e-3));
         }
 

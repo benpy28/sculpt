@@ -59,7 +59,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 1;
+        public const byte Version = 2;
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
@@ -209,6 +209,7 @@ namespace Sculpt.Core.Net
             w.I32(s.LandTick);
             w.Vec(s.LandVelocity);
             w.F64(s.AirPeakY);
+            w.I32(s.UphillTicks);
             w.I32(s.ActionTick);
             w.F64(s.ActionStartY);
             w.F64(s.ActionTargetY);
@@ -236,6 +237,7 @@ namespace Sculpt.Core.Net
             s.LandTick = r.I32();
             s.LandVelocity = r.Vec();
             s.AirPeakY = r.F64();
+            s.UphillTicks = r.I32();
             s.ActionTick = r.I32();
             s.ActionStartY = r.F64();
             s.ActionTargetY = r.F64();
@@ -253,7 +255,7 @@ namespace Sculpt.Core.Net
                    a.LandSlideUsed == b.LandSlideUsed && a.GroundNormal.Equals(b.GroundNormal) && a.Tick == b.Tick &&
                    a.LastGroundedTick == b.LastGroundedTick && a.JumpBufferedTick == b.JumpBufferedTick &&
                    a.LastSlideBoostTick == b.LastSlideBoostTick && a.LandTick == b.LandTick &&
-                   a.LandVelocity.Equals(b.LandVelocity) && a.AirPeakY.Equals(b.AirPeakY) && a.ActionTick == b.ActionTick &&
+                   a.LandVelocity.Equals(b.LandVelocity) && a.AirPeakY.Equals(b.AirPeakY) && a.UphillTicks == b.UphillTicks && a.ActionTick == b.ActionTick &&
                    a.ActionStartY.Equals(b.ActionStartY) && a.ActionTargetY.Equals(b.ActionTargetY) &&
                    a.ActionForward.Equals(b.ActionForward) && a.ActionKeepVelocity.Equals(b.ActionKeepVelocity) &&
                    a.ShootReadyTick == b.ShootReadyTick;

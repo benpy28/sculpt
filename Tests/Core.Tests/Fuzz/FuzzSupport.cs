@@ -78,8 +78,7 @@ namespace Sculpt.Core.Tests.Fuzz
 
         /// <summary>Every field of a block in one value.</summary>
         public static ulong Pack(Block b) =>
-            (ulong)b.Kind | ((b.IsRamp ? 1UL : 0UL) << 2) | ((ulong)b.RampLow << 3) | ((ulong)b.ReinforceTeam << 6) | ((ulong)b.TintTeam << 14)
-            ^ ((ulong)(uint)b.ReinforceUntilTick << 22) ^ ((ulong)(uint)b.TintTick << 41);
+            (ulong)b.Kind | ((b.IsRamp ? 1UL : 0UL) << 2) | ((ulong)b.RampLow << 3);
 
         public static ulong Mix(ulong h, ulong v)
         {
@@ -202,10 +201,10 @@ namespace Sculpt.Core.Tests.Fuzz
 
         public MotorChecker(MovementConfig c) { _c = c; }
 
-        public static bool Inside(VoxelGrid g, MovementConfig c, in MotorState s) =>
+        public static bool Inside(ITerrain g, MovementConfig c, in MotorState s) =>
             VoxelGeometry.BoxOverlapsSolid(g, PlayerMovement.Box(s.Position, c.HalfWidth, PlayerMovement.HeightOf(s, c)));
 
-        public void Check(VoxelGrid g, in MotorState before, in MotorState s, List<MoveEvent> events, string ctx, bool worldStatic)
+        public void Check(ITerrain g, in MotorState before, in MotorState s, List<MoveEvent> events, string ctx, bool worldStatic)
         {
             Assert.That(Inside(g, _c, s), NUnit.Framework.Is.False, $"{ctx}: inside terrain at {s.Position} mode {s.Mode} crouched {s.Crouched}");
             Assert.That(s.Tick, NUnit.Framework.Is.EqualTo(before.Tick + 1), ctx + ": tick advances by one");

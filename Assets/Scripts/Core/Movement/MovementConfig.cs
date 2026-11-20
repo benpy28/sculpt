@@ -63,6 +63,15 @@ namespace Sculpt.Core
 
         // Ground detection and snapping
         public double GroundProbe = 0.02;
-        public double MaxStepUp = 0.3;              // only ever climbs ramp slopes; full blocks are 1.2 m
+        public double MaxStepUp = 0.3;              // one sub-cell: climbs 45 degree slopes, never a wall
+        public double FilletIgnore = 0.16;          // a step that gains no more than this against a wall is the wall's base fillet: not taken
+        public double FilletSlipPerTick = 0.05;     // stepping back off a wall's base fillet when standing on it
+        public double FilletSlipMaxSpeed = 9.0;      // keeps slip + motion inside one tick's speed cap
+
+        // Ramp launch off a chamfered crest
+        public int RampLaunchMinTicks = 4;          // climbing at least this long (shorter bumps never launch)
+        public double RampLaunchMinRiseSpeed = 1.0; // m/s of climb that counts as climbing
+        public double RampLaunchProbeHalf = 0.05;   // minimum half-size of the probe just ahead of the feet
+        public double RampLaunchProbeDepth = 0.05;  // no ground this close below the front means the crest has passed
     }
 }

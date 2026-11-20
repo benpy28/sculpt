@@ -31,7 +31,7 @@ namespace Sculpt.Core.Net
     {
         public delegate void SendFn(byte[] data, bool reliable);
 
-        public readonly VoxelGrid Grid;
+        public readonly ITerrain Grid;
         public readonly MovementConfig Movement;
         public readonly NetConfig Config;
 
@@ -85,7 +85,7 @@ namespace Sculpt.Core.Net
         private readonly Dictionary<int, RemoteTrack> _remotes = new Dictionary<int, RemoteTrack>();
         private readonly List<int> _removeScratch = new List<int>();
 
-        public NetClient(VoxelGrid grid, MovementConfig movement, NetConfig config, SendFn send)
+        public NetClient(ITerrain grid, MovementConfig movement, NetConfig config, SendFn send)
         {
             Grid = grid;
             Movement = movement;

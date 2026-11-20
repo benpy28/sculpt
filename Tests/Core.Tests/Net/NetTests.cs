@@ -372,8 +372,8 @@ namespace Sculpt.Core.Tests.Net
         public void RemotePlayers_AreInterpolatedSmoothly_AndCloseToTheServerPast()
         {
             var h = NetHarness.Flat();
-            var a = h.AddClient(NetHarness.Lag(40), NetHarness.Lag(40), seed: 1, spawn: TestWorld.FeetIn(4, 0, 2));
-            var b = h.AddClient(NetHarness.Lag(40), NetHarness.Lag(40), seed: 2, spawn: TestWorld.FeetIn(12, 0, 2));
+            var a = h.AddClient(NetHarness.Lag(40), NetHarness.Lag(40), seed: 1, spawn: TileMap.FeetIn(4, 0, 2));
+            var b = h.AddClient(NetHarness.Lag(40), NetHarness.Lag(40), seed: 2, spawn: TileMap.FeetIn(12, 0, 2));
             a.Script = Scripts.StraightNorth;
             b.Script = Scripts.Idle;
             h.RunSeconds(1);
@@ -407,8 +407,8 @@ namespace Sculpt.Core.Tests.Net
         public void RemotePlayers_SurviveLoss_WithoutExtrapolatingMuch()
         {
             var h = NetHarness.Flat();
-            var a = h.AddClient(NetHarness.Lag(40, 8, 5), NetHarness.Lag(40, 8, 5), seed: 5, spawn: TestWorld.FeetIn(4, 0, 2));
-            var b = h.AddClient(NetHarness.Lag(40, 8, 5), NetHarness.Lag(40, 8, 5), seed: 6, spawn: TestWorld.FeetIn(12, 0, 2));
+            var a = h.AddClient(NetHarness.Lag(40, 8, 5), NetHarness.Lag(40, 8, 5), seed: 5, spawn: TileMap.FeetIn(4, 0, 2));
+            var b = h.AddClient(NetHarness.Lag(40, 8, 5), NetHarness.Lag(40, 8, 5), seed: 6, spawn: TileMap.FeetIn(12, 0, 2));
             a.Script = t => new MoveInput { MoveX = Math.Sin(t * 0.05), Yaw = 0 };
             h.RunSeconds(1);
             int samples = 0, extrapolated = 0;
@@ -427,7 +427,7 @@ namespace Sculpt.Core.Tests.Net
         {
             var h = NetHarness.Flat();
             var a = h.AddClient(seed: 1);
-            var b = h.AddClient(seed: 2, spawn: TestWorld.FeetIn(12, 0, 12));
+            var b = h.AddClient(seed: 2, spawn: TileMap.FeetIn(12, 0, 12));
             h.RunSeconds(0.5);
             Assert.That(b.Client.RemoteCount, Is.EqualTo(1));
             h.Remove(a);

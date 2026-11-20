@@ -58,13 +58,13 @@ namespace Sculpt.Core.Tests.Net
                 g.FillBaseGround();
                 g.ClearChanges();
                 return g;
-            }, TestWorld.FeetIn(8, 0, 8), tweak);
+            }, TileMap.FeetIn(8, 0, 8), tweak);
         }
 
         public static NetHarness M2Map(out Vec3d spawn, Action<NetConfig> tweak = null)
         {
             TestMaps.BuildM2(out spawn, out _);
-            return new NetHarness(() => TestMaps.BuildM2(out _, out _), spawn, tweak);
+            return new NetHarness(() => new VoxelGrid(TestMaps.BuildM2(out _, out _)), spawn, tweak);
         }
 
         public Peer AddClient(LinkConditions up = null, LinkConditions down = null, double frameMs = 1000.0 / 144.0, int seed = 1, int team = 1, Vec3d? spawn = null)
