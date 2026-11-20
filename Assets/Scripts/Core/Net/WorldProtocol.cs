@@ -376,7 +376,7 @@ namespace Sculpt.Core.Net
         private static SculptResult ReadResult(ref ByteReader r)
         {
             byte b = r.U8();
-            if (b > (byte)SculptResult.NotInSculptMode) throw new NetFormatException("Bad result.");
+            if (b > (byte)SculptResult.TooLate) throw new NetFormatException("Bad result.");
             return (SculptResult)b;
         }
     }

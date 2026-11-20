@@ -57,6 +57,8 @@ namespace Sculpt.Core
         CannotThrowReinforced,
         /// <summary>Network layer: the confirm arrived while the player was not (yet) in sculpt mode, or was disarmed.</summary>
         NotInSculptMode,
+        /// <summary>Network layer: the confirm reached the server too late to apply (or never did, as the client decided).</summary>
+        TooLate,
     }
 
     /// <summary>Everything the client needs to draw the ghost, and the server needs to start the windup.</summary>

@@ -127,7 +127,7 @@ namespace Sculpt.Core.Tests
         /// Expectation: your own sculpt moves you in your view exactly as the server does (no pop, no correction).
         /// </summary>
         [Test]
-        [Ignore("ISSUE-8: your own sculpt's shove or lift is not predicted; the view pops or clips until the server corrects it")]
+
         public void PullingAWallIntoYourselfShovesYouBackInYourViewWithoutACorrection()
         {
             var h = Net.SculptNetHarness.Flat();
@@ -167,7 +167,7 @@ namespace Sculpt.Core.Tests
         /// Expectation: a confirm the server never saw is rolled back about a round trip after it should have begun.
         /// </summary>
         [Test]
-        [Ignore("ISSUE-9: a lost sculpt confirm leaves a phantom predicted sculpt in your world for 4 s")]
+
         public void ALostConfirmIsRolledBackWithinARoundTrip()
         {
             var h = Net.SculptNetHarness.Flat();

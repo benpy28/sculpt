@@ -52,6 +52,29 @@ namespace Sculpt.Core
         }
 
         /// <summary>Forgets the support checks a mirror's grid writes queue up (a mirror never runs support).</summary>
+        /// <summary>
+        /// Client prediction of its own sculpt landing (ISSUE-8): runs the server's resolution check for this player and
+        /// says where it will put them (shove or lift) and what friction kick it gives a rider. False if the server would
+        /// cancel it. Call right before applying the landing, with the player's pending windup already cleared.
+        /// </summary>
+        public bool PlanLanding(PlayerBody p, SculptAction a, out bool moved, out Vec3d moveTo, out Vec3d kick)
+        {
+            moved = false;
+            moveTo = p.Position;
+            kick = Vec3d.Zero;
+            SculptCheck c = EvaluateInternal(p, a, true);
+            bool ok = c.IsValid;
+            if (ok)
+            {
+                foreach (var s in _shoves) if (s.Key == p) { moved = true; moveTo = s.Value; }
+                foreach (var d in _drags) if (d == p) kick += a.Direction.ToVec() * Config.RiderDragSpeed;
+            }
+            _shoves.Clear();
+            _drags.Clear();
+            ClearSupportQueue();
+            return ok;
+        }
+
         public void ClearSupportQueue()
         {
             _checkPieces.Clear();

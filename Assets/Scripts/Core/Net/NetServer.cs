@@ -27,6 +27,7 @@ namespace Sculpt.Core.Net
         // Sculpt confirm bookkeeping (client sequence numbers echoed in world events).
         internal int PendingSeq = -1, BufferedSeq = -1;
         internal int DeferredLock = int.MinValue;
+        internal int LastLateSeq = -1;
 
         // Lead feedback: worst lead in the window.
         internal readonly int[] LeadByTick;
@@ -210,7 +211,18 @@ namespace Sculpt.Core.Net
                     // Already simulated with a guess. Keep any press so it is not lost, applied on the next tick.
                     int idx = c.Tick & (_ringSize - 1);
                     bool alreadyHad = p.Has[idx] && p.Ring[idx].Tick == c.Tick;
-                    if (!alreadyHad && c.Tick > Tick - Config.InputRedundancy)
+                    if (!alreadyHad && c.Tick <= Tick - Config.InputRedundancy)
+                    {
+                        // Too late to apply. A sculpt confirm in it is refused out loud, so the client's prediction of it
+                        // is rolled back at once (ISSUE-9). Redundant copies are refused once.
+                        if (c.HasSculpt && c.SculptSeq != p.LastLateSeq && Sculpt != null)
+                        {
+                            p.LastLateSeq = c.SculptSeq;
+                            _leftEvents.Add(new WorldEvent { Type = WorldEventType.Rejected, PlayerId = p.Id, Seq = c.SculptSeq, Result = SculptResult.TooLate });
+                        }
+                        continue;
+                    }
+                    if (!alreadyHad)
                     {
                         p.LateInputs++;
                         if (c.Move.JumpPressed) p.CarryJump = true;

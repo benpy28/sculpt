@@ -88,6 +88,9 @@ namespace Sculpt.Core.Net
         private readonly MotorState[] _histState;
         private readonly int[] _histLock; // gun lock a sculpt begin put on the hand after that tick's movement
         private readonly int[] _histTick;
+        // Own sculpt landings (ISSUE-8): applied to the state right before that tick's movement, also on replays.
+        private readonly bool[] _histMoved;
+        private readonly Vec3d[] _histMoveTo, _histKick;
         private readonly int _histMask;
 
         private MotorState _pred, _prevPred;
@@ -111,6 +114,9 @@ namespace Sculpt.Core.Net
             _histState = new MotorState[n];
             _histTick = new int[n];
             _histLock = new int[n];
+            _histMoved = new bool[n];
+            _histMoveTo = new Vec3d[n];
+            _histKick = new Vec3d[n];
             Sculpt = sculpt;
             _histMask = n - 1;
             ClearHistory();
@@ -209,6 +215,9 @@ namespace Sculpt.Core.Net
             LastInputWasRealOnServer = m.SelfInputWasReal;
             Sculpt?.OnSelfBar(m.ServerTick, m.SelfBar);
             RttTicks += ((Tick - m.ServerTick - Math.Max(0, LastServerLead == Protocol.NoLead ? 0 : LastServerLead)) - RttTicks) * 0.1;
+            // Our confirm for tick T is answered (Began) in the world message of server tick T, which we see about a
+            // snapshot round trip after predicting T. Allow 1.5x that plus slack before giving up on it.
+            if (Sculpt != null) Sculpt.AnswerTimeoutTicks = Math.Max(20, (int)Math.Ceiling((Tick - m.ServerTick) * 1.5) + 12);
             AdjustClock(m.ServerTick, m.SelfLead);
             Reconcile(m.ServerTick, m.Self);
         }
@@ -265,6 +274,7 @@ namespace Sculpt.Core.Net
                 int k = t & _histMask;
                 if (_histTick[k] != t) break;
                 prev = s;
+                ApplyLanding(ref s, _histMoved[k], _histMoveTo[k], _histKick[k]);
                 NetSim.Simulate(Grid, Movement, Config, ref s, _histCmd[k], Spawn, null);
                 if (_histLock[k] != int.MinValue) HandRules.LockGun(ref s.Hand, _histLock[k]);
                 _histState[k] = s;
@@ -346,6 +356,10 @@ namespace Sculpt.Core.Net
                 Sculpt.SetRemoteBodies(this);
                 Sculpt.BeforeMove(Tick);
             }
+            bool moved = false;
+            Vec3d moveTo = default, kick = Vec3d.Zero;
+            Sculpt?.TakeLandingMove(out moved, out moveTo, out kick);
+            ApplyLanding(ref _pred, moved, moveTo, kick);
             if (LocalShots.Count > 1024) LocalShots.Clear(); // nobody is draining (tests)
             int shotsBefore = LocalShots.Count;
             NetSim.Simulate(Grid, Movement, Config, ref _pred, cmd, Spawn, events, LocalShots);
@@ -363,9 +377,20 @@ namespace Sculpt.Core.Net
             _histCmd[i] = cmd;
             _histState[i] = _pred;
             _histLock[i] = lockUntil;
+            _histMoved[i] = moved;
+            _histMoveTo[i] = moveTo;
+            _histKick[i] = kick;
 
             SendInputs();
             return seq;
+        }
+
+        /// <summary>Same as the server: a shove sets the position, a kick adds velocity; the dead are out of the world.</summary>
+        private static void ApplyLanding(ref MotorState s, bool moved, Vec3d to, Vec3d kick)
+        {
+            if (s.Dead) return;
+            if (moved) s.Position = to;
+            if (kick.LengthSquared > 0) s.Velocity += kick;
         }
 
         private void SendInputs()

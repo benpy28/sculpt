@@ -144,6 +144,12 @@ namespace Sculpt.Core.Net
         public const ushort TempIdBase = 0xF000;
         public const int SpecTimeoutTicks = 240;
 
+        /// <summary>
+        /// A prediction the server has not started this many ticks after its confirm was lost or came too late: it is
+        /// dropped (ISSUE-9). The net client keeps it at about a round trip plus slack.
+        /// </summary>
+        public int AnswerTimeoutTicks { get; set; } = 30;
+
         private readonly List<LocalSculpt> _local = new List<LocalSculpt>();
         private readonly Dictionary<int, RemoteWindup> _windups = new Dictionary<int, RemoteWindup>();
         private readonly List<FlyingPiece> _flying = new List<FlyingPiece>();
@@ -284,8 +290,18 @@ namespace Sculpt.Core.Net
                 if (s.Completed || s.CompleteTick > tick) continue;
                 s.Completed = true;
                 Mirror.ClearMirrorPending(LocalId);
+                bool moved = false;
+                Vec3d to = default, kick = Vec3d.Zero;
+                bool planned = s.Action.Type != SculptActionType.Throw && LocalBody != null &&
+                               Mirror.PlanLanding(LocalBody, s.Action, out moved, out to, out kick);
                 if (Apply(s, tick))
                 {
+                    if (planned)
+                    {
+                        // Move yourself exactly as the server's resolution will (ISSUE-8).
+                        if (moved) { LocalBody.Position = to; _landingMoved = true; _landingTo = to; }
+                        _landingKick += kick;
+                    }
                     Events.Add(new ClientSculptEvent
                     {
                         Type = ClientSculptEventType.LocalLanded, PlayerId = LocalId, Team = LocalTeam, Action = s.Action.Type, Direction = s.Action.Direction,
@@ -317,6 +333,22 @@ namespace Sculpt.Core.Net
         }
 
         private int _deferredLock = int.MinValue;
+        private bool _landingMoved;
+        private Vec3d _landingTo, _landingKick;
+
+        /// <summary>
+        /// What your own sculpt landing did to you this tick (shove or lift to a position, friction kick). The net client
+        /// applies it to the predicted state before movement, exactly where the server applies the shared body's.
+        /// </summary>
+        public bool TakeLandingMove(out bool moved, out Vec3d to, out Vec3d kick)
+        {
+            moved = _landingMoved;
+            to = _landingTo;
+            kick = _landingKick;
+            _landingMoved = false;
+            _landingKick = Vec3d.Zero;
+            return moved || kick.LengthSquared > 0;
+        }
 
         /// <summary>
         /// After the local player's movement for the tick: handles a confirm in this tick's command. Returns the gun lock
@@ -456,16 +488,28 @@ namespace Sculpt.Core.Net
             return true;
         }
 
+        private bool Stale(LocalSculpt s, int tick) =>
+            tick - s.CompleteTick > SpecTimeoutTicks || (!s.ServerBegan && tick - s.BeginTick > AnswerTimeoutTicks);
+
         private void ExpireStale(int tick)
         {
             // Flights whose impact report never came (it always should): forget them.
             _flying.RemoveAll(f => f.HitTerrain && tick - f.HitTick > 180);
             // A prediction the server never answered (it should always answer): drop it eventually.
+            // A prediction the server never started: its confirm was lost or too late (ISSUE-9). Drop it about a round
+            // trip after the server should have begun it.
             bool any = false;
-            foreach (var s in _local) if (tick - s.CompleteTick > SpecTimeoutTicks) { any = true; break; }
+            foreach (var s in _local) if (Stale(s, tick)) { any = true; break; }
             if (!any) return;
             Mirror.Pieces.Rollback();
-            _local.RemoveAll(s => tick - s.CompleteTick > SpecTimeoutTicks);
+            foreach (var s in _local.ToArray())
+            {
+                s.Applied = false;
+                if (!Stale(s, tick)) continue;
+                DropLocal(s);
+                ServerRejections++;
+                Events.Add(new ClientSculptEvent { Type = ClientSculptEventType.Rejected, PlayerId = LocalId, Team = LocalTeam, Action = s.Action.Type, Result = SculptResult.TooLate, Value = s.Seq, Mine = true });
+            }
             Reapply();
         }
 
