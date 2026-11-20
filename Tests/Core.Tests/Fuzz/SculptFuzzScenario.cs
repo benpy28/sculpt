@@ -30,6 +30,10 @@ namespace Sculpt.Core.Tests.Fuzz
         public double ActionChance = 0.2;
         public double TeleportChance = 0.03;
         public bool CheckShoveDistance = true;
+        /// <summary>Chance a sculpt is aimed at the ground around some player rather than anywhere.</summary>
+        public double AimAtPlayersChance = 0.0;
+        /// <summary>Refill bars before each command, so fights never stall on an empty bar.</summary>
+        public bool InfiniteBar;
 
         // Stats, so a test can prove the run actually exercised things.
         public readonly Dictionary<SculptActionType, int> Completed = new Dictionary<SculptActionType, int>();
@@ -44,11 +48,23 @@ namespace Sculpt.Core.Tests.Fuzz
         private readonly List<Int3> _scratchChanges = new List<Int3>();
         private readonly List<Int3> _anchors = new List<Int3>();
 
-        public SculptFuzzScenario(ulong seed, double crouchChance = 0.0, int playerCount = -1)
+        // Real movement instead of teleports (players are driven by bots through PlayerMovement, the way
+        // LocalPlayer.Tick does it: take the body position, step the motor, write the body back).
+        public readonly bool DriveMovement;
+        public readonly MovementConfig MoveConfig = new MovementConfig();
+        private readonly Dictionary<int, MotorState> _motors = new Dictionary<int, MotorState>();
+        private readonly Dictionary<int, InputBot> _bots = new Dictionary<int, InputBot>();
+        private readonly Dictionary<int, MotorChecker> _checkers = new Dictionary<int, MotorChecker>();
+        private readonly List<MoveEvent> _moveEvents = new List<MoveEvent>();
+        public int MoveTicks;
+
+        public SculptFuzzScenario(ulong seed, double crouchChance = 0.0, int playerCount = -1, bool driveMovement = false)
         {
             Seed = seed;
             R = new Rng(seed);
-            CrouchChance = crouchChance;
+            CrouchChance = driveMovement ? 0.0 : crouchChance;
+            DriveMovement = driveMovement;
+            if (driveMovement) { AirChance = 0.0; TeleportChance = 0.0; }
             Grid = new VoxelGrid(2, 2, 2, -16);
             Grid.FillBaseGround();
             BuildTerrain();
@@ -62,6 +78,14 @@ namespace Sculpt.Core.Tests.Fuzz
                 if (!Place(p)) throw new InvalidOperationException("Could not place player " + i + " (seed " + seed + ")");
                 Sculpt.AddPlayer(p);
                 Players.Add(p);
+                if (driveMovement)
+                {
+                    var m = MotorState.At(p.Position);
+                    PlayerMovement.WriteBody(m, MoveConfig, p);
+                    _motors[p.Id] = m;
+                    _bots[p.Id] = new InputBot(new Rng(seed * 31 + (ulong)i));
+                    _checkers[p.Id] = new MotorChecker(MoveConfig);
+                }
             }
             _frozenHash = FrozenHash();
             _fullFrozenHash = FrozenHash(full: true);
@@ -72,29 +96,7 @@ namespace Sculpt.Core.Tests.Fuzz
 
         // ---------------- World ----------------
 
-        private void BuildTerrain()
-        {
-            Dir[] horiz = DirUtil.Horizontal;
-            for (int x = RegionMin; x <= RegionMax; x++)
-                for (int z = RegionMin; z <= RegionMax; z++)
-                {
-                    // Column top cell: -3 (pit at level -2) .. 3 (level +4), weighted toward ground level.
-                    int[] tops = { -3, -2, -2, -1, -1, -1, -1, -1, 0, 0, 0, 1, 1, 2, 3 };
-                    int top = R.Pick(tops);
-                    for (int y = top + 1; y <= -1; y++) Grid.Set(x, y, z, Block.Empty);
-                    for (int y = 0; y <= top; y++) Grid.Set(x, y, z, Block.Solid);
-
-                    if (top >= -2 && R.Chance(0.05))
-                    {
-                        // Anchor pillar from the bottom of the sculpt range up to the top: anchors never float.
-                        for (int y = -2; y <= top; y++) Grid.Set(x, y, z, Block.Anchor);
-                    }
-                    else if (top >= -2 && R.Chance(0.2))
-                    {
-                        Grid.Set(x, top, z, Block.Ramp(R.Pick(horiz)));
-                    }
-                }
-        }
+        private void BuildTerrain() => TerrainGen.Build(Grid, R, RegionMin, RegionMax);
 
         private bool Place(PlayerBody p)
         {
@@ -132,8 +134,27 @@ namespace Sculpt.Core.Tests.Fuzz
                     if (!Place(p)) { p.Position = old; p.Height = h; p.EyeHeight = e; }
                 }
 
+            if (DriveMovement)
+                foreach (var p in Players)
+                {
+                    MotorState m = _motors[p.Id];
+                    m.Position = p.Position; // sculpt shoves moved the shared body
+                    MotorState prev = m;
+                    _moveEvents.Clear();
+                    PlayerMovement.Step(Grid, MoveConfig, ref m, _bots[p.Id].Next(m.Tick), _moveEvents);
+                    PlayerMovement.WriteBody(m, MoveConfig, p);
+                    _motors[p.Id] = m;
+                    MoveTicks++;
+                    _checkers[p.Id].Check(Grid, prev, m, _moveEvents, Ctx($"movement of player {p.Id}"), worldStatic: false);
+                    Trace = Inspect.Mix(Trace, MotorChecker.Hash(m));
+                }
+
             foreach (var p in Players)
-                if (Sculpt.PendingOf(p.Id) == null && R.Chance(ActionChance)) TryRandomAction(p);
+                if (Sculpt.PendingOf(p.Id) == null && R.Chance(ActionChance))
+                {
+                    if (InfiniteBar) Sculpt.BarOf(p.Id).SetValue(SculptConfig.BarMax);
+                    TryRandomAction(p);
+                }
 
             var before = new Dictionary<int, Vec3d>();
             foreach (var p in Players) before[p.Id] = p.Position;
@@ -234,6 +255,13 @@ namespace Sculpt.Core.Tests.Fuzz
             double yaw = R.Range(0, 2 * Math.PI);
             double pitch = R.Range(-80, 25) * Math.PI / 180;
             var look = new Vec3d(Math.Cos(pitch) * Math.Cos(yaw), Math.Sin(pitch), Math.Cos(pitch) * Math.Sin(yaw));
+            if (Players.Count > 1 && R.Chance(AimAtPlayersChance))
+            {
+                // Aim at the ground around someone: the block under them, beside them or in their way.
+                PlayerBody q = Players[R.Int(0, Players.Count)];
+                Vec3d spot = q.Position + new Vec3d(R.Range(-1.3, 1.3), R.Range(-0.7, 0.3), R.Range(-1.3, 1.3));
+                look = spot - p.Eye;
+            }
             VoxelHit hit = VoxelGeometry.Raycast(Grid, p.Eye, look, Config.RangeMeters + 1.0);
             if (!hit.Hit) return;
 
