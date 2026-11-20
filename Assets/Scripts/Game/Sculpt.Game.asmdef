@@ -3,7 +3,8 @@
     "rootNamespace": "Sculpt.Game",
     "references": [
         "Sculpt.Core",
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "FishNet.Runtime"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
