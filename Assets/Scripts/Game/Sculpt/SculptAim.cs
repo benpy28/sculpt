@@ -13,6 +13,8 @@ namespace Sculpt.Game.Sculpting
         public bool TopFace;
         /// <summary>LMB direction (push). RMB is the opposite (pull).</summary>
         public Dir PushDir;
+        /// <summary>Top face only: the next-nearest edge (fallback when PushDir is blocked).</summary>
+        public Dir SideDir;
         public ushort Id;
         /// <summary>True if magnetism picked this instead of what is exactly under the crosshair.</summary>
         public bool Magnetised;
@@ -91,6 +93,7 @@ namespace Sculpt.Game.Sculpting
                 double u = (h.Point.X - tile.X * SubGrid.TileSize) / SubGrid.TileSize - 0.5;
                 double v = (h.Point.Z - tile.Z * SubGrid.TileSize) / SubGrid.TileSize - 0.5;
                 t.PushDir = Math.Abs(u) >= Math.Abs(v) ? (u >= 0 ? Dir.East : Dir.West) : (v >= 0 ? Dir.North : Dir.South);
+                t.SideDir = Math.Abs(u) >= Math.Abs(v) ? (v >= 0 ? Dir.North : Dir.South) : (u >= 0 ? Dir.East : Dir.West);
             }
             else if (n.Y < -0.7)
             {

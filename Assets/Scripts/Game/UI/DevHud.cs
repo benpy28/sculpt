@@ -16,7 +16,7 @@ namespace Sculpt.Game.UI
     {
         private LocalPlayer _player;
         private ClientSettings _settings;
-        private bool _show = true;
+        private bool _show; // hidden by default (F2), so it never sits over the HUD
         private Texture2D _white;
         private GUIStyle _style;
         private float _fps;

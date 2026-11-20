@@ -63,7 +63,7 @@ namespace Sculpt.Game.UI
                 GL.PushMatrix();
                 try
                 {
-                    GL.LoadPixelMatrix();
+                    HudDraw.LoadPixels();
                     if (!s.Dead) DrawCrosshair(s, cfg, w / 2f, h / 2f);
                     DrawHitMarker(w / 2f, h / 2f);
                     DrawHurt(w, h);

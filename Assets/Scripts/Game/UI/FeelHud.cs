@@ -78,7 +78,7 @@ namespace Sculpt.Game.UI
                 GL.PushMatrix();
                 try
                 {
-                    GL.LoadPixelMatrix();
+                    HudDraw.LoadPixels();
                     if (_speedLines > 0.01f) DrawSpeedLines(w, h);
                     DrawCompassTicks(cx, h - top, stripW, stripH, yaw);
                 }

@@ -142,8 +142,8 @@ namespace Sculpt.Game.Player
             SculptTarget t = Target;
             if (!t.Valid) return;
             bool reinforce = ReinforceHeld;
-            if (_input.SculptPush.WasPressedThisFrame()) Confirm(SculptAction.Move(t.Sub, t.PushDir, t.Point, reinforce));
-            if (_input.SculptPull.WasPressedThisFrame()) Confirm(SculptAction.Move(t.Sub, t.PushDir.Opposite(), t.Point, reinforce));
+            if (_input.SculptPush.WasPressedThisFrame()) Confirm(HasHover ? HoverAction : SculptAction.Move(t.Sub, t.PushDir, t.Point, reinforce));
+            if (_input.SculptPull.WasPressedThisFrame()) Confirm(BestMove(t, true, out _));
             if (_input.SculptRaise.WasPressedThisFrame()) Confirm(SculptAction.Raise(t.Sub, t.Point, reinforce));
             if (_input.SculptSink.WasPressedThisFrame()) Confirm(SculptAction.Sink(t.Sub, t.Point, reinforce));
             if (_input.SculptThrow.WasPressedThisFrame()) Confirm(SculptAction.Throw(t.Sub, t.Point, LookDir));
@@ -167,10 +167,35 @@ namespace Sculpt.Game.Player
             Target = SculptAim.Find(Net.Grid, Sculpt.Grid, SimEye, LookDir, SculptConfig, Pitch);
             if (!Target.Valid) return;
             Sculpt.SetLocalBody(State);
-            HoverAction = SculptAction.Move(Target.Sub, Target.PushDir, Target.Point, ReinforceHeld);
-            HoverCheck = Sculpt.Evaluate(HoverAction, Net.Tick + 1);
+            HoverAction = BestMove(Target, false, out SculptCheck check);
+            HoverCheck = check;
             HasHover = true;
         }
+
+        /// <summary>
+        /// The push (or pull) to send. On a top face the triangle under the crosshair picks the edge; if the piece can't
+        /// go that way (rock or a player behind it) the next-nearest edge is used, then the remaining ones, so a click
+        /// moves the piece the most sensible free way instead of going red (Ben: rejections only for true dead ends).
+        /// Side faces push straight into the face (pull straight out): no guessing there.
+        /// </summary>
+        private SculptAction BestMove(in SculptTarget t, bool pull, out SculptCheck check)
+        {
+            Dir first = pull ? t.PushDir.Opposite() : t.PushDir;
+            SculptAction a = SculptAction.Move(t.Sub, first, t.Point, ReinforceHeld);
+            check = Sculpt.Evaluate(a, Net.Tick + 1);
+            if (!t.TopFace || !Blocked(check.Result)) return a;
+            Dir side = pull ? t.SideDir.Opposite() : t.SideDir;
+            Dir[] order = { side, side.Opposite(), first.Opposite() };
+            foreach (Dir d in order)
+            {
+                SculptAction b = SculptAction.Move(t.Sub, d, t.Point, ReinforceHeld);
+                SculptCheck c = Sculpt.Evaluate(b, Net.Tick + 1);
+                if (c.IsValid) { check = c; return b; }
+            }
+            return a; // nothing free: show why the edge you aimed at is blocked
+        }
+
+        private static bool Blocked(SculptResult r) => r == SculptResult.DestinationBlocked || r == SculptResult.PlayerBlocked;
 
         /// <summary>One 60 Hz prediction tick.</summary>
         public void Tick()

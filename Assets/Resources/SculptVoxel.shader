@@ -164,12 +164,15 @@ Shader "SCULPT/Voxel"
                     float chamfer = saturate((1.0 - max(cA.x, max(cA.y, cA.z))) * 3.4);
                     float glowN = Noise3(i.positionWS * 1.1 + float3(0, _Time.y * 0.12, 0));
                     float inner = smoothstep(0.45, 0.95, glowN);
-                    const half3 lilac = half3(0.80, 0.70, 1.00);
-                    const half3 core = half3(0.55, 0.30, 0.95);
+                    const half3 lilac = half3(0.62, 0.45, 1.00);
+                    const half3 core = half3(0.45, 0.15, 0.95);
                     half3 cc = c * facetShade;
                     cc = lerp(cc, cc * 0.82, facetLine);
-                    cc += lilac * (spec * _CrystalGloss + rim * 0.22 * _CrystalGloss + chamfer * 0.10);
-                    cc += core * inner * _CrystalGlow * 0.35;
+                    cc += lilac * (spec * _CrystalGloss * 0.8 + rim * 0.14 * _CrystalGloss + chamfer * 0.08);
+                    cc += core * inner * _CrystalGlow * 0.5;
+                    // Keep it clearly purple: pull the hue toward amethyst, never toward white or pink.
+                    float cl = dot(cc, half3(0.3, 0.59, 0.11));
+                    cc = max(lerp(cl.xxx, cc, 1.35), 0.0) * half3(0.92, 0.9, 1.08);
                     c = lerp(c, cc, crystal);
                 }
 

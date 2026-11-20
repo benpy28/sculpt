@@ -93,7 +93,7 @@ namespace Sculpt.Game.UI
                 GL.PushMatrix();
                 try
                 {
-                    GL.LoadPixelMatrix();
+                    HudDraw.LoadPixels();
                     DrawBar(sc, cx, Screen.height - cy, hand);
                     DrawWarnings(sc);
                     DrawHitMarker(cx, Screen.height - cy);

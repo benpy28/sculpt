@@ -17,6 +17,19 @@ namespace Sculpt.Game.UI
 
         private static GUIStyle _style;
 
+        /// <summary>
+        /// Pixel-space projection for GL drawing inside OnGUI, y up from the bottom of the screen. On Direct3D the
+        /// Editor's Game view draws OnGUI into a render texture, where a plain GL.LoadPixelMatrix comes out upside down
+        /// (play-test 2026-11-20: panels at the top, damage arrows mirrored); GetGPUProjectionMatrix corrects for it,
+        /// and is a no-op when drawing straight to the screen.
+        /// </summary>
+        public static void LoadPixels()
+        {
+            GL.LoadIdentity();
+            Matrix4x4 ortho = Matrix4x4.Ortho(0, Screen.width, 0, Screen.height, -1f, 100f);
+            GL.LoadProjectionMatrix(GL.GetGPUProjectionMatrix(ortho, RenderTexture.active != null));
+        }
+
         /// <summary>Filled rounded rectangle (GL, y up).</summary>
         public static void RoundRect(float x, float y, float w, float h, float r, Color c)
         {

@@ -27,7 +27,7 @@ namespace Sculpt.Game.World
         public static readonly Color Bedrock = new Color(0.46f, 0.44f, 0.41f);
         public static readonly Color AnchorColor = new Color(0.47f, 0.52f, 0.56f);
         /// <summary>Sculpted pieces: pale amethyst crystal (purple means sculptable; every piece is). The shader adds facets, gloss and glow.</summary>
-        public static readonly Color Crystal = new Color(0.62f, 0.50f, 0.86f);
+        public static readonly Color Crystal = new Color(0.50f, 0.30f, 0.88f);
         public static readonly Color[] TeamTint = { new Color(0.30f, 0.55f, 1.00f), new Color(1.00f, 0.55f, 0.20f) }; // blue, orange: never purple
 
         /// <summary>Optional: returns (team, 0..1 strength) for a piece's fading tint.</summary>
@@ -191,7 +191,7 @@ namespace Sculpt.Game.World
                     if (PieceTint != null)
                     {
                         var (team, strength) = PieceTint(id);
-                        if (team >= 1 && team <= 2 && strength > 0) c = Color.Lerp(c, TeamTint[team - 1], 0.18f * strength);
+                        if (team >= 1 && team <= 2 && strength > 0) c = Color.Lerp(c, TeamTint[team - 1], (SubId.IsPiece(id) ? 0.08f : 0.18f) * strength);
                     }
                     break;
                 }
