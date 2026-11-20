@@ -12,6 +12,8 @@ namespace Sculpt.Core.Tests.Net
         public HandInput Hand;
         public bool Confirm;
         public SculptAction Action;
+        /// <summary>View pitch in degrees (positive looks down).</summary>
+        public float Pitch;
     }
 
     /// <summary>
@@ -130,7 +132,7 @@ namespace Sculpt.Core.Tests.Net
                     {
                         int t = p.Client.Tick + 1;
                         SculptTickInput input = p.Script(p, t);
-                        byte seq = p.Client.PredictTick(input.Move, 0f, false, input.Hand, input.Confirm, input.Action, p.Events);
+                        byte seq = p.Client.PredictTick(input.Move, input.Pitch, false, input.Hand, input.Confirm, input.Action, p.Events);
                         if (seq != 0) p.Confirms.Add(new KeyValuePair<int, byte>(t, seq));
                     }
                     p.SculptEvents.AddRange(p.Sculpt.Events);
