@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Sculpt.Core.Net
@@ -11,7 +12,9 @@ namespace Sculpt.Core.Net
         Welcome = 1,   // server -> client, reliable: who you are and where you spawn
         Inputs = 2,    // client -> server, unreliable: newest N input commands
         Snapshot = 3,  // server -> client, unreliable: authoritative state for one server tick
-        // Reserved: GridDelta = 4, SculptCommand = 5, Entities = 6, WeaponEvents = 7
+        World = 4,     // server -> client, reliable: piece ops and sculpt events of one tick, or the late-join state
+        // Sculpt confirms ride inside Inputs (same tick, same redundancy). Thrown pieces fly deterministically from
+        // their Thrown event, so they need no entity stream. Reserved: WeaponEvents = 7
     }
 
     public struct WelcomeMsg
@@ -54,12 +57,14 @@ namespace Sculpt.Core.Net
         /// <summary>Worst lead (ticks early) of this client's commands over the feedback window. sbyte.MinValue = none arrived.</summary>
         public int SelfLead;
         public MotorState Self;
+        /// <summary>The receiver's sculpt bar at this tick (basis points).</summary>
+        public int SelfBar;
         public List<PlayerSnap> Others;
     }
 
     public static class Protocol
     {
-        public const byte Version = 2;
+        public const byte Version = 3;
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
@@ -138,6 +143,7 @@ namespace Sculpt.Core.Net
                 int lead = m.SelfLead < sbyte.MinValue ? sbyte.MinValue : (m.SelfLead > sbyte.MaxValue ? sbyte.MaxValue : m.SelfLead);
                 w.I8((sbyte)lead);
                 WriteMotor(w, m.Self);
+                w.U16((ushort)Math.Max(0, Math.Min(ushort.MaxValue, m.SelfBar)));
             }
             int n = m.Others?.Count ?? 0;
             if (n > MaxPlayersPerSnapshot) throw new System.ArgumentException("Too many players.");
@@ -167,6 +173,7 @@ namespace Sculpt.Core.Net
                 m.SelfInputWasReal = r.Bool();
                 m.SelfLead = r.I8();
                 m.Self = ReadMotor(ref r);
+                m.SelfBar = r.U16();
             }
             int n = r.U8();
             if (n > MaxPlayersPerSnapshot) throw new NetFormatException("Too many players.");
@@ -216,6 +223,10 @@ namespace Sculpt.Core.Net
             w.Vec(s.ActionForward);
             w.Vec(s.ActionKeepVelocity);
             w.I32(s.ShootReadyTick);
+            w.U8((byte)s.Hand.Mode);
+            w.U8((byte)((byte)s.Hand.Held | (s.Hand.ExitQueued ? 0x80 : 0)));
+            w.I32(s.Hand.ReadyTick);
+            w.I32(s.Hand.SculptLockUntil);
         }
 
         public static MotorState ReadMotor(ref ByteReader r)
@@ -244,6 +255,15 @@ namespace Sculpt.Core.Net
             s.ActionForward = r.Vec();
             s.ActionKeepVelocity = r.Vec();
             s.ShootReadyTick = r.I32();
+            byte hm = r.U8();
+            if (hm > (byte)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
+            s.Hand.Mode = (HandMode)hm;
+            byte hw = r.U8();
+            if ((hw & 0x7F) > (byte)Weapon.Pistol) throw new NetFormatException("Bad weapon.");
+            s.Hand.Held = (Weapon)(hw & 0x7F);
+            s.Hand.ExitQueued = (hw & 0x80) != 0;
+            s.Hand.ReadyTick = r.I32();
+            s.Hand.SculptLockUntil = r.I32();
             return s;
         }
 
@@ -258,7 +278,7 @@ namespace Sculpt.Core.Net
                    a.LandVelocity.Equals(b.LandVelocity) && a.AirPeakY.Equals(b.AirPeakY) && a.UphillTicks == b.UphillTicks && a.ActionTick == b.ActionTick &&
                    a.ActionStartY.Equals(b.ActionStartY) && a.ActionTargetY.Equals(b.ActionTargetY) &&
                    a.ActionForward.Equals(b.ActionForward) && a.ActionKeepVelocity.Equals(b.ActionKeepVelocity) &&
-                   a.ShootReadyTick == b.ShootReadyTick;
+                   a.ShootReadyTick == b.ShootReadyTick && a.Hand.Equals(b.Hand);
         }
 
         private static MoveMode ReadMode(ref ByteReader r)

@@ -63,6 +63,9 @@ namespace Sculpt.Core.Net
         public void F32(float v) => I32(BitConverter.SingleToInt32Bits(v));
         public void F64(double v) => I64(BitConverter.DoubleToInt64Bits(v));
 
+        public void I16(short v) => U16(unchecked((ushort)v));
+        public void Cell(Int3 c) { I16(checked((short)c.X)); I16(checked((short)c.Y)); I16(checked((short)c.Z)); }
+
         public void Vec(Vec3d v) { F64(v.X); F64(v.Y); F64(v.Z); }
         public void VecF(Vec3d v) { F32((float)v.X); F32((float)v.Y); F32((float)v.Z); }
     }
@@ -125,6 +128,17 @@ namespace Sculpt.Core.Net
 
         public float F32() => BitConverter.Int32BitsToSingle(I32());
         public double F64() => BitConverter.Int64BitsToDouble(I64());
+
+        public short I16() => unchecked((short)U16());
+        public Int3 Cell() { int x = I16(), y = I16(); return new Int3(x, y, I16()); }
+
+        /// <summary>A float vector that must be finite (anything else drops the packet).</summary>
+        public Vec3d VecFinite()
+        {
+            float x = F32(), y = F32(), z = F32();
+            if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(z)) throw new NetFormatException("Non-finite vector.");
+            return new Vec3d(x, y, z);
+        }
 
         public Vec3d Vec() => new Vec3d(F64(), F64(), F64());
         public Vec3d VecF() => new Vec3d(F32(), F32(), F32());

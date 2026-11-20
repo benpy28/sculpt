@@ -17,6 +17,13 @@ namespace Sculpt.Core.Net
         /// <summary>Server tick (with fraction) the client was drawing other players at. For lag compensation (M5+).</summary>
         public int ViewTick;
         public byte ViewFrac;
+        /// <summary>Hand presses this tick: sculpt-mode toggle, weapon key.</summary>
+        public HandInput Hand;
+        /// <summary>A sculpt confirm this tick (the direction press). The server re-validates all of it.</summary>
+        public bool HasSculpt;
+        /// <summary>Client sequence number of the confirm; the server echoes it in Began, Rejected, Completed and Cancelled.</summary>
+        public byte SculptSeq;
+        public SculptAction Sculpt;
 
         public const double MaxPitch = 89.0;
         private const int MoveSteps = 127;
@@ -28,8 +35,19 @@ namespace Sculpt.Core.Net
             c.Move.MoveZ = QuantizeAxis(c.Move.MoveZ);
             c.Move.Yaw = QuantizeYaw(c.Move.Yaw);
             c.Pitch = (float)Clamp(double.IsNaN(c.Pitch) ? 0 : c.Pitch, -MaxPitch, MaxPitch);
+            if (c.Hand.WeaponKey > 4) c.Hand.WeaponKey = 0;
+            if (c.HasSculpt)
+            {
+                c.Sculpt.AimPoint = QuantizeVec(c.Sculpt.AimPoint);
+                c.Sculpt.LookDir = c.Sculpt.Type == SculptActionType.Throw ? QuantizeVec(c.Sculpt.LookDir) : Vec3d.Zero;
+                if (c.Sculpt.Type != SculptActionType.Move) c.Sculpt.Direction = Dir.East;
+                if (c.Sculpt.Type == SculptActionType.Throw) c.Sculpt.Reinforce = false;
+            }
+            else { c.SculptSeq = 0; c.Sculpt = default; }
             return c;
         }
+
+        public static Vec3d QuantizeVec(Vec3d v) => new Vec3d((float)v.X, (float)v.Y, (float)v.Z);
 
         public static double QuantizeAxis(double v) => AxisFromByte(AxisToByte(v));
 
@@ -57,7 +75,8 @@ namespace Sculpt.Core.Net
 
         private static double Clamp(double v, double lo, double hi) => v < lo ? lo : (v > hi ? hi : v);
 
-        private const byte FJumpPressed = 1, FJumpHeld = 2, FCrouchHeld = 4, FCrouchPressed = 8, FSprint = 16, FShoot = 32, FRespawn = 64;
+        private const byte FJumpPressed = 1, FJumpHeld = 2, FCrouchHeld = 4, FCrouchPressed = 8, FSprint = 16, FShoot = 32, FRespawn = 64, FExt = 128;
+        private const byte XToggle = 1, XSculpt = 2, XReinforce = 4;
 
         internal void Write(ByteWriter w)
         {
@@ -69,6 +88,8 @@ namespace Sculpt.Core.Net
             if (Move.SprintHeld) f |= FSprint;
             if (Move.WantsToShoot) f |= FShoot;
             if (Respawn) f |= FRespawn;
+            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || HasSculpt;
+            if (ext) f |= FExt;
             w.U8(f);
             w.I8(AxisToByte(Move.MoveX));
             w.I8(AxisToByte(Move.MoveZ));
@@ -77,6 +98,18 @@ namespace Sculpt.Core.Net
             int vd = Tick - ViewTick;
             w.U8((byte)(vd < 0 ? 0 : vd > 255 ? 255 : vd));
             w.U8(ViewFrac);
+            if (!ext) return;
+            byte x = (byte)((Hand.WeaponKey & 7) << 4);
+            if (Hand.SculptToggle) x |= XToggle;
+            if (HasSculpt) x |= XSculpt;
+            if (HasSculpt && Sculpt.Reinforce) x |= XReinforce;
+            w.U8(x);
+            if (!HasSculpt) return;
+            w.U8(SculptSeq);
+            w.U8((byte)((byte)Sculpt.Type | ((byte)Sculpt.Direction << 4)));
+            w.Cell(Sculpt.Target);
+            w.VecF(Sculpt.AimPoint);
+            if (Sculpt.Type == SculptActionType.Throw) w.VecF(Sculpt.LookDir);
         }
 
         /// <summary>Reads and sanitizes one command. Non-finite angles throw (the packet is dropped).</summary>
@@ -101,6 +134,20 @@ namespace Sculpt.Core.Net
             c.Pitch = (float)Clamp(pitch, -MaxPitch, MaxPitch);
             c.ViewTick = tick - r.U8();
             c.ViewFrac = r.U8();
+            if ((f & FExt) == 0) return c;
+            byte x = r.U8();
+            c.Hand.SculptToggle = (x & XToggle) != 0;
+            c.Hand.WeaponKey = (byte)((x >> 4) & 7);
+            if (c.Hand.WeaponKey > 4) throw new NetFormatException("Bad weapon key.");
+            if ((x & XSculpt) == 0) return c;
+            c.HasSculpt = true;
+            c.SculptSeq = r.U8();
+            byte td = r.U8();
+            var type = (SculptActionType)(td & 15);
+            var dir = (Dir)(td >> 4);
+            if (type > SculptActionType.Throw || dir > Dir.South) throw new NetFormatException("Bad sculpt action.");
+            c.Sculpt = new SculptAction { Type = type, Direction = dir, Reinforce = (x & XReinforce) != 0, Target = r.Cell(), AimPoint = r.VecFinite() };
+            if (type == SculptActionType.Throw) c.Sculpt.LookDir = r.VecFinite();
             return c;
         }
 
@@ -112,6 +159,10 @@ namespace Sculpt.Core.Net
             c.Move.JumpPressed = false;
             c.Move.CrouchPressed = false;
             c.Respawn = false;
+            c.Hand = default;
+            c.HasSculpt = false;
+            c.SculptSeq = 0;
+            c.Sculpt = default;
             return c;
         }
     }
@@ -126,6 +177,7 @@ namespace Sculpt.Core.Net
                 Respawn(ref s, spawn, cmd.Tick, events);
                 return;
             }
+            HandRules.Step(ref s.Hand, cmd.Tick, cmd.Hand, mc.Hand);
             PlayerMovement.Step(grid, mc, ref s, cmd.Move, events);
             if (s.Position.Y < nc.KillY) Respawn(ref s, spawn, cmd.Tick, events);
         }

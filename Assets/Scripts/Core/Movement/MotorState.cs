@@ -61,6 +61,9 @@ namespace Sculpt.Core
         /// <summary>First tick on which shooting is allowed again (sprint-to-aim, mantle).</summary>
         public int ShootReadyTick;
 
+        /// <summary>Weapon / sculpt-mode hand state (enter and exit times, gun lock, disarm).</summary>
+        public HandState Hand;
+
         public static MotorState At(Vec3d feet) => new MotorState
         {
             Position = feet,
@@ -71,6 +74,7 @@ namespace Sculpt.Core
             LastSlideBoostTick = int.MinValue / 2,
             LandTick = int.MinValue / 2,
             AirPeakY = feet.Y,
+            Hand = HandState.Initial,
         };
 
         public bool CanShoot => Tick >= ShootReadyTick && !Sprinting && Mode != MoveMode.Mantle;

@@ -73,5 +73,8 @@ namespace Sculpt.Core
         public double RampLaunchMinRiseSpeed = 1.0; // m/s of climb that counts as climbing
         public double RampLaunchProbeHalf = 0.05;   // minimum half-size of the probe just ahead of the feet
         public double RampLaunchProbeDepth = 0.05;  // no ground this close below the front means the crest has passed
+
+        /// <summary>Weapon draw, sculpt enter and exit times. Stepped with movement so the netcode predicts them too.</summary>
+        public HandConfig Hand = new HandConfig();
     }
 }

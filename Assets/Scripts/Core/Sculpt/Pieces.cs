@@ -17,6 +17,13 @@ namespace Sculpt.Core
         /// <summary>Sub-cells, sorted Y then Z then X.</summary>
         public readonly List<Int3> Cells = new List<Int3>();
 
+        public PieceInfo Clone()
+        {
+            var c = new PieceInfo { Id = Id, Team = Team, TintTick = TintTick, ReinforceTeam = ReinforceTeam, ReinforceUntilTick = ReinforceUntilTick };
+            c.Cells.AddRange(Cells);
+            return c;
+        }
+
         public bool IsReinforced(int tick) => ReinforceTeam != 0 && tick < ReinforceUntilTick;
         public bool IsEnemyReinforced(int team, int tick) => IsReinforced(tick) && ReinforceTeam != team;
 
@@ -81,6 +88,8 @@ namespace Sculpt.Core
     {
         public readonly SubGrid Grid;
         public readonly List<PieceOp> Ops = new List<PieceOp>();
+        /// <summary>Keep every applied op in <see cref="Ops"/> (the server sends them; a client mirror can turn this off).</summary>
+        public bool LogOps = true;
         /// <summary>Called for every sub-cell written (lock disturbance, gravity bookkeeping).</summary>
         public Action<Int3> OnWrite;
 
@@ -114,6 +123,7 @@ namespace Sculpt.Core
 
         private void Write(Int3 c, ushort id)
         {
+            if (_journal) _jCells.Add(new KeyValuePair<Int3, ushort>(c, Grid.Get(c)));
             Grid.Set(c, id);
             OnWrite?.Invoke(c);
         }
@@ -139,6 +149,7 @@ namespace Sculpt.Core
         /// <summary>Applies one op (server and client alike) and logs it.</summary>
         public void Apply(in PieceOp op)
         {
+            if (_journal) SaveForJournal(op.Id);
             switch (op.Type)
             {
                 case PieceOpType.Carve:
@@ -178,7 +189,64 @@ namespace Sculpt.Core
                     break;
                 }
             }
-            Ops.Add(op);
+            if (LogOps) Ops.Add(op);
+        }
+
+        // ---------------- Journal (client-side prediction) ----------------
+
+        private bool _journal;
+        private readonly List<KeyValuePair<Int3, ushort>> _jCells = new List<KeyValuePair<Int3, ushort>>();
+        private readonly Dictionary<ushort, PieceInfo> _jPieces = new Dictionary<ushort, PieceInfo>();
+        private int _jNextId, _jOps;
+
+        /// <summary>True while changes are being recorded so <see cref="Rollback"/> can undo them.</summary>
+        public bool Journaling => _journal;
+
+        /// <summary>Starts recording every change (sub-cells and piece state) until <see cref="Rollback"/> or <see cref="Commit"/>.</summary>
+        public void BeginJournal()
+        {
+            if (_journal) throw new InvalidOperationException("Journal already open.");
+            _journal = true;
+            _jCells.Clear();
+            _jPieces.Clear();
+            _jNextId = _nextId;
+            _jOps = Ops.Count;
+        }
+
+        /// <summary>Keeps the recorded changes and stops recording.</summary>
+        public void Commit()
+        {
+            _journal = false;
+            _jCells.Clear();
+            _jPieces.Clear();
+        }
+
+        /// <summary>Undoes everything since <see cref="BeginJournal"/>, exactly, and stops recording.</summary>
+        public void Rollback()
+        {
+            if (!_journal) return;
+            _journal = false;
+            for (int i = _jCells.Count - 1; i >= 0; i--)
+            {
+                var kv = _jCells[i];
+                Grid.Set(kv.Key, kv.Value);
+                OnWrite?.Invoke(kv.Key);
+            }
+            foreach (var kv in _jPieces)
+            {
+                if (kv.Value == null) _pieces.Remove(kv.Key);
+                else _pieces[kv.Key] = kv.Value;
+            }
+            _nextId = _jNextId;
+            if (Ops.Count > _jOps) Ops.RemoveRange(_jOps, Ops.Count - _jOps);
+            _jCells.Clear();
+            _jPieces.Clear();
+        }
+
+        private void SaveForJournal(ushort id)
+        {
+            if (_jPieces.ContainsKey(id)) return;
+            _jPieces[id] = _pieces.TryGetValue(id, out var p) ? p.Clone() : null;
         }
 
         /// <summary>Rebuilds the table from the ids in the grid (late join). Per-piece state starts clear.</summary>
