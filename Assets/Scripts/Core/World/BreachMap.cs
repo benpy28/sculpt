@@ -14,12 +14,15 @@ namespace Sculpt.Core
         public double SizeX, SizeZ;
         /// <summary>Items lying on the map at the start (the server spawns them): grenade refills by each spawn.</summary>
         public readonly List<GroundItem> ItemSpawns = new List<GroundItem>();
+        /// <summary>The greybox test block: three buildings, stairwells, ramps, rooftop links, hills.</summary>
+        public GreyboxInfo Block;
     }
 
     /// <summary>
-    /// The breach demo map (Ben 2026-11-21): flat sub-cell ground (outdoor hills come with the greybox block) plus the
-    /// building brushes. For now it holds the movement course along its west side; the greybox buildings come in
-    /// step 5. Server and clients build it the same way, so only changes ever need to travel.
+    /// The breach demo map (Ben 2026-11-21): flat sub-cell ground plus the building brushes. The movement course runs
+    /// along its west side, the test walls and the sealed room sit in the middle, and the greybox block (three
+    /// buildings with hills around them, <see cref="GreyboxBlock"/>) fills the east half between the two spawns.
+    /// Server and clients build it the same way, so only changes ever need to travel.
     /// </summary>
     public static class BreachMap
     {
@@ -45,17 +48,20 @@ namespace Sculpt.Core
             info.TestWallA = TestWall(w.Tiles, mid - 6, 50);
             info.TestWallB = TestWall(w.Tiles, mid - 6, info.SizeZ - 50 - w.Tiles.Config.TileThickness);
             info.Room = SealedRoom(w, mid - 3.3, mid - 3.3);
+            info.Block = GreyboxBlock.Build(w);
             w.Tiles.Changes.Clear(); // the build itself is not news
+            // Spawns face each other across the block: team 1 south of the south berm, team 2 north of the north hill.
+            const double spawnX = 110;
             for (int i = 0; i < 3; i++)
             {
-                info.TeamSpawns[0].Add(new Vec3d(mid - 3 + 3 * i, 0, 30));
-                info.TeamSpawns[1].Add(new Vec3d(mid - 3 + 3 * i, 0, info.SizeZ - 30));
+                info.TeamSpawns[0].Add(new Vec3d(spawnX - 3 + 3 * i, 0, 18));
+                info.TeamSpawns[1].Add(new Vec3d(spawnX - 3 + 3 * i, 0, info.SizeZ - 18));
             }
             // Grenade refills a few steps in front of each spawn row (two stacks of two per side).
-            foreach (double x in new[] { mid - 5.0, mid + 5.0 })
+            foreach (double x in new[] { spawnX - 5.0, spawnX + 5.0 })
             {
-                info.ItemSpawns.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = new Vec3d(x, 0, 34) });
-                info.ItemSpawns.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = new Vec3d(x, 0, info.SizeZ - 34) });
+                info.ItemSpawns.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = new Vec3d(x, 0, 22) });
+                info.ItemSpawns.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = new Vec3d(x, 0, info.SizeZ - 22) });
             }
             return w;
         }
