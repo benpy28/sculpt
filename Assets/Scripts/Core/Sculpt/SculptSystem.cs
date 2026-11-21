@@ -242,6 +242,12 @@ namespace Sculpt.Core
         private SculptCheck EvaluateInternal(PlayerBody p, SculptAction a, bool resolving)
         {
             var c = new SculptCheck { Type = a.Type };
+            // Parked (Ben 2026-11-21): block moving (push, pull, raise, sink, throw) is off unless the flag is on.
+            if (!Config.BlockMovesEnabled)
+            {
+                c.Result = SculptResult.NotSculptable;
+                return c;
+            }
             // The shove plan is per check: a throw never plans one, so it must not inherit an older one (ISSUE-6).
             _shoves.Clear();
             _drags.Clear();

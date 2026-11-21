@@ -124,6 +124,24 @@ namespace Sculpt.Core.Tests.Pieces
         }
 
         [Test]
+        public void ParkedSwitchOffRefusesEveryBlockMoveForFree()
+        {
+            var (w, p) = WallWorld();
+            w.Config.BlockMovesEnabled = false;
+            int bar = w.Sculpt.BarOf(1).Value;
+            var point = new Vec3d(8.4, 0.6, 6.6);
+            foreach (SculptAction a in new[] { w.Move(p, point, Dir.East), w.Raise(p, point), w.Sink(p, point), w.Throw(p, point, new Vec3d(1, 0, 0)) })
+            {
+                Assert.That(w.Sculpt.Evaluate(p, a).Result, Is.EqualTo(SculptResult.NotSculptable), a.Type.ToString());
+                Assert.That(w.Sculpt.TryBegin(p, a).Result, Is.EqualTo(SculptResult.NotSculptable), a.Type.ToString());
+            }
+            w.Step(30);
+            Assert.That(w.Sculpt.BarOf(1).Value, Is.EqualTo(bar), "nothing charged");
+            w.Config.BlockMovesEnabled = true;
+            Assert.That(w.Sculpt.TryBegin(p, w.Move(p, point, Dir.East)).Result, Is.EqualTo(SculptResult.Valid), "switching it back on restores it");
+        }
+
+        [Test]
         public void PushMovesThePieceOneTileAsOneRigidUnit()
         {
             var (w, p) = WallWorld();

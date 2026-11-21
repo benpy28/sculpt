@@ -11,6 +11,13 @@ namespace Sculpt.Core
     {
         public const int BarMax = 10000;
 
+        /// <summary>
+        /// Block moving (push, pull, raise, sink, throw on terrain pieces). Parked by Ben on 2026-11-21 in favour of
+        /// destructible walls and healing; the game turns it off from its one switch (Breach Settings). True here so
+        /// the parked system's own tests keep running.
+        /// </summary>
+        public bool BlockMovesEnabled = true;
+
         public double RangeMeters = 6.0;
 
         // ---- Windups (at or below the reference size) ----
