@@ -10,7 +10,8 @@ namespace Sculpt.Core.Net
     public sealed partial class NetServer
     {
         /// <summary>Bot connection ids count down from here (real connections are 0 and up; -1 means "everyone").</summary>
-        public const int FirstBotConnection = -1000;
+        // Far below any real or local connection id (the Game's local player uses -1000).
+        public const int FirstBotConnection = -1000000;
         private int _nextBotConnection = FirstBotConnection;
         private readonly Dictionary<int, PracticeDummy> _dummies = new Dictionary<int, PracticeDummy>();
 

@@ -113,6 +113,19 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
+        public void ADummyNeverTakesTheOfflineLocalConnection()
+        {
+            // The Game's offline/host player sits on connection -1000; adding a dummy first used to grab it.
+            var w = new BrushWorld();
+            int[] room = Room(w);
+            var server = new NetServer(new CompositeTerrain(BuildGround(), w), new MovementConfig(), new NetConfig(), (c, d, r) => { });
+            ServerPlayer dummy = server.AddDummy(new PracticeDummy(Post, 0, room), team: 2);
+            Assert.That(dummy.ConnectionId, Is.Not.EqualTo(-1000));
+            Assert.DoesNotThrow(() => server.AddPlayer(-1000, 1, new Vec3d(9, 0, 2), 0));
+            Assert.That(NetServer.IsBotConnection(-1000), Is.False, "the local player is not a bot");
+        }
+
+        [Test]
         public void NothingIsEverSentToADummy_AndClientsSeeItAsAPlayer()
         {
             var w = new BrushWorld();
