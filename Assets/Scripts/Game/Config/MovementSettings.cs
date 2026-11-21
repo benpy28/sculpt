@@ -45,6 +45,34 @@ namespace Sculpt.Game.Config
         public int mantleRiseTicks = 16;
         public int mantleForwardTicks = 8;
         public float mantleExitSpeedFraction = 0.5f;
+        public float vaultMaxHeight = 1.55f;
+        public float mantleMaxHeight = 3.05f;
+        [Range(0, 1)] public float mantleKeepSpeedFraction = 1f;
+        public int mantleCancelFromTick = 8;
+        public float mantleCancelMaxRemaining = 0.6f;
+        public float mantleCancelHopSpeed = 3f;
+
+        [Header("Momentum: wall kick")]
+        public float wallKickUpSpeed = 6.5f;
+        public float wallKickPush = 2.5f;
+        public float wallKickMinSpeed = 6f;
+        public int wallKickPerfectTicks = 6;
+        [Range(0, 1)] public float wallKickLateKeep = 0.85f;
+        public int wallKickMaxPerAir = 3;
+        public int wallKickCooldownTicks = 12;
+
+        [Header("Momentum: counter-strafe brake")]
+        public float counterBrakeMinSpeed = 6.5f;
+        public float counterBrakeDecel = 120f;
+        [Range(-1, 1)] public float counterBrakeMaxDot = 0.25f;
+
+        [Header("Momentum: air and hops")]
+        public float airNudgeTurnRate = 0.6f;
+        public float airBrakeDecel = 3f;
+        public float airSoftCapSpeed = 14f;
+        public float airSoftCapDecel = 4f;
+        [Range(0, 1)] public float slideHopKeep = 0.95f;
+        public int slideHopChainTicks = 60;
 
         [Header("Other")]
         public int sprintToAimTicks = 9;
@@ -79,6 +107,28 @@ namespace Sculpt.Game.Config
             c.MantleRiseTicks = mantleRiseTicks;
             c.MantleForwardTicks = mantleForwardTicks;
             c.MantleExitSpeedFraction = mantleExitSpeedFraction;
+            c.VaultMaxHeight = vaultMaxHeight;
+            c.MantleMaxHeight = mantleMaxHeight;
+            c.MantleKeepSpeedFraction = mantleKeepSpeedFraction;
+            c.MantleCancelFromTick = mantleCancelFromTick;
+            c.MantleCancelMaxRemaining = mantleCancelMaxRemaining;
+            c.MantleCancelHopSpeed = mantleCancelHopSpeed;
+            c.WallKickUpSpeed = wallKickUpSpeed;
+            c.WallKickPush = wallKickPush;
+            c.WallKickMinSpeed = wallKickMinSpeed;
+            c.WallKickPerfectTicks = wallKickPerfectTicks;
+            c.WallKickLateKeep = wallKickLateKeep;
+            c.WallKickMaxPerAir = wallKickMaxPerAir;
+            c.WallKickCooldownTicks = wallKickCooldownTicks;
+            c.CounterBrakeMinSpeed = counterBrakeMinSpeed;
+            c.CounterBrakeDecel = counterBrakeDecel;
+            c.CounterBrakeMaxDot = counterBrakeMaxDot;
+            c.AirNudgeTurnRate = airNudgeTurnRate;
+            c.AirBrakeDecel = airBrakeDecel;
+            c.AirSoftCapSpeed = airSoftCapSpeed;
+            c.AirSoftCapDecel = airSoftCapDecel;
+            c.SlideHopKeep = slideHopKeep;
+            c.SlideHopChainTicks = slideHopChainTicks;
             c.SprintToAimTicks = sprintToAimTicks;
             c.FallDamageFreeLevels = fallDamageFreeLevels;
             c.FallDamagePerLevel = fallDamagePerLevel;

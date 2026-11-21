@@ -29,6 +29,10 @@ namespace Sculpt.Game.UI
         private int _corrWindowStart;
         private float _corrWindowTime;
         private float _corrPerSec;
+        private GUIStyle _big;
+        private float _peak, _peakTime;
+        private readonly float[] _trail = new float[180]; // last 3 s of speed, one sample per frame-tick
+        private int _trailAt;
 
         private static readonly int[] PingSteps = { 0, 50, 100, 150, 250 };
         private static readonly float[] LossSteps = { 0, 2, 5, 10 };
@@ -121,13 +125,15 @@ namespace Sculpt.Game.UI
         private void OnGUI()
         {
             if (_player == null) return;
-            if (!_show) return; // the crosshair lives in CombatHud now (it shows the real spread)
-
             if (_style == null)
             {
                 _style = new GUIStyle(GUI.skin.label) { fontSize = 15 };
                 _style.normal.textColor = Color.white;
             }
+            // The speedometer shows with the dev HUD, and always while the F6 showcase runs.
+            if (_show || _player.Showcase != null) DrawSpeedometer();
+            if (!_show) return; // the crosshair lives in CombatHud now (it shows the real spread)
+
 
             MotorState s = _player.State;
             string text =
@@ -137,7 +143,8 @@ namespace Sculpt.Game.UI
                 $"Height {s.Position.Y / SubGrid.TileSize:0.00} levels   FPS {_fps:0}\n" +
                 (Time.time - _lastEventTime < 1.5f ? $">> {_lastEvent}\n" : "\n") +
                 (_lastDamage > 0 ? $"Last fall damage {_lastDamage}\n" : "") +
-                "\nF1 respawn   F2 hide this   Esc settings (FOV, sensitivity, binds, volume)\n\n" + NetText();
+                ShowcaseText() +
+                "\nF1 respawn   F2 hide this   F6 movement showcase   Esc settings (FOV, sensitivity, binds, volume)\n\n" + NetText();
             var r = new Rect(12, 10, 640, 480);
             var shadow = new GUIStyle(_style);
             shadow.normal.textColor = new Color(0, 0, 0, 0.8f);
@@ -147,6 +154,84 @@ namespace Sculpt.Game.UI
             if (!_player.CursorLocked && !_player.InputBlocked)
                 GUI.Label(new Rect(Screen.width / 2f - 120, Screen.height / 2f + 30, 300, 30), "Click to capture the mouse", _style);
             if (_joinBox) DrawJoinBox();
+        }
+
+        private string ShowcaseText()
+        {
+            ShowcaseRun r = _player.Showcase ?? _player.LastShowcase;
+            if (r == null) return "";
+            string state = _player.Showcase != null ? $"running: {r.Current}" :
+                r.Current == ShowcaseRun.Phase.Done ? "finished" : r.Current == ShowcaseRun.Phase.Failed ? "failed: " + r.FailReason : "stopped";
+            return $"Showcase {state}   {r.Ticks / (float)SimTime.TicksPerSecond:0.00} s   top {r.TopSpeed:0.0} m/s\n";
+        }
+
+        /// <summary>
+        /// Speedometer (Ben 2026-11-21): big horizontal speed readout, a bar with marks at run, sprint, the charge
+        /// breach threshold (80% of sprint) and the slide cap, the peak of the last 3 s and a short trace.
+        /// </summary>
+        private void DrawSpeedometer()
+        {
+            MovementConfig c = _player.Config;
+            float v = _player.RenderSpeed;
+            if (Event.current.type == EventType.Repaint)
+            {
+                if (v >= _peak || Time.time - _peakTime > 3f) { _peak = v; _peakTime = Time.time; }
+                _trail[_trailAt] = v;
+                _trailAt = (_trailAt + 1) % _trail.Length;
+            }
+
+            if (_big == null)
+            {
+                _big = new GUIStyle(GUI.skin.label) { fontSize = 34, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+                _big.normal.textColor = Color.white;
+            }
+            const float maxV = 16f, w = 320f, h = 10f;
+            float x = Screen.width / 2f - w / 2f, y = Screen.height - 150f;
+            var back = new Color(0, 0, 0, 0.45f);
+            GUI.color = back;
+            GUI.DrawTexture(new Rect(x - 10, y - 52, w + 20, 104), _white);
+
+            // Number.
+            GUI.color = Color.white;
+            GUI.Label(new Rect(x, y - 50, w, 40), $"{v:0.0} m/s", _big);
+
+            // Bar: white up to sprint, amber above it (momentum), red above the slide cap.
+            float fill = Mathf.Clamp01(v / maxV) * w;
+            GUI.color = new Color(1, 1, 1, 0.15f);
+            GUI.DrawTexture(new Rect(x, y, w, h), _white);
+            GUI.color = v <= c.SprintSpeed + 0.01f ? Color.white : v <= c.SlideMaxSpeed + 0.01f ? new Color(1f, 0.72f, 0.2f) : new Color(1f, 0.3f, 0.25f);
+            GUI.DrawTexture(new Rect(x, y, fill, h), _white);
+            // Peak marker.
+            GUI.color = new Color(1, 1, 1, 0.9f);
+            GUI.DrawTexture(new Rect(x + Mathf.Clamp01(_peak / maxV) * w - 1, y - 3, 2, h + 6), _white);
+
+            // Marks with labels.
+            Mark(x, y, w, h, (float)c.RunSpeed, maxV, "run");
+            Mark(x, y, w, h, (float)c.SprintSpeed, maxV, "sprint");
+            Mark(x, y, w, h, (float)(c.SprintSpeed * 0.8), maxV, "charge");
+            Mark(x, y, w, h, (float)c.SlideMaxSpeed, maxV, "cap");
+
+            // Trace of the last 3 s.
+            float ty = y + 44f, th = 22f, step = w / _trail.Length;
+            GUI.color = new Color(1f, 0.85f, 0.4f, 0.8f);
+            for (int i = 0; i < _trail.Length; i++)
+            {
+                float s = _trail[(_trailAt + i) % _trail.Length];
+                float bh = Mathf.Clamp01(s / maxV) * th;
+                GUI.DrawTexture(new Rect(x + i * step, ty - bh, Mathf.Max(1f, step), bh), _white);
+            }
+            GUI.color = Color.white;
+            GUI.Label(new Rect(x, y + 12, w, 18), $"peak {_peak:0.0}", _style);
+        }
+
+        private void Mark(float x, float y, float w, float h, float at, float maxV, string label)
+        {
+            float mx = x + Mathf.Clamp01(at / maxV) * w;
+            GUI.color = new Color(0, 0, 0, 0.8f);
+            GUI.DrawTexture(new Rect(mx - 1, y - 2, 2, h + 4), _white);
+            GUI.color = new Color(1, 1, 1, 0.7f);
+            var st = new GUIStyle(_style) { fontSize = 11, alignment = TextAnchor.UpperCenter };
+            GUI.Label(new Rect(mx - 30, y + h + 2, 60, 16), label, st);
         }
 
         private string NetText()

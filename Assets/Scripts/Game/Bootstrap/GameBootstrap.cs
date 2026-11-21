@@ -26,6 +26,10 @@ namespace Sculpt.Game.Bootstrap
         [SerializeField] private MovementSettings movementSettings;
         [Tooltip("Optional. Assets > Create > SCULPT > Weapon Settings. Edits apply live in Play mode.")]
         [SerializeField] private WeaponSettings weaponSettings;
+        [Tooltip("Optional. Assets > Create > SCULPT > Breach Settings. Destruction, healing and bar numbers, plus the parked block-moving switch.")]
+        [SerializeField] private BreachSettings breachSettings;
+        [Tooltip("On: the breach demo map (buildings, movement course, F6 showcase). Off: the old map picked below.")]
+        [SerializeField] private bool breachMap = true;
 
         public enum MapKind { Arena, MovementCourse }
 
@@ -54,12 +58,29 @@ namespace Sculpt.Game.Bootstrap
             var movement = new MovementConfig();
             _movement = movement;
             if (weaponSettings != null) weaponSettings.ApplyTo(movement.Weapons);
+            if (breachSettings == null) breachSettings = ScriptableObject.CreateInstance<BreachSettings>(); // code defaults
+            breachSettings.ApplyTo(sculptConfig);
+            var netConfig = new NetConfig { AllowDevWarp = GameInput.DevBuild };
             // The client's own copy of the map (what it draws and predicts against). The server builds its own.
             Vec3d[][] spawns;
             double[] yaw;
             Func<SubGrid> build;
             MapInfo mapInfo = null;
-            if (map == MapKind.Arena)
+            BreachMapInfo breachInfo = null;
+            BrushWorld brushes = null;
+            Func<SubGrid, ITerrain> terrain = null;
+            if (breachMap)
+            {
+                build = BreachMap.BuildGround;
+                _grid = BreachMap.BuildGround();
+                // Static for now: both sides build the same brushes from code (tile state comes with step 2).
+                brushes = BreachMap.BuildBrushes(out breachInfo);
+                terrain = g => BreachMap.Terrain(g, BreachMap.BuildBrushes(out _)); // the server and each client get their own copy
+                spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
+                yaw = breachInfo.SpawnYaw;
+                netConfig.DevWarpPoint = breachInfo.Course.Start;
+            }
+            else if (map == MapKind.Arena)
             {
                 int seed = mapSeed;
                 build = () => MapGen.Generate(seed, out _);
@@ -76,12 +97,13 @@ namespace Sculpt.Game.Bootstrap
                 spawns = new[] { pads, pads };
                 yaw = new[] { spawnYaw, spawnYaw };
             }
-            _session = new NetSession(build, _grid, movement, new NetConfig(), sculptConfig, spawns, yaw);
+            _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain);
 
             _world = new GameObject("World").AddComponent<WorldView>();
             _world.Init(_grid, sculptConfig, mapInfo);
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
+            if (brushes != null) new GameObject("Buildings").AddComponent<BrushView>().Build(brushes);
 
             // Sky, haze, fixed sun and the distant hills around the arena.
             float half = (float)(_grid.SizeX * SubGrid.SubSize * 0.5);
@@ -92,6 +114,7 @@ namespace Sculpt.Game.Bootstrap
 
             _player = new GameObject("Local Player").AddComponent<LocalPlayer>();
             _player.Init(_session, movement, movementSettings, _input, client);
+            if (breachInfo != null) _player.SetCourse(breachInfo.Course);
             _world.TrackPlayers(_player, _session);
 
             new GameObject("Remote Players").AddComponent<RemotePlayersView>().Init(_session, movement);
@@ -117,7 +140,7 @@ namespace Sculpt.Game.Bootstrap
 
             ApplyCommandLine();
 
-            Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {map} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
+            Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {(breachMap ? "Breach" : map.ToString())} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
         }
 
         private void Update()

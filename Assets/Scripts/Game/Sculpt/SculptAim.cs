@@ -75,7 +75,7 @@ namespace Sculpt.Game.Sculpting
         {
             var t = new SculptTarget();
             TerrainHit h = terrain.Raycast(eye, dir, cfg.RangeMeters + 1.5);
-            if (!h.Hit) return t;
+            if (!h.Hit || h.Brush != 0) return t; // buildings are not sculpt pieces (their tiles get their own aim)
             ushort id = cells.Get(h.Sub.X, h.Sub.Y, h.Sub.Z);
             t.Sub = h.Sub;
             t.Point = h.Point;

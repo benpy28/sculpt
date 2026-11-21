@@ -40,6 +40,7 @@ namespace Sculpt.Game.Net
         public event Action ClientChanged;
 
         private readonly Func<SubGrid> _makeGrid;
+        private readonly Func<SubGrid, ITerrain> _terrain;
         private SubGrid _firstClientGrid;
         private readonly MovementConfig _movement;
         private readonly NetConfig _config;
@@ -56,9 +57,13 @@ namespace Sculpt.Game.Net
         private const double TickSeconds = 1.0 / SimTime.TicksPerSecond;
 
         /// <summary>teamSpawns[0] / teamYaw[0] are team 1's spawn spots and facing; [1] team 2's.</summary>
-        public NetSession(Func<SubGrid> makeGrid, SubGrid clientGrid, MovementConfig movement, NetConfig config, SculptConfig sculpt, Vec3d[][] teamSpawns, double[] teamYaw)
+        /// <param name="terrain">What movement and bullets collide with, built around each side's ground grid (the
+        /// breach map adds its buildings). Null: the ground grid alone.</param>
+        public NetSession(Func<SubGrid> makeGrid, SubGrid clientGrid, MovementConfig movement, NetConfig config, SculptConfig sculpt, Vec3d[][] teamSpawns, double[] teamYaw,
+                          Func<SubGrid, ITerrain> terrain = null)
         {
             _makeGrid = makeGrid;
+            _terrain = terrain ?? (g => g);
             _firstClientGrid = clientGrid;
             _movement = movement;
             _config = config;
@@ -112,7 +117,7 @@ namespace Sculpt.Game.Net
         {
             NewLocalLinks();
             SubGrid serverGrid = _makeGrid();
-            Server = new NetServer(serverGrid, _movement, _config, SendFromServer);
+            Server = new NetServer(_terrain(serverGrid), _movement, _config, SendFromServer);
             ServerSculpt = new SculptSystem(serverGrid, _sculptConfig);
             Server.Sculpt = ServerSculpt;
             _serverAccum = 0;
@@ -127,7 +132,7 @@ namespace Sculpt.Game.Net
             ClientGrid = _firstClientGrid ?? _makeGrid();
             _firstClientGrid = null;
             var sculpt = new SculptClient(ClientGrid, _sculptConfig, _movement);
-            Client = new NetClient(ClientGrid, _movement, _config, (d, r) => _up.Send(d, r, _nowMs), sculpt);
+            Client = new NetClient(_terrain(ClientGrid), _movement, _config, (d, r) => _up.Send(d, r, _nowMs), sculpt);
             ClientChanged?.Invoke();
         }
 

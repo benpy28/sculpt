@@ -64,6 +64,18 @@ namespace Sculpt.Game.Player
         public Vector2 RenderRecoil { get; private set; }
         /// <summary>Mouse movement this frame in degrees (viewmodel sway).</summary>
         public Vector2 LookDelta { get; private set; }
+        // ---- Movement showcase (F6, dev builds): warp to the course and play the tool-assisted run ----
+        private CourseInfo _course;
+        private ShowcaseRun _showcase;
+        private bool _showcaseLatch, _warping;
+        /// <summary>The showcase run in progress (null when none). Its inputs replace yours until it ends or you move.</summary>
+        public ShowcaseRun Showcase => _showcase;
+        /// <summary>The last finished showcase, for the dev HUD summary.</summary>
+        public ShowcaseRun LastShowcase { get; private set; }
+
+        /// <summary>Gives the player the movement course (breach map only), which enables F6.</summary>
+        public void SetCourse(CourseInfo course) => _course = course;
+
         private byte _weaponLatch;
         private bool _confirmLatch;
         private SculptAction _confirmAction;
@@ -128,6 +140,7 @@ namespace Sculpt.Game.Player
             if (_input.Jump.WasPressedThisFrame()) _jumpLatch = true;
             if (_input.Crouch.WasPressedThisFrame()) _crouchLatch = true;
             if (GameInput.DevBuild && _input.DevRespawn.WasPressedThisFrame()) _respawnLatch = true;
+            if (GameInput.DevBuild && _course != null && _input.DevShowcase.WasPressedThisFrame()) _showcaseLatch = true;
             if (_input.SculptToggle.WasPressedThisFrame()) _toggleLatch = true;
             for (int i = 0; i < 4; i++) if (_input.Hotbar[i].WasPressedThisFrame()) _weaponLatch = (byte)(i + 1);
             if (_input.LastWeapon.WasPressedThisFrame()) _weaponLatch = (byte)((int)_prevHeld + 1);
@@ -242,10 +255,52 @@ namespace Sculpt.Game.Player
             _weaponLatch = 0;
             _confirmLatch = false;
 
+            // F6: warp to the course start (a real command the server applies), then let the showcase drive. Pressing
+            // F6 again, or any move key, hands control back.
+            if (_showcaseLatch)
+            {
+                _showcaseLatch = false;
+                if (_showcase != null) StopShowcase();
+                else
+                {
+                    Net.WarpNext = true;
+                    _warping = true;
+                }
+            }
+            if (_showcase != null && active && move.sqrMagnitude > 0.01f) StopShowcase();
+            if (_showcase != null)
+            {
+                mi = _showcase.Next(State);
+                Yaw = (float)(mi.Yaw * Mathf.Rad2Deg);
+                Pitch = Mathf.MoveTowards(Pitch, 12f, 2f);
+                if (_showcase.Finished) StopShowcase();
+            }
+
             int before = Events.Count;
             Net.PredictTick(mi, Pitch, respawn, hand, confirm, action, Events);
             for (int i = before; i < Events.Count; i++)
-                if (Events[i].Type == MoveEventType.Respawned) FaceSpawn();
+            {
+                if (Events[i].Type != MoveEventType.Respawned) continue;
+                if (_warping && _course != null)
+                {
+                    _warping = false;
+                    Yaw = (float)(_course.StartYaw * Mathf.Rad2Deg);
+                    Pitch = 12f;
+                    _showcase = new ShowcaseRun(_course, _cfg);
+                    Debug.Log("[SCULPT] Movement showcase: started.");
+                }
+                else FaceSpawn();
+            }
+        }
+
+        private void StopShowcase()
+        {
+            ShowcaseRun r = _showcase;
+            _showcase = null;
+            LastShowcase = r;
+            if (r == null) return;
+            string how = r.Current == ShowcaseRun.Phase.Done ? "finished" : r.Current == ShowcaseRun.Phase.Failed ? "FAILED: " + r.FailReason : "stopped in " + r.Current;
+            Debug.Log($"[SCULPT] Movement showcase {how} after {r.Ticks / (float)SimTime.TicksPerSecond:0.00} s, top speed {r.TopSpeed:0.0} m/s.");
         }
 
         /// <summary>Interpolates between the last two predicted ticks. alpha in [0, 1].</summary>
