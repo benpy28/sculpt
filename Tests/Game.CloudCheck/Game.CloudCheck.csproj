@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Compile-only check of the Unity layer for machines WITHOUT Unity (cloud sessions, Linux): Sculpt.Game + Sculpt.Core +
+    embedded FishNet against the UnityEngine 2021.3 module reference DLLs from NuGet and a stub of the Input System API
+    (Stubs/). Catches typos, wrong types and missing members in our code. It is weaker than Tests/Game.Check (Unity 6 only
+    APIs and Input System signatures are not checked), so a Unity compile on Ben's PC is still the real test.
+    Run:  dotnet build Tests/Game.CloudCheck 2>&1 | grep error
+    Known noise (not our code / Unity 6 only API): Physics.simulationMode, FishNet Tugboat NetManager.
+    Needs Git LFS files of FishNet's Plugins folder: git lfs pull -I "Packages/com.firstgeargames.fishnet/Runtime/Plugins/**"
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS0618;CS0649;CS0414;CS0169;CS0067;CS0168;CS0219;CS0162;CS1998;CS0108;CS0114;CS0109;CS8632;CS0436;CS0672;CS0612;CS0659;CS0661;CS0660;CS1701;CS1702;NU1701</NoWarn>
+    <DefineConstants>UNITY_5_3_OR_NEWER;UNITY_2017_1_OR_NEWER;UNITY_2018_1_OR_NEWER;UNITY_2019_1_OR_NEWER;UNITY_2020_1_OR_NEWER;UNITY_2021_1_OR_NEWER;UNITY_2021_3_OR_NEWER;UNITY_STANDALONE_WIN;UNITY_STANDALONE;ENABLE_INPUT_SYSTEM</DefineConstants>
+    <ProjectRoot>$(MSBuildThisFileDirectory)..\..\</ProjectRoot>
+    <FN>$(ProjectRoot)Packages\com.firstgeargames.fishnet\Runtime</FN>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="UnityEngine.Modules" Version="2021.3.33" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(FN)\**\*.cs" Exclude="$(FN)\Plugins\Yak\**;$(FN)\Transporting\Transports\Synapse\**;$(FN)\Plugins\GameKit\Dependencies\Utilities\LayoutGroups.cs;$(FN)\Plugins\GameKit\Dependencies\Utilities\Types\Canvases\**;$(FN)\Plugins\GameKit\Dependencies\Utilities\Types\PointerMonoBehaviour.cs;$(FN)\Plugins\GameKit\Dependencies\Utilities\Types\ScrollbarValueSetter.cs" />
+    <Reference Include="$(FN)\Plugins\CodeAnalysis\FishNet.CodeAnalysis.dll" />
+    <Compile Include="$(ProjectRoot)Assets\Scripts\Core\**\*.cs" />
+    <Compile Include="$(ProjectRoot)Assets\Scripts\Game\**\*.cs" />
+    <Compile Include="Stubs\**\*.cs" />
+  </ItemGroup>
+</Project>
