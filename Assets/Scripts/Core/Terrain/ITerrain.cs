@@ -32,5 +32,7 @@ namespace Sculpt.Core
         public Int3 Vertex;
         /// <summary>Id of <see cref="Sub"/>.</summary>
         public ushort Id;
+        /// <summary>Brush index + 1 when a <see cref="BrushWorld"/> brush was hit, 0 for sub-cell terrain.</summary>
+        public int Brush;
     }
 }
