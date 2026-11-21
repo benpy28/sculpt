@@ -8,8 +8,8 @@ namespace Sculpt.Game.Config
     /// can tune without code changes"). Create one with Assets > Create > SCULPT > Breach Settings and drag it onto the
     /// Bootstrap object's Breach Settings slot. Without one, these code defaults are used. Movement numbers stay in
     /// Movement Settings.
-    /// Item, grenade, punch and charge numbers are here too. Heal and bar numbers arrive with their step. Read when the map is built (enter Play mode
-    /// again after changing tile numbers).
+    /// Item, grenade, punch, charge, heal and bar numbers are here too. Read when the map is built (enter Play mode
+    /// again after changing these).
     /// </summary>
     [CreateAssetMenu(menuName = "SCULPT/Breach Settings", fileName = "BreachSettings")]
     public sealed class BreachSettings : ScriptableObject
@@ -86,6 +86,26 @@ namespace Sculpt.Game.Config
         [Tooltip("You must hit the wall within this many degrees of head-on.")]
         [Range(10f, 89f)] public float chargeMaxAngleDegrees = 60f;
 
+        [Header("Healing (the sculpt key: aim at a Damaged or Broken tile, click; hold Reinforce to reinforce)")]
+        [Tooltip("How long a heal takes, seconds. The hole stays open until it finishes.")]
+        [Range(0.1f, 3f)] public float healSeconds = 0.8f;
+        [Tooltip("How long reinforcing takes, seconds.")]
+        [Range(0.1f, 3f)] public float reinforceSeconds = 0.8f;
+        [Tooltip("Bar a heal costs, percent.")]
+        [Range(0f, 100f)] public float healCostPercent = 10f;
+        [Tooltip("Bar reinforcing costs, percent.")]
+        [Range(0f, 100f)] public float reinforceCostPercent = 25f;
+        [Tooltip("Sculpt range, metres from your eye to the nearest point of the tile.")]
+        [Range(2f, 12f)] public float sculptRange = 6f;
+        [Tooltip("A running heal is cancelled (and refunded) once you are this much further away than the range, metres.")]
+        [Range(0f, 5f)] public float healLeash = 1.5f;
+
+        [Header("Sculpt bar")]
+        [Tooltip("The bar refills by itself at this many percent per second.")]
+        [Range(0f, 20f)] public float barRefillPercentPerSecond = 2f;
+        [Tooltip("Extra bar per 10 damage you deal to enemy players, percent.")]
+        [Range(0f, 10f)] public float barPercentPer10Damage = 1f;
+
         public void ApplyTo(ItemConfig items)
         {
             items.GrenadeCarry = grenadeCarry;
@@ -118,7 +138,14 @@ namespace Sculpt.Game.Config
         public void ApplyTo(SculptConfig sculpt)
         {
             sculpt.BlockMovesEnabled = blockMovesEnabled;
+            var b = new BreachConfig();
+            ApplyTo(b);
+            b.ApplyBarTo(sculpt); // the bars tick with the sculpt config
+            if (!blockMovesEnabled) sculpt.RangeMeters = sculptRange; // the faint glow and sculpt ripple use it
         }
+
+        private static int Pct(float percent) => Mathf.Clamp(Mathf.RoundToInt(percent * 100f), 0, SculptConfig.BarMax);
+        private static int Ticks(float seconds) => Mathf.Max(1, Mathf.RoundToInt(seconds * SimTime.TicksPerSecond));
 
         public void ApplyTo(BreachConfig b)
         {
@@ -136,6 +163,14 @@ namespace Sculpt.Game.Config
             b.ChargeSpeedFraction = chargeSpeedFraction;
             b.ChargeKeep = chargeKeep;
             b.ChargeMaxAngleDegrees = chargeMaxAngleDegrees;
+            b.HealTicks = Ticks(healSeconds);
+            b.ReinforceTicks = Ticks(reinforceSeconds);
+            b.HealCost = Pct(healCostPercent);
+            b.ReinforceCost = Pct(reinforceCostPercent);
+            b.HealRange = sculptRange;
+            b.HealLeash = healLeash;
+            b.BarRefillPerSecond = Pct(barRefillPercentPerSecond);
+            b.BarPer10Damage = Pct(barPercentPer10Damage);
         }
     }
 }

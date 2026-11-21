@@ -68,6 +68,8 @@ namespace Sculpt.Game.UI
             bool refusedRecently = Time.time - _view.RejectTime < 0.9f;
             if (hand.Mode == HandMode.Disarmed) { label = "DISARMED"; red = true; }
             else if (refusedRecently) { label = Reason(_view.LastReject).ToUpperInvariant(); red = true; }
+            else if (_player.Heals && Time.time - _player.HealRejectTime < 0.9f) { label = HealReason(_player.LastHealReject).ToUpperInvariant(); red = true; }
+            else if (_player.Heals && hand.InSculptMode) HealChip(net, hand, out label, out cost, out col);
             else if (hand.Mode == HandMode.SculptEnter) label = "SCULPT";
             else if (hand.Mode == HandMode.Sculpt)
             {
@@ -96,7 +98,8 @@ namespace Sculpt.Game.UI
                 try
                 {
                     HudDraw.LoadPixels();
-                    DrawBar(sc, cx, Screen.height - cy, hand);
+                    DrawBar(net, cx, Screen.height - cy, hand);
+                    DrawHealRing(net, cx, Screen.height - cy);
                     DrawWarnings(sc);
                     DrawHitMarker(cx, Screen.height - cy);
                     if (chip != null)
@@ -124,7 +127,7 @@ namespace Sculpt.Game.UI
             if (hand.InSculptMode)
             {
                 // Bar percentage beside the arc.
-                int pct = Mathf.RoundToInt(sc.DisplayBar * 100f / SculptConfig.BarMax);
+                int pct = Mathf.RoundToInt(net.DisplayBar * 100f / SculptConfig.BarMax);
                 HudDraw.Label(new Rect(cx + 34, cy + 14, 60, 18), pct + "%", 11, HudDraw.Dim, TextAnchor.MiddleLeft, true);
             }
             if (Time.time - _view.HurtTime < 0.6f)
@@ -143,6 +146,8 @@ namespace Sculpt.Game.UI
             _capsAt = Time.unscaledTime;
             var inp = _player.Input;
             if (inp == null) return _caps = System.Array.Empty<string>();
+            if (_player.Heals)
+                return _caps = new[] { Key(inp.SculptPush) + "|HEAL", Key(inp.SculptReinforce) + " + " + Key(inp.SculptPush) + "|REINFORCE", Key(inp.SculptToggle) + "|GUN" };
             _caps = new[]
             {
                 Key(inp.SculptPush) + "|PUSH", Key(inp.SculptPull) + "|PULL", Key(inp.SculptRaise) + "|RAISE", Key(inp.SculptSink) + "|SINK",
@@ -243,19 +248,25 @@ namespace Sculpt.Game.UI
 
         // ---------------------------------------------------------------- Bar arc
 
-        private void DrawBar(SculptClient sc, float cx, float cy, HandState hand)
+        private void DrawBar(NetClient net, float cx, float cy, HandState hand)
         {
-            float bar = sc.DisplayBar / (float)SculptConfig.BarMax;
+            float bar = net.DisplayBar / (float)SculptConfig.BarMax;
             const float radius = 26f, thick = 3f;
             const float start = 225f, span = 270f; // gap at the bottom, full bar reads clockwise from bottom-left
             float alpha = hand.InSculptMode ? 1f : (bar < 0.999f ? 0.55f : 0.0f);
             if (alpha <= 0) return;
             Arc(cx, cy, radius, thick, start, span, Tint(BarBack, alpha));
             Arc(cx, cy, radius, thick, start, span * bar, Tint(BarColour, alpha));
-            if (_player.HasHover && hand.InSculptMode)
+            int hoverCost = 0;
+            if (_player.Heals && _player.HealTarget.Valid && net.Heals != null)
             {
-                SculptCheck c = _player.HoverCheck;
-                float cost = c.Cost / (float)SculptConfig.BarMax;
+                HealResult r = _player.HealCheck;
+                if (r == HealResult.Ok || r == HealResult.NotEnoughBar || r == HealResult.NotInSculptMode) hoverCost = TileHealing.CostOf(_player.HealKindNow, net.Heals.Config);
+            }
+            else if (_player.HasHover) hoverCost = _player.HoverCheck.Cost;
+            if (hoverCost > 0 && hand.InSculptMode)
+            {
+                float cost = hoverCost / (float)SculptConfig.BarMax;
                 if (cost > 0)
                 {
                     bool afford = cost <= bar + 1e-4f;
@@ -265,6 +276,62 @@ namespace Sculpt.Game.UI
                 }
             }
             if (Time.time - _view.RejectTime < 0.25f) Arc(cx, cy, radius + 6f, 2f, 0, 360, Tint(Red, 1f - (Time.time - _view.RejectTime) / 0.25f));
+        }
+
+        /// <summary>Your heal's progress as a second, outer ring that fills over the heal time.</summary>
+        private void DrawHealRing(NetClient net, float cx, float cy)
+        {
+            if (!_player.Heals || !net.TryGetOwnHeal(out HealJob j, out _)) return;
+            float p = Mathf.Clamp01((float)((net.Tick + net.Alpha - j.StartTick) / Mathf.Max(1, j.EndTick - j.StartTick)));
+            Color c = j.Kind == HealKind.Reinforce ? new Color(0.80f, 0.86f, 1f, 0.95f) : new Color(0.78f, 0.62f, 1f, 0.95f);
+            Arc(cx, cy, 33f, 2.5f, 0, 360, Tint(BarBack, 1f));
+            Arc(cx, cy, 33f, 2.5f, 0, 360 * p, c);
+        }
+
+        /// <summary>What a click would do in heal mode (live while you aim), its cost, or why not (quietly).</summary>
+        private void HealChip(NetClient net, HandState hand, out string label, out string cost, out Color col)
+        {
+            label = null;
+            cost = null;
+            col = HudDraw.Text;
+            bool reinforce = _player.HealKindNow == HealKind.Reinforce;
+            string what = reinforce ? "REINFORCE" : "HEAL";
+            if (net.TryGetOwnHeal(out HealJob mine, out _) && (!_player.HealTarget.Valid || _player.HealTarget.Tile == mine.Tile))
+            {
+                label = mine.Kind == HealKind.Reinforce ? "REINFORCING" : "HEALING";
+                return;
+            }
+            if (hand.Mode == HandMode.SculptEnter) { label = "SCULPT"; return; }
+            if (!_player.HealTarget.Valid) { label = "AIM AT A CRACKED OR BROKEN WALL WITHIN " + Mathf.RoundToInt((float)net.Walls.Config.HealRange) + " M"; col = HudDraw.Dim; return; }
+            HealResult r = _player.HealCheck;
+            if (r == HealResult.Ok)
+            {
+                label = what;
+                cost = Mathf.RoundToInt(TileHealing.CostOf(_player.HealKindNow, net.Heals.Config) * 100f / SculptConfig.BarMax) + "%";
+                return;
+            }
+            label = (r == HealResult.NothingToHeal ? "NOTHING TO HEAL  ·  HOLD " + Key(_player.Input.SculptReinforce) + " TO REINFORCE" : what + "  ·  " + HealReason(r).ToUpperInvariant());
+            col = HudDraw.Dim;
+        }
+
+        private static string HealReason(HealResult r)
+        {
+            switch (r)
+            {
+                case HealResult.NoTile: return "nothing to heal there";
+                case HealResult.NothingToHeal: return "nothing to heal";
+                case HealResult.AlreadyReinforced: return "already reinforced";
+                case HealResult.OutOfRange: return "out of range";
+                case HealResult.NoLineOfSight: return "no line of sight";
+                case HealResult.NotEnoughBar: return "not enough bar";
+                case HealResult.TileBusy: return "someone is already on it";
+                case HealResult.NotInSculptMode: return "not ready";
+                case HealResult.PlayerInside: return "someone is in the way";
+                case HealResult.LeftRange: return "too far away";
+                case HealResult.Stopped: return "stopped";
+                case HealResult.Replaced: return "switched tile";
+                default: return r.ToString();
+            }
         }
 
         private static Color Tint(Color c, float a) => new Color(c.r, c.g, c.b, c.a * a);

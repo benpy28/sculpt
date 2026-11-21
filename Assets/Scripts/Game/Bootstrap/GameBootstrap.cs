@@ -153,6 +153,7 @@ namespace Sculpt.Game.Bootstrap
             var sculptView = new GameObject("Sculpt View").AddComponent<SculptView>();
             sculptView.Init(_player, _session, _rig, _world, firstPerson.Shake);
             gameObject.AddComponent<SculptHud>().Init(_player, _session, sculptView, _rig.Camera);
+            new GameObject("Tile Heal View").AddComponent<TileHealView>().Init(_player, _session, _rig);
             gameObject.AddComponent<CombatHud>().Init(_player, _session, _weapons, _rig.Camera);
             gameObject.AddComponent<FeelHud>().Init(_player, client);
             gameObject.AddComponent<SettingsMenu>().Init(_player, client, _input);

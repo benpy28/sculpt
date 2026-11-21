@@ -46,6 +46,23 @@ namespace Sculpt.Game.Player
         public bool HasHover { get; private set; }
         public bool ReinforceHeld { get; private set; }
 
+        // ---- Healing (the sculpt key on a map of tiles; read by the tile heal view and HUD) ----
+        /// <summary>The wall tile the crosshair picks in sculpt mode (heal or reinforce, by the reinforce key).</summary>
+        public TileTarget HealTarget { get; private set; } = TileTarget.None;
+        /// <summary>What a click on <see cref="HealTarget"/> would do right now (Ok, or why not).</summary>
+        public HealResult HealCheck { get; private set; } = HealResult.NoTile;
+        public HealKind HealKindNow => ReinforceHeld ? HealKind.Reinforce : HealKind.Heal;
+        /// <summary>Healing replaces block moving while block moves are parked (Breach Settings).</summary>
+        public bool Heals => Net.Heals != null && !SculptConfig.BlockMovesEnabled;
+        /// <summary>Last refused heal press (local check or the server) and when, for the red flash.</summary>
+        public float HealRejectTime { get; set; } = -10f;
+        public HealResult LastHealReject { get; set; }
+        public int LastHealRejectTile { get; set; } = -1;
+        private bool _healWant;
+        private int _healWantTile;
+        private HealKind _healWantKind;
+        private float _healWantTime;
+
         private NetSession _session;
         private MovementConfig _cfg;
         private MovementSettings _settingsAsset;
@@ -165,6 +182,11 @@ namespace Sculpt.Game.Player
             if (_client.ZoomToggle && !InSculptMode && _input.Aim.WasPressedThisFrame()) _zoomOn = !_zoomOn;
 
             if (!InSculptMode || clickToLock) return;
+            if (Heals)
+            {
+                if (_input.SculptPush.WasPressedThisFrame()) PressHeal();
+                return;
+            }
             // The direction press IS the confirm, with this frame's aim. The newest press in a frame wins.
             SculptTarget t = Target;
             if (!t.Valid) return;
@@ -212,6 +234,32 @@ namespace Sculpt.Game.Player
             DropHold = 0;
         }
 
+        /// <summary>
+        /// A heal press with this frame's aim. Checked here with the server's rules first: a press that can't work goes
+        /// red at once and costs nothing. Pressed while still entering sculpt mode, it waits (up to 0.25 s) until sculpt
+        /// mode is ready instead of being refused.
+        /// </summary>
+        private void PressHeal()
+        {
+            TileTarget t = HealTarget;
+            if (!t.Valid) { RejectHeal(HealResult.NoTile, -1); return; }
+            HealKind kind = HealKindNow;
+            if (Net.Heals.TryGetJob(Net.PlayerId, out HealJob cur) && cur.Tile == t.Tile && cur.Kind == kind) return; // already on it
+            if (HealCheck != HealResult.Ok && HealCheck != HealResult.NotInSculptMode) { RejectHeal(HealCheck, t.Tile); return; }
+            _healWant = true;
+            _healWantTile = t.Tile;
+            _healWantKind = kind;
+            _healWantTime = Time.unscaledTime;
+        }
+
+        private void RejectHeal(HealResult r, int tile)
+        {
+            HealRejectTime = Time.time;
+            LastHealReject = r;
+            LastHealRejectTile = tile;
+            Sculpting.SculptAudio.Play(Sculpting.SculptAudio.Reject, Vector3.zero, 0.6f, 1f, false);
+        }
+
         private void Confirm(SculptAction a)
         {
             _confirmLatch = true;
@@ -222,6 +270,7 @@ namespace Sculpt.Game.Player
         {
             HasHover = false;
             ReinforceHeld = CursorLocked && !InputBlocked && _input.SculptReinforce.IsPressed();
+            UpdateHealAim();
             if (!Net.Joined || Sculpt == null || Sculpt.LocalBody == null || !InSculptMode)
             {
                 Target = default;
@@ -233,6 +282,16 @@ namespace Sculpt.Game.Player
             HoverAction = BestMove(Target, false, out SculptCheck check);
             HoverCheck = check;
             HasHover = true;
+        }
+
+        private void UpdateHealAim()
+        {
+            HealTarget = TileTarget.None;
+            HealCheck = HealResult.NoTile;
+            if (!Net.Joined || !Heals || !InSculptMode || State.Dead) { _healWant = false; return; }
+            HealTarget = TileAim.Find(Net.Grid, Net.Walls, SimEye, LookDir, Net.Walls.Config.HealRange, HealKindNow);
+            if (!HealTarget.Valid) return;
+            HealCheck = Net.Heals.Check(Net.Grid, Net.PlayerId, SimEye, State.Hand.CanConfirmSculpt, HealTarget.Tile, HealKindNow, Net.DisplayBar);
         }
 
         /// <summary>
@@ -298,6 +357,14 @@ namespace Sculpt.Game.Player
                 SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0, Reload = _reloadLatch && active,
                 Pickup = _pickupLatch && active, PickId = _pickupId, Drop = _dropLatch && active, Punch = _punchLatch && active,
             };
+            if (_healWant && (!active || !InSculptMode || Time.unscaledTime - _healWantTime > 0.25f)) _healWant = false;
+            if (_healWant && h0.CanConfirmSculpt)
+            {
+                _healWant = false;
+                hand.Heal = true;
+                hand.HealTile = _healWantTile;
+                hand.HealReinforce = _healWantKind == HealKind.Reinforce;
+            }
             _reloadLatch = false;
             _punchLatch = false;
             _pickupLatch = false;

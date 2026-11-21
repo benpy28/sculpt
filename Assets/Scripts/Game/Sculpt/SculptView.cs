@@ -192,7 +192,8 @@ namespace Sculpt.Game.Sculpting
             if (sc != _boundSculpt) { ClearAll(); _boundSculpt = sc; }
             if (sc == null || !net.Joined) return;
 
-            _world.SetSculptView(_player.SimEye.ToUnity(), _player.InSculptMode, (float)_player.SculptConfig.RangeMeters);
+            // With block moving parked the ground is not sculptable: no purple ripple or glow on it (tiles glow instead).
+            _world.SetSculptView(_player.SimEye.ToUnity(), _player.InSculptMode, _player.Heals ? 0f : (float)_player.SculptConfig.RangeMeters);
             DrainEvents(sc);
 
             Vector3 cam = _rig.Camera.transform.position;
