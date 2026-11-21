@@ -32,6 +32,8 @@ namespace Sculpt.Core
         /// <summary>Index into the target list (Player hits).</summary>
         public int Target;
         public bool Head;
+        /// <summary>Terrain hits: brush index + 1 in a building world (0 = ground or no brush).</summary>
+        public int Brush;
     }
 
     /// <summary>
@@ -52,6 +54,7 @@ namespace Sculpt.Core
                 best.Distance = th.Distance;
                 best.Point = th.Point;
                 best.Normal = th.Normal;
+                best.Brush = th.Brush;
             }
             if (targets == null) return best;
             for (int i = 0; i < targets.Count; i++)

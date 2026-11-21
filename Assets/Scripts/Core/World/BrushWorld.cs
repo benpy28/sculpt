@@ -20,6 +20,8 @@ namespace Sculpt.Core
         Wall = 5,
         /// <summary>Painted markings (finish pads). Never solid.</summary>
         Marker = 6,
+        /// <summary>A breakable 1.5 m wall tile. Its state lives in <see cref="TileWalls"/>; only that class switches it.</summary>
+        Tile = 7,
     }
 
     /// <summary>
@@ -86,6 +88,14 @@ namespace Sculpt.Core
         [ThreadStatic] private static List<int> _scratch;
         [ThreadStatic] private static HashSet<int> _seen;
 
+        /// <summary>The breakable wall tiles in this world (state, health, the one function that changes them).</summary>
+        public readonly TileWalls Tiles;
+
+        public BrushWorld(BreachConfig breach = null)
+        {
+            Tiles = new TileWalls(this, breach ?? new BreachConfig());
+        }
+
         public int Count => _brushes.Count;
         public Brush this[int i] => _brushes[i];
         public IReadOnlyList<Brush> Brushes => _brushes;
@@ -112,8 +122,8 @@ namespace Sculpt.Core
         public int AddBox(Vec3d min, Vec3d max, BrushKind kind) => Add(Brush.Box(new Aabb(min, max), kind));
         public int AddRamp(Vec3d min, Vec3d max, Dir rise, BrushKind kind) => Add(Brush.Wedge(new Aabb(min, max), rise, kind));
 
-        /// <summary>Switches a brush's collision on or off (for breakable tiles).</summary>
-        public void SetSolid(int id, bool solid)
+        /// <summary>Switches a brush's collision on or off. Tiles go through <see cref="TileWalls.Set"/>, never here.</summary>
+        internal void SetSolid(int id, bool solid)
         {
             Brush b = _brushes[id];
             b.Solid = solid;
@@ -238,7 +248,9 @@ namespace Sculpt.Core
                 double hi = axis == 0 ? w.Max.X : axis == 1 ? w.Max.Y : w.Max.Z;
                 if (Math.Abs(da) < 1e-12)
                 {
-                    if (oa <= lo || oa >= hi) return false;
+                    // On the boundary counts as inside: a ray running exactly along the seam between two touching
+                    // tiles must hit one of them, never slip through the crack.
+                    if (oa < lo || oa > hi) return false;
                     continue;
                 }
                 double t0 = (lo - oa) / da, t1 = (hi - oa) / da;
