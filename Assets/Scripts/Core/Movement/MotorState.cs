@@ -62,6 +62,20 @@ namespace Sculpt.Core
         public Vec3d ActionForward;
         public Vec3d ActionKeepVelocity;
 
+        // Wall kick (Ben 2026-11-21)
+        /// <summary>Tick the player last hit a wall in the air, the horizontal speed just before it, and its outward normal.</summary>
+        public int WallHitTick;
+        public double WallHitSpeed;
+        public Vec3d WallHitNormal;
+        /// <summary>Kicks since last on the ground, tick and outward normal of the last kick.</summary>
+        public int WallKicks;
+        public int LastWallKickTick;
+        public Vec3d LastWallKickNormal;
+        /// <summary>The counter-strafe brake acted last tick (so its sound plays once per brake).</summary>
+        public bool Braking;
+        /// <summary>Tick of the last slide-jump (chained slide-hops lose a little speed each).</summary>
+        public int LastSlideJumpTick;
+
         /// <summary>First tick on which shooting is allowed again (sprint-to-aim, mantle).</summary>
         public int ShootReadyTick;
 
@@ -88,6 +102,9 @@ namespace Sculpt.Core
             JumpBufferedTick = int.MinValue / 2,
             LastSlideBoostTick = int.MinValue / 2,
             LandTick = int.MinValue / 2,
+            WallHitTick = int.MinValue / 2,
+            LastWallKickTick = int.MinValue / 2,
+            LastSlideJumpTick = int.MinValue / 2,
             AirPeakY = feet.Y,
             Hand = HandState.Initial,
             Weapon = WeaponState.Initial,
@@ -111,6 +128,12 @@ namespace Sculpt.Core
         Respawned,
         /// <summary>Fall damage killed the player.</summary>
         Died,
+        /// <summary>Kicked off a wall. Value 1 if inside the perfect window. Amount = speed kept.</summary>
+        WallKick,
+        /// <summary>Popped out of a mantle early with its speed.</summary>
+        MantleCancel,
+        /// <summary>Counter-strafe brake started this tick (first tick of a brake).</summary>
+        Braked,
     }
 
     public struct MoveEvent

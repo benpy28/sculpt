@@ -69,7 +69,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 7;
+        public const byte Version = 8;
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
@@ -218,6 +218,7 @@ namespace Sculpt.Core.Net
             if (s.Sprinting) f |= 2;
             if (s.Grounded) f |= 4;
             if (s.LandSlideUsed) f |= 8;
+            if (s.Braking) f |= 16;
             w.U8(f);
             w.Vec(s.GroundNormal);
             w.I32(s.Tick);
@@ -234,6 +235,13 @@ namespace Sculpt.Core.Net
             w.Vec(s.ActionForward);
             w.Vec(s.ActionKeepVelocity);
             w.I32(s.ShootReadyTick);
+            w.I32(s.WallHitTick);
+            w.F64(s.WallHitSpeed);
+            w.Vec(s.WallHitNormal);
+            w.I32(s.WallKicks);
+            w.I32(s.LastWallKickTick);
+            w.Vec(s.LastWallKickNormal);
+            w.I32(s.LastSlideJumpTick);
             w.U8((byte)s.Hand.Mode);
             w.U8((byte)((byte)s.Hand.Held | (s.Hand.HeldReady ? 0x40 : 0) | (s.Hand.ExitQueued ? 0x80 : 0)));
             w.I32(s.Hand.ReadyTick);
@@ -260,6 +268,7 @@ namespace Sculpt.Core.Net
             s.Sprinting = (f & 2) != 0;
             s.Grounded = (f & 4) != 0;
             s.LandSlideUsed = (f & 8) != 0;
+            s.Braking = (f & 16) != 0;
             s.GroundNormal = r.Vec();
             s.Tick = r.I32();
             s.LastGroundedTick = r.I32();
@@ -275,6 +284,13 @@ namespace Sculpt.Core.Net
             s.ActionForward = r.Vec();
             s.ActionKeepVelocity = r.Vec();
             s.ShootReadyTick = r.I32();
+            s.WallHitTick = r.I32();
+            s.WallHitSpeed = r.F64();
+            s.WallHitNormal = r.Vec();
+            s.WallKicks = r.I32();
+            s.LastWallKickTick = r.I32();
+            s.LastWallKickNormal = r.Vec();
+            s.LastSlideJumpTick = r.I32();
             byte hm = r.U8();
             if (hm > (byte)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
             s.Hand.Mode = (HandMode)hm;
@@ -316,7 +332,10 @@ namespace Sculpt.Core.Net
                    a.LandVelocity.Equals(b.LandVelocity) && a.AirPeakY.Equals(b.AirPeakY) && a.UphillTicks == b.UphillTicks && a.ActionTick == b.ActionTick &&
                    a.ActionStartY.Equals(b.ActionStartY) && a.ActionTargetY.Equals(b.ActionTargetY) &&
                    a.ActionForward.Equals(b.ActionForward) && a.ActionKeepVelocity.Equals(b.ActionKeepVelocity) &&
-                   a.ShootReadyTick == b.ShootReadyTick && a.Hand.Equals(b.Hand) && a.Weapon.Equals(b.Weapon) &&
+                   a.ShootReadyTick == b.ShootReadyTick && a.Braking == b.Braking &&
+                   a.WallHitTick == b.WallHitTick && a.WallHitSpeed.Equals(b.WallHitSpeed) && a.WallHitNormal.Equals(b.WallHitNormal) &&
+                   a.WallKicks == b.WallKicks && a.LastWallKickTick == b.LastWallKickTick && a.LastWallKickNormal.Equals(b.LastWallKickNormal) && a.LastSlideJumpTick == b.LastSlideJumpTick &&
+                   a.Hand.Equals(b.Hand) && a.Weapon.Equals(b.Weapon) &&
                    a.Damage == b.Damage && a.Dead == b.Dead && a.RespawnTick == b.RespawnTick;
         }
 

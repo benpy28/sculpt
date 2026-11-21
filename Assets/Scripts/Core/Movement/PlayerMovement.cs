@@ -54,7 +54,7 @@ namespace Sculpt.Core
             Depenetrate(g, c, ref s);
 
             if (s.Mode == MoveMode.Vault) { StepVault(g, c, ref s, events); FinishTick(c, ref s, wasSprinting); return; }
-            if (s.Mode == MoveMode.Mantle) { StepMantle(g, c, ref s, events); FinishTick(c, ref s, wasSprinting); return; }
+            if (s.Mode == MoveMode.Mantle) { StepMantle(g, c, ref s, input, events); FinishTick(c, ref s, wasSprinting); return; }
 
             Vec3d wish = WishDir(input);
             bool grounded = ProbeGround(g, c, s.Position, HeightOf(s, c), out Vec3d normal);
@@ -69,13 +69,19 @@ namespace Sculpt.Core
                 s.AirPeakY = s.Position.Y;
             }
             s.Grounded = grounded && s.Mode != MoveMode.Air;
-            if (s.Grounded) s.LastGroundedTick = s.Tick;
+            if (s.Grounded)
+            {
+                s.LastGroundedTick = s.Tick;
+                s.WallKicks = 0;
+                s.LastWallKickNormal = Vec3d.Zero;
+            }
 
             // Late slide-land: crouch pressed within the window after touchdown restores the landing speed.
             if (s.Mode == MoveMode.Ground && input.CrouchPressed && !s.LandSlideUsed &&
                 s.Tick - s.LandTick <= c.SlideLandWindowTicks && s.LandVelocity.HorizontalLength >= c.SlideLandMinSpeed)
             {
-                s.Velocity = new Vec3d(s.LandVelocity.X, s.Velocity.Y, s.LandVelocity.Z);
+                double keep = IsChainedHop(c, s, s.LandTick) ? c.SlideHopKeep : 1.0;
+                s.Velocity = new Vec3d(s.LandVelocity.X * keep, s.Velocity.Y, s.LandVelocity.Z * keep);
                 StartSlide(g, c, ref s, false, events);
                 s.LandSlideUsed = true;
                 Emit(events, MoveEventType.SlideLandSuccess, s.Tick);
@@ -119,6 +125,7 @@ namespace Sculpt.Core
 
             double target = s.Crouched ? c.CrouchSpeed : (s.Sprinting ? c.SprintSpeed : c.RunSpeed);
             Vec3d vh = Horizontal(s.Velocity);
+            vh = CounterBrake(c, ref s, vh, wish, events);
             vh = GroundAccelerate(c, vh, wish, target);
 
             if (jumpBuffered)
@@ -131,6 +138,26 @@ namespace Sculpt.Core
             s.Velocity = WithTangentY(vh, s.GroundNormal);
 
             if (s.Sprinting && vh.Length >= c.VaultMinSpeed) TryVault(g, c, ref s, events);
+        }
+
+        /// <summary>
+        /// Pressing back or sideways against your motion at speed brakes hard, down to CounterBrakeMinSpeed. It only
+        /// removes speed along the current direction; turning is still done by normal acceleration or slide steering.
+        /// </summary>
+        private static Vec3d CounterBrake(MovementConfig c, ref MotorState s, Vec3d vh, Vec3d wish, List<MoveEvent> events)
+        {
+            double speed = vh.Length;
+            bool brake = speed > c.CounterBrakeMinSpeed && wish.Length > 0.1 &&
+                         wish.Normalized.Dot(vh / speed) <= c.CounterBrakeMaxDot;
+            if (!brake)
+            {
+                s.Braking = false;
+                return vh;
+            }
+            if (!s.Braking) Emit(events, MoveEventType.Braked, s.Tick, 0, speed);
+            s.Braking = true;
+            double newSpeed = Math.Max(c.CounterBrakeMinSpeed, speed - c.CounterBrakeDecel * c.Dt);
+            return vh * (newSpeed / speed);
         }
 
         private static Vec3d GroundAccelerate(MovementConfig c, Vec3d vh, Vec3d wish, double targetSpeed)
@@ -197,6 +224,7 @@ namespace Sculpt.Core
             {
                 SetCrouched(g, c, ref s, false);
                 Jump(c, ref s, vh, events);
+                s.LastSlideJumpTick = s.Tick;
                 Emit(events, MoveEventType.SlideJump, s.Tick);
                 return;
             }
@@ -218,6 +246,12 @@ namespace Sculpt.Core
                 double newSpeed = Math.Max(0, Math.Min(c.SlideMaxSpeed, speed - c.SlideFriction * dt));
                 vh = vh * (newSpeed / speed);
                 speed = newSpeed;
+            }
+
+            if (speed > 1e-9)
+            {
+                vh = CounterBrake(c, ref s, vh, wish, events);
+                speed = vh.Length;
             }
 
             // Limited steering toward the wish direction.
@@ -242,6 +276,7 @@ namespace Sculpt.Core
             double dt = c.Dt;
             Vec3d vh = Horizontal(s.Velocity);
 
+            s.Braking = false;
             if (jumpBuffered)
             {
                 if (TryMantle(g, c, ref s, input.Yaw, true, events)) return;
@@ -250,14 +285,90 @@ namespace Sculpt.Core
                     Jump(c, ref s, vh, events);
                     return;
                 }
+                if (TryWallKick(g, c, ref s, input.Yaw, events)) return;
             }
 
+            double speed = vh.Length;
             if (wish.LengthSquared > 1e-9)
             {
-                Vec3d target = wish.Normalized * Math.Max(vh.Length, c.RunSpeed) * wish.Length;
-                vh = MoveTowards(vh, target, c.GroundAccel * c.AirAccelFraction * dt);
+                if (speed <= c.RunSpeed)
+                {
+                    // Slow: plain limited air control (a standing jump can still be steered onto a ledge).
+                    Vec3d target = wish.Normalized * c.RunSpeed * wish.Length;
+                    vh = MoveTowards(vh, target, c.GroundAccel * c.AirAccelFraction * dt);
+                    if (vh.Length > c.RunSpeed && vh.Length > speed) vh = vh * (Math.Max(speed, c.RunSpeed) / vh.Length);
+                }
+                else
+                {
+                    // Fast: only a small heading nudge toward the wish direction, and a light brake against it.
+                    // Never adds speed.
+                    Vec3d w = wish.Normalized;
+                    double along = w.Dot(vh / speed);
+                    if (along < -0.05)
+                    {
+                        double ns = Math.Max(c.RunSpeed, speed - c.AirBrakeDecel * (-along) * wish.Length * dt);
+                        vh = vh * (ns / speed);
+                    }
+                    else vh = RotateToward(vh, w, c.AirNudgeTurnRate * wish.Length * dt);
+                }
             }
+            speed = vh.Length;
+            if (speed > c.AirSoftCapSpeed)
+                vh = vh * (Math.Max(c.AirSoftCapSpeed, speed - c.AirSoftCapDecel * dt) / speed);
             s.Velocity = new Vec3d(vh.X, s.Velocity.Y, vh.Z); // gravity is applied exactly in Integrate
+        }
+
+        // ---- Wall kick ----
+
+        /// <summary>The outward normal of a wall the box is touching on one side (none: zero).</summary>
+        private static Vec3d TouchingWall(ITerrain g, MovementConfig c, in MotorState s, double h)
+        {
+            Vec3d best = Vec3d.Zero;
+            double bestInto = double.NegativeInfinity;
+            for (int k = 0; k < 4; k++)
+            {
+                Vec3d d = k == 0 ? new Vec3d(1, 0, 0) : k == 1 ? new Vec3d(-1, 0, 0) : k == 2 ? new Vec3d(0, 0, 1) : new Vec3d(0, 0, -1);
+                if (!Blocked(g, c, s.Position + d * c.WallKickProbe, h)) continue;
+                // A wall, not a step: still blocked a step higher.
+                if (!Blocked(g, c, s.Position + d * c.WallKickProbe + new Vec3d(0, c.MaxStepUp + 0.01, 0), h)) continue;
+                double into = d.Dot(s.Velocity) + (s.WallHitNormal.Equals(-d) ? 100 : 0); // prefer the wall just hit
+                if (into > bestInto) { bestInto = into; best = -d; }
+            }
+            return best;
+        }
+
+        private static bool TryWallKick(ITerrain g, MovementConfig c, ref MotorState s, double yaw, List<MoveEvent> events)
+        {
+            if (s.WallKicks >= c.WallKickMaxPerAir) return false;
+            if (s.Tick - s.LastWallKickTick < c.WallKickCooldownTicks) return false;
+            double h = HeightOf(s, c);
+            Vec3d n = TouchingWall(g, c, s, h);
+            if (n.LengthSquared < 0.5) return false;
+            if (n.Equals(s.LastWallKickNormal)) return false; // not the same wall twice in a row
+
+            double speed = Horizontal(s.Velocity).Length;
+            bool perfect = false;
+            if (s.WallHitNormal.Equals(n) && s.Tick - s.WallHitTick <= c.WallKickGraceTicks)
+            {
+                perfect = s.Tick - s.WallHitTick <= c.WallKickPerfectTicks;
+                speed = Math.Max(speed, s.WallHitSpeed * (perfect ? 1.0 : c.WallKickLateKeep));
+            }
+            speed = Math.Max(speed, c.WallKickMinSpeed);
+
+            Vec3d look = Forward(yaw);
+            double into = look.Dot(n);
+            if (into < 0) look = look - n * (2 * into); // looking into the wall: mirror off it
+            Vec3d dir = (look * speed + n * c.WallKickPush).Normalized;
+            Vec3d vh = dir * speed;
+            s.Velocity = new Vec3d(vh.X, Math.Max(s.Velocity.Y, c.WallKickUpSpeed), vh.Z);
+            s.WallKicks++;
+            s.LastWallKickTick = s.Tick;
+            s.LastWallKickNormal = n;
+            s.WallHitTick = int.MinValue / 2;
+            s.JumpBufferedTick = int.MinValue / 2;
+            s.AirPeakY = s.Position.Y;
+            Emit(events, MoveEventType.WallKick, s.Tick, perfect ? 1 : 0, speed);
+            return true;
         }
 
         private static void Land(MovementConfig c, ref MotorState s, in MoveInput input, List<MoveEvent> events)
@@ -280,11 +391,16 @@ namespace Sculpt.Core
                 s.Crouched = true;
                 s.Sprinting = false;
                 double sp = vh.Length;
+                if (IsChainedHop(c, s, s.Tick)) { s.Velocity = s.Velocity * c.SlideHopKeep; sp *= c.SlideHopKeep; }
                 if (sp > c.SlideMaxSpeed) s.Velocity = s.Velocity * (c.SlideMaxSpeed / sp);
                 Emit(events, MoveEventType.SlideStarted, s.Tick, 0);
                 Emit(events, MoveEventType.SlideLandSuccess, s.Tick);
             }
         }
+
+        /// <summary>A slide-land soon after a slide-jump, with no wall kick in between (a kick is its own skill).</summary>
+        private static bool IsChainedHop(MovementConfig c, in MotorState s, int landTick) =>
+            landTick - s.LastSlideJumpTick <= c.SlideHopChainTicks && s.LastWallKickTick < s.LastSlideJumpTick;
 
         // ---- Vault ----
 
@@ -302,7 +418,7 @@ namespace Sculpt.Core
 
             // Ledge tops sit on the sub-cell lattice. Try each one above a step-up and up to one level.
             double targetY = double.NaN;
-            for (double top = Math.Ceiling((pos.Y + c.MaxStepUp + 1e-6) / Sub) * Sub; top <= pos.Y + Bs + 0.05; top += Sub)
+            for (double top = Math.Ceiling((pos.Y + c.MaxStepUp + 1e-6) / Sub) * Sub; top <= pos.Y + c.VaultMaxHeight; top += Sub)
                 if (LedgeClear(g, c, pos, dir, top + 0.01, h)) { targetY = top + 0.01; break; }
             if (double.IsNaN(targetY)) return false;
 
@@ -361,6 +477,10 @@ namespace Sculpt.Core
                 s.ActionStartY = pos.Y;
                 s.ActionTargetY = targetY;
                 s.ActionForward = dir;
+                // Momentum: remember how fast you hit the ledge (an air hit already stopped you against the wall).
+                double hitSpeed = Horizontal(s.Velocity).Length;
+                if (s.Tick - s.WallHitTick <= c.WallKickGraceTicks) hitSpeed = Math.Max(hitSpeed, s.WallHitSpeed);
+                s.ActionKeepVelocity = dir * hitSpeed;
                 s.Velocity = Vec3d.Zero;
                 s.Sprinting = false;
                 s.JumpBufferedTick = int.MinValue / 2;
@@ -371,11 +491,36 @@ namespace Sculpt.Core
             return false;
         }
 
-        private static void StepMantle(ITerrain g, MovementConfig c, ref MotorState s, List<MoveEvent> events)
+        private static double MantleExitSpeed(MovementConfig c, in MotorState s) =>
+            Math.Max(c.RunSpeed * c.MantleExitSpeedFraction, s.ActionKeepVelocity.Length * c.MantleKeepSpeedFraction);
+
+        private static void StepMantle(ITerrain g, MovementConfig c, ref MotorState s, in MoveInput input, List<MoveEvent> events)
         {
             s.ActionTick++;
             double h = HeightOf(s, c);
             s.Velocity = Vec3d.Zero;
+
+            // Mantle cancel: jump again near the top of the rise to pop over the ledge with the speed you hit it
+            // with, instead of the slow climb and the step forward. The last few centimetres are skipped in one tick
+            // (at most MantleCancelMaxRemaining, a small pop), then you leave forward with a little hop.
+            double remaining = s.ActionTargetY - s.Position.Y;
+            if (input.JumpPressed && s.ActionTick >= c.MantleCancelFromTick && s.ActionTick <= c.MantleRiseTicks &&
+                remaining <= c.MantleCancelMaxRemaining)
+            {
+                MoveAxis(g, c, ref s.Position, 1, Math.Max(0, remaining), h, out bool blockedUp);
+                if (!blockedUp)
+                {
+                    Vec3d v = s.ActionForward * MantleExitSpeed(c, s);
+                    s.Velocity = new Vec3d(v.X, c.MantleCancelHopSpeed, v.Z);
+                    s.Mode = MoveMode.Air;
+                    s.AirPeakY = s.Position.Y;
+                    s.JumpBufferedTick = int.MinValue / 2;
+                    Emit(events, MoveEventType.MantleCancel, s.Tick, 0, v.Length);
+                    Integrate(g, c, ref s);
+                    return;
+                }
+            }
+
             if (s.ActionTick <= c.MantleRiseTicks)
             {
                 double t = s.ActionTick / (double)c.MantleRiseTicks;
@@ -397,7 +542,7 @@ namespace Sculpt.Core
             {
                 s.Mode = MoveMode.Air; // lands on the ledge next tick
                 s.AirPeakY = s.Position.Y;
-                s.Velocity = s.ActionForward * (c.RunSpeed * c.MantleExitSpeedFraction);
+                s.Velocity = s.ActionForward * MantleExitSpeed(c, s);
                 Emit(events, MoveEventType.MantleFinished, s.Tick);
             }
         }
@@ -462,13 +607,32 @@ namespace Sculpt.Core
                 double vy1 = Math.Max(-c.MaxFallSpeed, vy0 - c.Gravity * c.Dt);
                 d = new Vec3d(d.X, (vy0 + vy1) * 0.5 * c.Dt, d.Z);
                 s.Velocity = new Vec3d(s.Velocity.X, vy1, s.Velocity.Z);
+                double hBefore = Horizontal(s.Velocity).Length;
                 MoveAxis(g, c, ref s.Position, 0, d.X, h, out bool bx);
-                if (bx) s.Velocity = new Vec3d(0, s.Velocity.Y, s.Velocity.Z);
+                if (bx)
+                {
+                    RecordWallHit(ref s, new Vec3d(-Math.Sign(d.X), 0, 0), hBefore);
+                    s.Velocity = new Vec3d(0, s.Velocity.Y, s.Velocity.Z);
+                }
                 MoveAxis(g, c, ref s.Position, 2, d.Z, h, out bool bz);
-                if (bz) s.Velocity = new Vec3d(s.Velocity.X, s.Velocity.Y, 0);
+                if (bz)
+                {
+                    RecordWallHit(ref s, new Vec3d(0, 0, -Math.Sign(d.Z)), hBefore);
+                    s.Velocity = new Vec3d(s.Velocity.X, s.Velocity.Y, 0);
+                }
                 MoveAxis(g, c, ref s.Position, 1, d.Y, h, out bool by);
                 if (by) s.Velocity = new Vec3d(s.Velocity.X, 0, s.Velocity.Z);
             }
+        }
+
+        /// <summary>Remembers the speed you hit a wall with in the air (wall kick timing, mantle momentum).</summary>
+        private static void RecordWallHit(ref MotorState s, Vec3d normal, double speed)
+        {
+            // Still against the same wall: keep the first hit (the speed before it stopped you, and when).
+            if (s.WallHitNormal.Equals(normal) && s.Tick - s.WallHitTick <= 30) return;
+            s.WallHitTick = s.Tick;
+            s.WallHitSpeed = speed;
+            s.WallHitNormal = normal;
         }
 
         /// <summary>

@@ -50,9 +50,43 @@ namespace Sculpt.Core
         public int MantleRiseTicks = 16;
         public int MantleForwardTicks = 8;          // total 24 ticks = 0.4 s
         public double MantleForwardDistance = 0.45;
-        public double MantleMaxHeight = 2.45;       // a 2-level ledge (2.4 m) plus tolerance
+        public double MantleMaxHeight = 3.05;       // two 1.5 m wall tiles plus tolerance (Ben 2026-11-21: 1.5 m tiles)
+        public double VaultMaxHeight = 1.55;        // one 1.5 m tile (sills, single tiles) plus tolerance
         public double AirMantleMinHeight = 0.3;
-        public double MantleExitSpeedFraction = 0.5;
+        public double MantleExitSpeedFraction = 0.5;  // of run speed: the minimum a mantle leaves you with
+        public double MantleKeepSpeedFraction = 1.0;  // of the speed you hit the ledge with (momentum, Ben 2026-11-21)
+        public int MantleCancelFromTick = 8;          // jump again from this rise tick on, once the ledge is close,
+        public double MantleCancelMaxRemaining = 0.6; // within this many metres of the top, to pop over it early
+        public double MantleCancelHopSpeed = 3.0;     // m/s up when popping out of a mantle
+
+        // Momentum (Ben 2026-11-21). Skill is in timing and chaining; every move still works with a plain press.
+        // Wall kick: jump in the air while touching a wall. You leave in the direction you look (mirrored off the
+        // wall if you look into it) and keep your speed. Within the perfect window of hitting the wall you keep the
+        // speed you hit it with; later you keep WallKickLateKeep of it.
+        public double WallKickProbe = 0.12;           // how close a wall must be to kick off it
+        public double WallKickUpSpeed = 6.5;          // m/s up (a full jump is ~8.8)
+        public double WallKickPush = 2.5;             // m/s pushed away from the wall before keeping the speed
+        public double WallKickMinSpeed = 6.0;         // a kick always leaves at least this fast
+        public int WallKickPerfectTicks = 6;          // 100 ms after hitting the wall
+        public double WallKickLateKeep = 0.85;
+        public int WallKickGraceTicks = 30;           // the hit speed is remembered this long
+        public int WallKickMaxPerAir = 3;             // until you touch the ground again: no wall climbing
+        public int WallKickCooldownTicks = 12;
+        // Counter-strafe brake: on the ground or sliding, pressing back or sideways against your motion while faster
+        // than CounterBrakeMinSpeed brakes hard down to that speed. Only removes speed, never flips direction.
+        public double CounterBrakeMinSpeed = 6.5;
+        public double CounterBrakeDecel = 120.0;      // m/s^2 (letting go is 50)
+        public double CounterBrakeMaxDot = 0.25;      // wish . motion at or below this counts (sideways or back)
+        // Air: below run speed the old air control applies (a standing jump can still be steered). Above it the air
+        // only nudges your heading a little per jump, never adds speed and can't be used to dodge.
+        public double AirNudgeTurnRate = 0.6;         // rad/s, so about 10 degrees over a normal jump
+        public double AirBrakeDecel = 3.0;            // m/s^2 when pressing against your motion in the air
+        // Slide-hopping (slide-jump, slide-land, repeat) keeps your speed but each chained hop on its own loses a
+        // little, so flats slowly cost speed and slopes, ramps and stairs are where speed is built.
+        public double SlideHopKeep = 0.95;            // speed kept by a slide-land that follows a slide-jump
+        public int SlideHopChainTicks = 60;           // a slide-land this soon after a slide-jump counts as a hop
+        public double AirSoftCapSpeed = 14.0;         // above this, air speed bleeds (explosion boosts later)
+        public double AirSoftCapDecel = 4.0;
 
         // Sprint to aim
         public int SprintToAimTicks = 9;            // 0.15 s

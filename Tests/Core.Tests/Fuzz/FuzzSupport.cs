@@ -274,7 +274,7 @@ namespace Sculpt.Core.Tests.Fuzz
                         break;
                     case MoveEventType.Vaulted:
                         Vaults++;
-                        Assert.That(s.ActionTargetY - s.ActionStartY, NUnit.Framework.Is.LessThanOrEqualTo(B + 0.06 + 1e-9), ctx + ": vault over more than one level");
+                        Assert.That(s.ActionTargetY - s.ActionStartY, NUnit.Framework.Is.LessThanOrEqualTo(_c.VaultMaxHeight + 0.01 + 1e-9), ctx + ": vault higher than the configured vault height (one 1.5 m tile, Ben 2026-11-21)");
                         break;
                     case MoveEventType.MantleStarted:
                         Mantles++;
