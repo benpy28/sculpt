@@ -76,6 +76,8 @@ namespace Sculpt.Core.Net
         public delegate void SendFn(int connectionId, byte[] data, bool reliable);
 
         public readonly ITerrain Grid;
+        /// <summary>The breakable wall tiles behind <see cref="Grid"/> (null on maps without buildings). The server owns them.</summary>
+        public readonly TileWalls Walls;
         public readonly MovementConfig Movement;
         public readonly NetConfig Config;
         public int Tick { get; private set; }
@@ -113,6 +115,7 @@ namespace Sculpt.Core.Net
         public NetServer(ITerrain grid, MovementConfig movement, NetConfig config, SendFn send, int startTick = 1000)
         {
             Grid = grid;
+            Walls = TileWalls.Find(grid);
             Movement = movement;
             Config = config;
             _send = send ?? throw new ArgumentNullException(nameof(send));
@@ -160,6 +163,7 @@ namespace Sculpt.Core.Net
             });
             _send(connectionId, _w.ToArray(), true);
             if (Sculpt != null) SendJoinState(p);
+            SendTileJoinState(p);
             return p;
         }
 
@@ -289,6 +293,7 @@ namespace Sculpt.Core.Net
         {
             Tick++;
             _combat.Clear();
+            if (Walls != null) Walls.Tick = Tick;
             _worldEvents.Clear();
             _worldEvents.AddRange(_leftEvents);
             _leftEvents.Clear();
@@ -374,6 +379,7 @@ namespace Sculpt.Core.Net
             }
 
             SendCombat();
+            SendTiles();
             if (Config.SnapshotEveryTicks <= 1 || Tick % Config.SnapshotEveryTicks == 0)
                 SendSnapshots();
         }

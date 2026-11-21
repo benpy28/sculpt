@@ -19,6 +19,8 @@ namespace Sculpt.Core.Net
         private readonly List<CombatEvent> _combatTo = new List<CombatEvent>();
         private readonly List<HitTarget> _targets = new List<HitTarget>();
         private readonly List<ShotVictim> _victims = new List<ShotVictim>();
+        private readonly List<BulletHit> _pellets = new List<BulletHit>();
+        private readonly List<TileChange> _tileScratch = new List<TileChange>();
 
         /// <summary>Every combat event of the last tick (tests and the host's HUD).</summary>
         public IReadOnlyList<CombatEvent> CombatEvents => _combat;
@@ -41,7 +43,8 @@ namespace Sculpt.Core.Net
                     });
                     BuildTargets(p, p.LastCmd.ViewTick, p.LastCmd.ViewFrac);
                     WeaponStats st = Weapons.Of(shot.Weapon);
-                    Hitscan.Resolve(Grid, shot, st, Weapons, p.Team, _targets, _victims);
+                    Hitscan.Resolve(Grid, shot, st, Weapons, p.Team, _targets, _victims, Walls != null ? _pellets : null);
+                    Walls?.ApplyShot(_pellets, shot.Weapon, p.Id);
                     foreach (ShotVictim v in _victims)
                     {
                         ServerPlayer victim = FindById(v.Id);
@@ -124,6 +127,38 @@ namespace Sculpt.Core.Net
             victim.Body.Position = ParkedBody;
             victim.Body.Kick = Vec3d.Zero;
             _combat.Add(new CombatEvent { Type = CombatEventType.Kill, Attacker = killer, Victim = victim.Id, Source = source, HeadPellets = (byte)(headshot ? 1 : 0) });
+        }
+
+        /// <summary>This tick's tile changes to everyone (one reliable message), then forgets them.</summary>
+        private void SendTiles()
+        {
+            if (Walls == null || Walls.Changes.Count == 0) return;
+            for (int start = 0; start < Walls.Changes.Count; start += TileProtocol.MaxChanges)
+            {
+                _tileScratch.Clear();
+                for (int k = start; k < Walls.Changes.Count && k < start + TileProtocol.MaxChanges; k++) _tileScratch.Add(Walls.Changes[k]);
+                _w.Clear();
+                TileProtocol.Write(_w, new TilesMsg { Tick = Tick, Changes = _tileScratch });
+                byte[] data = _w.ToArray();
+                foreach (ServerPlayer to in _players) _send(to.ConnectionId, data, true);
+            }
+            Walls.Changes.Clear();
+        }
+
+        /// <summary>Late join: the current state of every tile that ever changed (the rest are as built).</summary>
+        private void SendTileJoinState(ServerPlayer to)
+        {
+            if (Walls == null) return;
+            var all = new List<TileChange>();
+            for (int i = 0; i < Walls.Count; i++)
+            {
+                WallTile t = Walls[i];
+                if (t.Changed) all.Add(new TileChange { Tick = Tick, Tile = i, To = t.State, Health = t.Health, Cause = TileCause.Server });
+            }
+            if (all.Count == 0) return;
+            var w = new ByteWriter(16 + all.Count * 8);
+            TileProtocol.Write(w, new TilesMsg { Tick = Tick, Join = true, Changes = all });
+            _send(to.ConnectionId, w.ToArray(), true);
         }
 
         /// <summary>One reliable message per tick with events. Shots skip their shooter; health is told only to the two involved.</summary>

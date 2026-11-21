@@ -35,6 +35,9 @@ namespace Sculpt.Core.Net
         public delegate void SendFn(byte[] data, bool reliable);
 
         public readonly ITerrain Grid;
+        /// <summary>This client's copy of the wall tiles behind <see cref="Grid"/> (null without buildings). Only the
+        /// server's Tiles messages change it; its Changes list is for the Game layer to drain (effects).</summary>
+        public readonly TileWalls Walls;
         public readonly MovementConfig Movement;
         public readonly NetConfig Config;
         /// <summary>Optional: networked sculpting on a sub-cell grid (prediction, server ops, windups, flights).</summary>
@@ -71,6 +74,7 @@ namespace Sculpt.Core.Net
         /// <summary>Combat events from the server (others' shots, hits, kills), with their server tick. The Game layer drains it.</summary>
         public readonly List<KeyValuePair<int, CombatEvent>> Combat = new List<KeyValuePair<int, CombatEvent>>();
         private readonly List<CombatEvent> _combatScratch = new List<CombatEvent>();
+        private readonly List<TileChange> _tileScratch = new List<TileChange>();
 
         public double TickSeconds => 1.0 / SimTime.TicksPerSecond;
         /// <summary>Fraction of a tick elapsed since the last predicted tick, for drawing. 0..1.</summary>
@@ -105,6 +109,7 @@ namespace Sculpt.Core.Net
         public NetClient(ITerrain grid, MovementConfig movement, NetConfig config, SendFn send, SculptClient sculpt = null)
         {
             Grid = grid;
+            Walls = TileWalls.Find(grid);
             Movement = movement;
             Config = config;
             _send = send ?? throw new ArgumentNullException(nameof(send));
@@ -147,6 +152,19 @@ namespace Sculpt.Core.Net
                         CombatMsg cm = CombatProtocol.Read(ref r, _combatScratch);
                         foreach (CombatEvent e in cm.Events) Combat.Add(new KeyValuePair<int, CombatEvent>(cm.Tick, e));
                         if (Combat.Count > 4096) Combat.RemoveRange(0, 2048); // nobody is draining (tests)
+                        break;
+                    }
+                    case MsgType.Tiles:
+                    {
+                        if (!Joined || Walls == null) return;
+                        TilesMsg tm = TileProtocol.Read(ref r, _tileScratch);
+                        foreach (TileChange c in tm.Changes)
+                        {
+                            if (c.Tile >= Walls.Count) { DroppedPackets++; continue; }
+                            Walls.Tick = tm.Tick;
+                            Walls.Set(c.Tile, c.To, c.Health, tm.Join ? TileCause.Server : c.Cause, c.By);
+                        }
+                        if (Walls.Changes.Count > 4096) Walls.Changes.RemoveRange(0, 2048); // nobody is draining (tests)
                         break;
                     }
                     case MsgType.Snapshot:

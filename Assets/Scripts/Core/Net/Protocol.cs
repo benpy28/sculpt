@@ -16,6 +16,7 @@ namespace Sculpt.Core.Net
         // Sculpt confirms ride inside Inputs (same tick, same redundancy). Thrown pieces fly deterministically from
         // their Thrown event, so they need no entity stream.
         Combat = 7,    // server -> client, reliable: shots, hits and kills of one tick
+        Tiles = 8,     // server -> client, reliable: wall tile changes of one tick, or every changed tile for a late joiner
     }
 
     public struct WelcomeMsg
@@ -69,7 +70,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 8;
+        public const byte Version = 9;
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;

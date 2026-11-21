@@ -56,12 +56,16 @@ namespace Sculpt.Core.Tests.Net
         public const double TickMs = 1000.0 / 60.0;
         public const double B = SubGrid.TileSize;
 
-        public SculptNetHarness(Func<SubGrid> makeGrid, Action<SculptConfig> tweak = null)
+        /// <summary>Wraps each side's ground into what movement and bullets collide with (e.g. plus buildings).</summary>
+        public readonly Func<SubGrid, ITerrain> Wrap;
+
+        public SculptNetHarness(Func<SubGrid> makeGrid, Action<SculptConfig> tweak = null, Func<SubGrid, ITerrain> wrap = null)
         {
             MakeGrid = makeGrid;
+            Wrap = wrap ?? (g => g);
             tweak?.Invoke(SculptConfig);
             ServerGrid = makeGrid();
-            Server = new NetServer(ServerGrid, Movement, Config, (conn, data, reliable) =>
+            Server = new NetServer(Wrap(ServerGrid), Movement, Config, (conn, data, reliable) =>
             {
                 if (_byConn.TryGetValue(conn, out var p)) p.Down.Send(data, reliable, NowMs);
             });
@@ -94,7 +98,7 @@ namespace Sculpt.Core.Tests.Net
             };
             p.Grid = MakeGrid();
             var sc = new SculptClient(p.Grid, SculptConfig, Movement);
-            p.Client = new NetClient(p.Grid, Movement, Config, (data, reliable) => p.Up.Send(data, reliable, NowMs), sc);
+            p.Client = new NetClient(Wrap(p.Grid), Movement, Config, (data, reliable) => p.Up.Send(data, reliable, NowMs), sc);
             _byConn[p.ConnectionId] = p;
             Peers.Add(p);
             p.ServerSide = Server.AddPlayer(p.ConnectionId, team, spawn, 0);
