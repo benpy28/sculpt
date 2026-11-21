@@ -20,9 +20,9 @@ namespace Sculpt.Core.Net
         internal readonly InputCmd[] Ring;
         internal readonly bool[] Has;
         internal int NewestReceived = int.MinValue;
-        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch;
+        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch, CarryHeal, CarryHealReinforce;
         internal byte CarryWeapon;
-        internal int CarryPickId;
+        internal int CarryPickId, CarryHealTile;
         internal InputCmd CarrySculptCmd;
 
         // Sculpt confirm bookkeeping (client sequence numbers echoed in world events).
@@ -126,6 +126,7 @@ namespace Sculpt.Core.Net
         {
             Grid = grid;
             Walls = TileWalls.Find(grid);
+            InitHealing();
             Movement = movement;
             Config = config;
             _send = send ?? throw new ArgumentNullException(nameof(send));
@@ -183,6 +184,8 @@ namespace Sculpt.Core.Net
             if (!_byConn.TryGetValue(connectionId, out var p)) return;
             _byConn.Remove(connectionId);
             _players.Remove(p);
+            Healing?.Cancel(p.Id, HealResult.Stopped, null, Tick);
+            _ownBars.Remove(p.Id);
             if (Sculpt != null)
             {
                 if (p.PendingSeq >= 0 || Sculpt.PendingOf(p.Id) != null)
@@ -251,6 +254,7 @@ namespace Sculpt.Core.Net
                         if (c.Hand.Pickup) { p.CarryPickup = true; p.CarryPickId = c.Hand.PickId; }
                         if (c.Hand.Drop) p.CarryDrop = true;
                         if (c.Hand.Punch) p.CarryPunch = true;
+                        if (c.Hand.Heal) { p.CarryHeal = true; p.CarryHealTile = c.Hand.HealTile; p.CarryHealReinforce = c.Hand.HealReinforce; }
                         if (c.HasSculpt) { p.CarrySculpt = true; p.CarrySculptCmd = c; }
                         // Mark so redundant copies are not counted again.
                         p.Ring[idx] = c;
@@ -312,6 +316,7 @@ namespace Sculpt.Core.Net
             _worldEvents.Clear();
             _worldEvents.AddRange(_leftEvents);
             _leftEvents.Clear();
+            TickOwnBars();
             if (Sculpt != null)
             {
                 Sculpt.Step();
@@ -351,6 +356,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryPickup) { if (!cmd.Hand.Pickup) { cmd.Hand.Pickup = true; cmd.Hand.PickId = p.CarryPickId; } p.CarryPickup = false; }
                 if (p.CarryDrop) { cmd.Hand.Drop = true; p.CarryDrop = false; }
                 if (p.CarryPunch) { cmd.Hand.Punch = true; p.CarryPunch = false; }
+                if (p.CarryHeal) { if (!cmd.Hand.Heal) { cmd.Hand.Heal = true; cmd.Hand.HealTile = p.CarryHealTile; cmd.Hand.HealReinforce = p.CarryHealReinforce; } p.CarryHeal = false; }
                 if (p.CarrySculpt)
                 {
                     if (!cmd.HasSculpt) { cmd.HasSculpt = true; cmd.SculptSeq = p.CarrySculptCmd.SculptSeq; cmd.Sculpt = p.CarrySculptCmd.Sculpt; }
@@ -374,6 +380,7 @@ namespace Sculpt.Core.Net
                 NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches, Walls != null ? _charge : null);
                 if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
                 if (!p.State.Dead && (cmd.Hand.Pickup || cmd.Hand.Drop)) HandleItems(p, cmd);
+                if (cmd.Hand.Heal) HandleHeal(p, cmd);
                 if (p.DeferredLock != int.MinValue)
                 {
                     HandRules.LockGun(ref p.State.Hand, p.DeferredLock);
@@ -393,6 +400,7 @@ namespace Sculpt.Core.Net
             ResolveShots();
             ResolvePunches();
             ResolveGrenades();
+            StepHealing();
 
             if (Sculpt != null)
             {
@@ -627,7 +635,7 @@ namespace Sculpt.Core.Net
                     SelfInputWasReal = to.LastCmdWasReal,
                     SelfLead = WorstLead(to),
                     Self = to.State,
-                    SelfBar = Sculpt != null ? Sculpt.BarOf(to.Id).Value : 0,
+                    SelfBar = BarOf(to.Id).Value,
                     Others = _others,
                 });
                 _send(to.ConnectionId, _w.ToArray(), false);

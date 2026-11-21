@@ -40,6 +40,17 @@ namespace Sculpt.Core.Net
         public readonly TileWalls Walls;
         /// <summary>Your own charge breaks, predicted on <see cref="Walls"/> until the server confirms or refuses them.</summary>
         public readonly PredictedChargeBreaker Charges = new PredictedChargeBreaker();
+        /// <summary>Everyone's heals as the server reported them (null without tiles). Also runs the press checks.</summary>
+        public readonly TileHealing Heals;
+        /// <summary>Heal events from the server (everyone's), for the Game layer to drain (sounds, effects, red refusals).</summary>
+        public readonly List<HealEvent> HealEvents = new List<HealEvent>();
+        private readonly List<HealEvent> _healScratch = new List<HealEvent>();
+        private bool _healPending, _healAcked;
+        private HealJob _healPress;
+        private int _healAckTick, _healRefund;
+        /// <summary>Your sculpt bar as the server last reported it, and the tick of that report.</summary>
+        public int ServerBar { get; private set; } = SculptConfig.BarMax;
+        public int ServerBarTick { get; private set; } = int.MinValue;
         public readonly MovementConfig Movement;
         public readonly NetConfig Config;
         /// <summary>Optional: networked sculpting on a sub-cell grid (prediction, server ops, windups, flights).</summary>
@@ -118,6 +129,7 @@ namespace Sculpt.Core.Net
         {
             Grid = grid;
             Walls = TileWalls.Find(grid);
+            if (Walls != null) Heals = new TileHealing(Walls);
             Movement = movement;
             Config = config;
             _send = send ?? throw new ArgumentNullException(nameof(send));
@@ -165,7 +177,7 @@ namespace Sculpt.Core.Net
                     case MsgType.Tiles:
                     {
                         if (!Joined || Walls == null) return;
-                        TilesMsg tm = TileProtocol.Read(ref r, _tileScratch);
+                        TilesMsg tm = TileProtocol.Read(ref r, _tileScratch, _healScratch);
                         foreach (TileChange c in tm.Changes)
                         {
                             if (c.Tile >= Walls.Count) { DroppedPackets++; continue; }
@@ -173,6 +185,12 @@ namespace Sculpt.Core.Net
                             Walls.Set(c.Tile, c.To, c.Health, tm.Join ? TileCause.Server : c.Cause, c.By);
                         }
                         if (Walls.Changes.Count > 4096) Walls.Changes.RemoveRange(0, 2048); // nobody is draining (tests)
+                        foreach (HealEvent e in tm.Heals)
+                        {
+                            if (e.Tile >= Walls.Count) { DroppedPackets++; continue; }
+                            OnHealEvent(e);
+                        }
+                        if (HealEvents.Count > 4096) HealEvents.RemoveRange(0, 2048);
                         break;
                     }
                     case MsgType.Items:
@@ -214,6 +232,10 @@ namespace Sculpt.Core.Net
             _serverTimeValid = true;
             LastSnapshotTick = int.MinValue;
             Sculpt?.Reset(m.PlayerId, m.Team, m.Spawn, Tick);
+            Heals?.Clear();
+            _healPending = false;
+            ServerBar = SculptConfig.BarMax;
+            ServerBarTick = int.MinValue;
         }
 
         private void OnSnapshot(in SnapshotMsg m)
@@ -247,6 +269,8 @@ namespace Sculpt.Core.Net
             if (!m.HasSelf) return;
             LastInputWasRealOnServer = m.SelfInputWasReal;
             Sculpt?.OnSelfBar(m.ServerTick, m.SelfBar);
+            ServerBarTick = m.ServerTick;
+            ServerBar = m.SelfBar;
             RttTicks += ((Tick - m.ServerTick - Math.Max(0, LastServerLead == Protocol.NoLead ? 0 : LastServerLead)) - RttTicks) * 0.1;
             // Our confirm for tick T is answered (Began) in the world message of server tick T, which we see about a
             // snapshot round trip after predicting T. Allow 1.5x that plus slack before giving up on it.
@@ -370,6 +394,7 @@ namespace Sculpt.Core.Net
         {
             if (!Joined) return 0;
             Tick++;
+            ExpireHealPress();
             // ISSUE-10: the dead can't sculpt (their body is parked far below the map), and a target the wire can't
             // carry is impossible anyway: drop the confirm instead of letting the send throw.
             if (confirm && (_pred.Dead || !InputCmd.TargetFits(sculpt.Target))) confirm = false;
@@ -392,6 +417,7 @@ namespace Sculpt.Core.Net
             });
 
             WarpNext = false;
+            if (cmd.Hand.Heal && Heals != null) OnHealPressed(cmd);
             _prevPred = _pred;
             if (Sculpt != null)
             {
@@ -451,6 +477,70 @@ namespace Sculpt.Core.Net
             _w.Clear();
             Protocol.Write(_w, new InputsMsg { AckSnapshotTick = LastSnapshotTick, Cmds = _sendCmds });
             _send(_w.ToArray(), false);
+        }
+
+        // ================================================================ Healing
+
+        /// <summary>
+        /// The bar to show: the server's value minus your heal press it has not seen yet (or has, but whose spend is not
+        /// in a snapshot yet), and minus any sculpt spends the sculpt client is still predicting.
+        /// </summary>
+        public int DisplayBar
+        {
+            get
+            {
+                int v = Sculpt != null ? Sculpt.DisplayBar : ServerBar;
+                if (_healPending && (!_healAcked || ServerBarTick < _healAckTick)) v += _healRefund - _healPress.Cost;
+                return Math.Max(0, Math.Min(SculptConfig.BarMax, v));
+            }
+        }
+
+        /// <summary>
+        /// Your heal as you should see it: the press you just made (predicted, on the same ticks the server will run it)
+        /// until the server answers, then the server's. False when you are not healing.
+        /// </summary>
+        public bool TryGetOwnHeal(out HealJob job, out bool confirmed)
+        {
+            confirmed = false;
+            job = default;
+            if (Heals == null) return false;
+            if (_healPending && !_healAcked) { job = _healPress; return true; }
+            confirmed = Heals.TryGetJob(PlayerId, out job);
+            return confirmed;
+        }
+
+        /// <summary>Ticks to wait for the server's answer to a heal press before forgetting it.</summary>
+        public int HealAnswerTimeoutTicks => Math.Max(30, (int)Math.Ceiling(RttTicks * 2) + 20);
+
+        private void OnHealPressed(in InputCmd cmd)
+        {
+            HealKind kind = cmd.Hand.HealReinforce ? HealKind.Reinforce : HealKind.Heal;
+            if (Heals.TryGetJob(PlayerId, out HealJob same) && same.Tile == cmd.Hand.HealTile && same.Kind == kind) return; // the server ignores it too
+            _healRefund = Heals.TryGetJob(PlayerId, out HealJob cur) && cur.Tile != cmd.Hand.HealTile ? cur.Cost : 0;
+            _healPress = new HealJob
+            {
+                Player = PlayerId, Tile = cmd.Hand.HealTile, Kind = kind, StartTick = cmd.Tick,
+                EndTick = cmd.Tick + TileHealing.TicksOf(kind, Heals.Config), Cost = TileHealing.CostOf(kind, Heals.Config),
+            };
+            _healPending = true;
+            _healAcked = false;
+        }
+
+        private void OnHealEvent(in HealEvent e)
+        {
+            Heals.ApplyRemote(e);
+            HealEvents.Add(e);
+            if (e.Player != PlayerId || !_healPending) return;
+            if (e.Tile != _healPress.Tile) return;
+            if (e.Type == HealEventType.Began && !_healAcked) { _healAcked = true; _healAckTick = e.Tick; }
+            else if (e.Type == HealEventType.Rejected && !_healAcked) _healPending = false;
+            else if (e.Type == HealEventType.Completed || e.Type == HealEventType.Cancelled) _healPending = false;
+        }
+
+        private void ExpireHealPress()
+        {
+            if (!_healPending) return;
+            if (_healAcked ? ServerBarTick >= _healAckTick : Tick - _healPress.StartTick > HealAnswerTimeoutTicks) _healPending = false;
         }
 
         // ================================================================ Remote players

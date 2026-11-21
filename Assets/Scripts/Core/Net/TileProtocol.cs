@@ -8,11 +8,15 @@ namespace Sculpt.Core.Net
         public int Tick;
         public bool Join;
         public List<TileChange> Changes;
+        /// <summary>Heals and reinforces that began, finished, were cancelled or refused this tick (with Join: every heal
+        /// still running, as Began). May be null when writing (none).</summary>
+        public List<HealEvent> Heals;
     }
 
     /// <summary>
     /// Wire format of <see cref="TilesMsg"/>: per change the tile id, new state, health, cause and who caused it
     /// (7 bytes). The From state is not sent: the client reads it from its own copy when it applies the change.
+    /// Then the heal events: type and kind, player, tile, ticks to the heal's end, result (8 bytes each).
     /// </summary>
     public static class TileProtocol
     {
@@ -35,13 +39,26 @@ namespace Sculpt.Core.Net
                 w.U8((byte)c.Cause);
                 w.U16((ushort)c.By);
             }
+            int hn = m.Heals?.Count ?? 0;
+            if (hn > MaxChanges) throw new System.ArgumentException("Too many heal events.");
+            w.U16((ushort)hn);
+            for (int i = 0; i < hn; i++)
+            {
+                HealEvent e = m.Heals[i];
+                w.U8((byte)((byte)e.Type | ((byte)e.Kind << 4)));
+                w.U16((ushort)e.Player);
+                w.U16((ushort)e.Tile);
+                w.U16((ushort)System.Math.Max(0, System.Math.Min(ushort.MaxValue, e.EndTick - m.Tick)));
+                w.U8((byte)e.Result);
+            }
         }
 
-        public static TilesMsg Read(ref ByteReader r, List<TileChange> into)
+        public static TilesMsg Read(ref ByteReader r, List<TileChange> into, List<HealEvent> heals)
         {
             if (r.U8() != (byte)MsgType.Tiles) throw new NetFormatException("Unexpected message type.");
             into.Clear();
-            var m = new TilesMsg { Tick = r.I32(), Join = r.Bool(), Changes = into };
+            heals.Clear();
+            var m = new TilesMsg { Tick = r.I32(), Join = r.Bool(), Changes = into, Heals = heals };
             int n = r.U16();
             for (int i = 0; i < n; i++)
             {
@@ -55,6 +72,20 @@ namespace Sculpt.Core.Net
                 c.Cause = (TileCause)cause;
                 c.By = r.U16();
                 into.Add(c);
+            }
+            int hn = r.U16();
+            for (int i = 0; i < hn; i++)
+            {
+                byte tk = r.U8();
+                var e = new HealEvent { Type = (HealEventType)(tk & 15), Kind = (HealKind)(tk >> 4), Tick = m.Tick };
+                if (e.Type > HealEventType.Rejected || e.Kind > HealKind.Reinforce) throw new NetFormatException("Bad heal event.");
+                e.Player = r.U16();
+                e.Tile = r.U16();
+                e.EndTick = m.Tick + r.U16();
+                byte res = r.U8();
+                if (res > (byte)HealResult.Replaced) throw new NetFormatException("Bad heal result.");
+                e.Result = (HealResult)res;
+                heals.Add(e);
             }
             return m;
         }

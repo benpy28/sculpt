@@ -30,6 +30,24 @@ namespace Sculpt.Core
             if (Value == SculptConfig.BarMax) _remainder = 0;
         }
 
+        private int _damageRemainder;
+
+        /// <summary>
+        /// Bar earned by dealing <paramref name="damage"/> to an enemy: <paramref name="per10"/> basis points per 10
+        /// damage, exact (fractions carry over to the next hit). Does not reset the refill delay. Returns the gain.
+        /// </summary>
+        public int GainForDamage(int damage, int per10)
+        {
+            if (damage <= 0 || per10 <= 0) return 0;
+            long total = (long)damage * per10 + _damageRemainder;
+            _damageRemainder = (int)(total % 10);
+            int gain = (int)Math.Min(SculptConfig.BarMax, total / 10);
+            int before = Value;
+            Value = Math.Min(SculptConfig.BarMax, Value + gain);
+            if (Value == SculptConfig.BarMax) _remainder = 0;
+            return Value - before;
+        }
+
         public void SetValue(int value)
         {
             Value = Math.Max(0, Math.Min(SculptConfig.BarMax, value));

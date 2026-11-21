@@ -102,6 +102,10 @@ namespace Sculpt.Core
         public bool Drop;
         /// <summary>Punch press (its own bind, F by default).</summary>
         public bool Punch;
+        /// <summary>Sculpt press on a wall tile: heal it (or reinforce it with <see cref="HealReinforce"/>). The server checks it.</summary>
+        public bool Heal;
+        public int HealTile;
+        public bool HealReinforce;
     }
 
     /// <summary>Hand timings (Ben approved 2026-11-20). Ticks at 60 Hz.</summary>

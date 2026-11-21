@@ -51,7 +51,7 @@ namespace Sculpt.Core.Net
                         if (victim == null || victim.State.Dead) continue;
                         int dmg = v.Damage;
                         if (dmg <= 0) continue;
-                        bool killed = WeaponRules.ApplyDamage(ref victim.State, dmg, Tick, Weapons);
+                        bool killed = Hurt(p, victim, dmg);
                         _combat.Add(new CombatEvent
                         {
                             Type = CombatEventType.Hit, Attacker = p.Id, Victim = v.Id, Source = (DamageSource)shot.Weapon,
@@ -84,7 +84,7 @@ namespace Sculpt.Core.Net
                     {
                         ServerPlayer victim = FindById(_targets[h.Target].Id);
                         if (victim == null || victim.State.Dead || pc.PlayerDamage <= 0) continue;
-                        bool killed = WeaponRules.ApplyDamage(ref victim.State, pc.PlayerDamage, Tick, Weapons);
+                        bool killed = Hurt(p, victim, pc.PlayerDamage);
                         _combat.Add(new CombatEvent
                         {
                             Type = CombatEventType.Hit, Attacker = p.Id, Victim = victim.Id, Source = DamageSource.Punch,
@@ -129,7 +129,7 @@ namespace Sculpt.Core.Net
                         Vec3d push = GrenadeRules.Push(Grid, e.Position, o.State.Position, height, gc, gc.OtherKnock);
                         if (push.LengthSquared > 0) GrenadeRules.Knock(ref o.State, push);
                         if (dmg <= 0) continue;
-                        bool killed = WeaponRules.ApplyDamage(ref o.State, dmg, Tick, Weapons);
+                        bool killed = Hurt(p, o, dmg);
                         _combat.Add(new CombatEvent
                         {
                             Type = CombatEventType.Hit, Attacker = p.Id, Victim = o.Id, Source = DamageSource.Grenade,
@@ -191,7 +191,7 @@ namespace Sculpt.Core.Net
         private void ThrowDamage(ServerPlayer victim, int damage, Vec3d point, int thrower)
         {
             if (victim.State.Dead || damage <= 0) return;
-            bool killed = WeaponRules.ApplyDamage(ref victim.State, damage, Tick, Weapons);
+            bool killed = Hurt(FindById(thrower), victim, damage);
             _combat.Add(new CombatEvent
             {
                 Type = CombatEventType.Hit, Attacker = thrower, Victim = victim.Id, Source = DamageSource.Throw,
@@ -213,13 +213,14 @@ namespace Sculpt.Core.Net
         /// <summary>This tick's tile changes to everyone (one reliable message), then forgets them.</summary>
         private void SendTiles()
         {
-            if (Walls == null || Walls.Changes.Count == 0) return;
-            for (int start = 0; start < Walls.Changes.Count; start += TileProtocol.MaxChanges)
+            List<HealEvent> heals = TakeHealEvents();
+            if (Walls == null || (Walls.Changes.Count == 0 && (heals == null || heals.Count == 0))) return;
+            for (int start = 0; start == 0 || start < Walls.Changes.Count; start += TileProtocol.MaxChanges)
             {
                 _tileScratch.Clear();
                 for (int k = start; k < Walls.Changes.Count && k < start + TileProtocol.MaxChanges; k++) _tileScratch.Add(Walls.Changes[k]);
                 _w.Clear();
-                TileProtocol.Write(_w, new TilesMsg { Tick = Tick, Changes = _tileScratch });
+                TileProtocol.Write(_w, new TilesMsg { Tick = Tick, Changes = _tileScratch, Heals = start == 0 ? heals : null });
                 byte[] data = _w.ToArray();
                 foreach (ServerPlayer to in _players) _send(to.ConnectionId, data, true);
             }
@@ -236,9 +237,10 @@ namespace Sculpt.Core.Net
                 WallTile t = Walls[i];
                 if (t.Changed) all.Add(new TileChange { Tick = Tick, Tile = i, To = t.State, Health = t.Health, Cause = TileCause.Server });
             }
-            if (all.Count == 0) return;
-            var w = new ByteWriter(16 + all.Count * 8);
-            TileProtocol.Write(w, new TilesMsg { Tick = Tick, Join = true, Changes = all });
+            List<HealEvent> running = RunningHeals();
+            if (all.Count == 0 && running.Count == 0) return;
+            var w = new ByteWriter(16 + all.Count * 8 + running.Count * 8);
+            TileProtocol.Write(w, new TilesMsg { Tick = Tick, Join = true, Changes = all, Heals = running });
             _send(to.ConnectionId, w.ToArray(), true);
         }
 

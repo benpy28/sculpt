@@ -315,7 +315,7 @@ namespace Sculpt.Core.Tests
             byte[] data = w.ToArray();
             var r = new ByteReader(data, 0, data.Length);
             var into = new List<TileChange>();
-            TilesMsg m = TileProtocol.Read(ref r, into);
+            TilesMsg m = TileProtocol.Read(ref r, into, new List<HealEvent>());
             Assert.That(m.Tick, Is.EqualTo(1234));
             Assert.That(m.Join, Is.True);
             Assert.That(into.Count, Is.EqualTo(2));
@@ -325,12 +325,12 @@ namespace Sculpt.Core.Tests
             Assert.Throws<NetFormatException>(() =>
             {
                 var bad = new ByteReader(data, 0, data.Length);
-                TileProtocol.Read(ref bad, into);
+                TileProtocol.Read(ref bad, into, new List<HealEvent>());
             });
             Assert.Throws<NetFormatException>(() =>
             {
                 var cut = new ByteReader(data, 0, data.Length - 3);
-                TileProtocol.Read(ref cut, into);
+                TileProtocol.Read(ref cut, into, new List<HealEvent>());
             });
         }
 

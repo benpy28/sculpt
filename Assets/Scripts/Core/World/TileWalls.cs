@@ -70,6 +70,33 @@ namespace Sculpt.Core
         /// <summary>You must hit the wall within this many degrees of head-on (a glancing scrape along it never breaks it).</summary>
         public double ChargeMaxAngleDegrees = 60;
 
+        // ---- Healing and the bar (Ben 2026-11-21). Bar values are basis points (10000 = 100%). ----
+        /// <summary>A heal takes this long (0.8 s) and the tile comes back Patched.</summary>
+        public int HealTicks = 48;
+        /// <summary>Reinforcing takes this long (Claude: same as a heal; Ben only set the cost).</summary>
+        public int ReinforceTicks = 48;
+        public int HealCost = 1000;      // 10%
+        public int ReinforceCost = 2500; // 25%
+        /// <summary>Sculpt range for healing, metres (eye to the nearest point of the tile).</summary>
+        public double HealRange = 6.0;
+        /// <summary>A running heal is cancelled (and refunded) once the healer is this much further away than the range.</summary>
+        public double HealLeash = 1.5;
+        /// <summary>The bar refills by itself at this many basis points per second (200 = 2%/s, empty to full in 50 s).</summary>
+        public int BarRefillPerSecond = 200;
+        /// <summary>The refill starts this many ticks after a spend (0: at once).</summary>
+        public int BarRefillDelayTicks = 0;
+        /// <summary>Bar gained per 10 damage dealt to enemy players (100 = 1%).</summary>
+        public int BarPer10Damage = 100;
+
+        /// <summary>Writes the bar refill numbers into the sculpt config the bars tick with.</summary>
+        public void ApplyBarTo(SculptConfig s)
+        {
+            s.RegenDelayTicks = Math.Max(0, BarRefillDelayTicks);
+            // Full bar over (BarMax / perSecond) seconds; SculptBar spreads it exactly over that many ticks.
+            s.RegenFullTicks = BarRefillPerSecond <= 0 ? int.MaxValue / 4
+                : Math.Max(1, (int)Math.Round((double)SculptConfig.BarMax * SimTime.TicksPerSecond / BarRefillPerSecond));
+        }
+
         public int TileDamageOf(Weapon w)
         {
             switch (w)
