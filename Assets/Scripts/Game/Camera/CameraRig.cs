@@ -98,7 +98,7 @@ namespace Sculpt.Game.Cameras
             _fovKick = Mathf.Lerp(_fovKick, kickTarget, 1f - Mathf.Exp(-8f * dt));
             // Light zoom on right mouse (AR, pistol): scales the view by the gun's AimFovScale, eased in about 80 ms.
             float zoomTarget = 1f;
-            if (_player.Zoomed) zoomTarget = (float)c.Weapons.Of(s.Hand.Held).AimFovScale;
+            if (_player.Zoomed && s.Hand.HasGun) zoomTarget = (float)c.Weapons.Of(s.Hand.Held).AimFovScale;
             _zoom = Mathf.Lerp(_zoom, zoomTarget, 1f - Mathf.Exp(-28f * dt));
             float baseFov = _settings.Fov + _fovKick * _zoom;
             float half = Mathf.Atan(Mathf.Tan(baseFov * 0.5f * Mathf.Deg2Rad) * _zoom) * Mathf.Rad2Deg;

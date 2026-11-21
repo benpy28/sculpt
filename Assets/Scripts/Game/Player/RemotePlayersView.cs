@@ -30,7 +30,7 @@ namespace Sculpt.Game.Player
         {
             public GameObject Root;
             public Transform Body, Head, Visor, Gun;
-            public Weapon GunShown = (Weapon)255;
+            public Item GunShown = (Item)255;
             public int Team = -1;
             public MeshRenderer BodyR, HeadR;
             public MaterialPropertyBlock Block;
@@ -91,15 +91,17 @@ namespace Sculpt.Game.Player
                 a.Visor.localRotation = Quaternion.Euler((float)v.Pitch, 0, 0);
 
                 // Their gun: held at the right side, along their aim; lowered out of sight in sculpt mode (a tell).
-                bool gunOut = v.Hand == HandMode.Weapon || v.Hand == HandMode.Drawing;
+                bool gunOut = (v.Hand == HandMode.Weapon || v.Hand == HandMode.Drawing) && v.Held != Item.None;
                 if (a.Gun.gameObject.activeSelf != gunOut) a.Gun.gameObject.SetActive(gunOut);
                 if (gunOut)
                 {
                     if (a.GunShown != v.Held)
                     {
                         a.GunShown = v.Held;
-                        float len = v.Held == Weapon.Pump ? 0.95f : v.Held == Weapon.Ar ? 0.9f : v.Held == Weapon.Smg ? 0.55f : 0.25f;
-                        a.Gun.localScale = new Vector3(0.07f, 0.11f, len);
+                        // A grenade in hand is a small fist-sized lump (a tell: a throw is coming).
+                        float len = v.Held == Item.Pump ? 0.95f : v.Held == Item.Ar ? 0.9f : v.Held == Item.Smg ? 0.55f : v.Held == Item.Grenade ? 0.12f : 0.25f;
+                        float thick = v.Held == Item.Grenade ? 0.12f : 0.07f;
+                        a.Gun.localScale = new Vector3(thick, v.Held == Item.Grenade ? 0.12f : 0.11f, len);
                     }
                     a.Gun.localPosition = new Vector3(w * 0.5f + 0.02f, eye - 0.28f, 0.1f);
                     a.Gun.localRotation = Quaternion.Euler((float)v.Pitch, 0, 0);

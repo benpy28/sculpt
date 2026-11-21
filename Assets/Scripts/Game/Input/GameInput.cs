@@ -28,6 +28,8 @@ namespace Sculpt.Game.Input
         public readonly InputAction Aim;
         public readonly InputAction Reload;
         public readonly InputAction LastWeapon;
+        /// <summary>Interact (E): pick up the item you aim at; hold to drop the held item.</summary>
+        public readonly InputAction Interact;
         public readonly InputAction SculptToggle;
         // Sculpt mode (own actions so they rebind separately from the guns).
         public readonly InputAction SculptPush;
@@ -70,16 +72,20 @@ namespace Sculpt.Game.Input
             Aim = Player.AddAction("Aim", InputActionType.Button, "<Mouse>/rightButton");
             Reload = Player.AddAction("Reload", InputActionType.Button, "<Keyboard>/r");
             string[] keys = { "1", "2", "3", "4", "5" };
-            string[] names = { "Pump", "SMG", "AR", "Pistol", "Utility" };
+            string[] names = { "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5" };
             for (int i = 0; i < 5; i++) Hotbar[i] = Player.AddAction($"{names[i]} ({i + 1})", InputActionType.Button, "<Keyboard>/" + keys[i]);
             LastWeapon = Player.AddAction("Last Weapon", InputActionType.Button);
             LastWeapon.AddBinding(""); // unbound by default; the empty slot is there so it can be bound in the menu
+            Interact = Player.AddAction("Interact (pick up, hold to drop)", InputActionType.Button, "<Keyboard>/e");
             SculptToggle = Player.AddAction("Sculpt Mode", InputActionType.Button, "<Keyboard>/q");
             SculptPush = Player.AddAction("Sculpt Push", InputActionType.Button, "<Mouse>/leftButton");
             SculptPull = Player.AddAction("Sculpt Pull", InputActionType.Button, "<Mouse>/rightButton");
             SculptRaise = Player.AddAction("Sculpt Raise", InputActionType.Button, "<Mouse>/scroll/up");
             SculptSink = Player.AddAction("Sculpt Sink", InputActionType.Button, "<Mouse>/scroll/down");
-            SculptThrow = Player.AddAction("Sculpt Throw", InputActionType.Button, "<Keyboard>/e");
+            // Throw is part of the parked block moving: unbound by default so E is free for Interact (bind it in the
+            // menu if Block Moves Enabled is turned back on).
+            SculptThrow = Player.AddAction("Sculpt Throw", InputActionType.Button);
+            SculptThrow.AddBinding("");
             // Mouse 4 first: Left Alt + Shift is the Windows layout switch, and you can sculpt while sprinting.
             SculptReinforce = Player.AddAction("Sculpt Reinforce (hold)", InputActionType.Button, "<Mouse>/backButton");
             SculptReinforce.AddBinding("<Keyboard>/leftAlt");

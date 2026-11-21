@@ -20,8 +20,9 @@ namespace Sculpt.Core.Net
         internal readonly InputCmd[] Ring;
         internal readonly bool[] Has;
         internal int NewestReceived = int.MinValue;
-        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload;
+        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop;
         internal byte CarryWeapon;
+        internal int CarryPickId;
         internal InputCmd CarrySculptCmd;
 
         // Sculpt confirm bookkeeping (client sequence numbers echoed in world events).
@@ -82,6 +83,11 @@ namespace Sculpt.Core.Net
         public readonly NetConfig Config;
         public int Tick { get; private set; }
         public IReadOnlyList<ServerPlayer> Players => _players;
+        /// <summary>Items on the ground. The server owns them; every client gets the whole list when it changes.</summary>
+        public readonly GroundItems Items = new GroundItems();
+        private int _itemsSentVersion;
+        /// <summary>Pickups and drops of the last tick (tests and the host's effects): player id, result.</summary>
+        public readonly List<KeyValuePair<int, PickupResult>> ItemActions = new List<KeyValuePair<int, PickupResult>>();
 
         /// <summary>Optional: sculpt system whose bodies are kept in sync (shoves move them between ticks).</summary>
         public SculptSystem Sculpt
@@ -164,6 +170,7 @@ namespace Sculpt.Core.Net
             _send(connectionId, _w.ToArray(), true);
             if (Sculpt != null) SendJoinState(p);
             SendTileJoinState(p);
+            SendItems(p.ConnectionId);
             return p;
         }
 
@@ -237,6 +244,8 @@ namespace Sculpt.Core.Net
                         if (c.Hand.SculptToggle) p.CarryToggle = true;
                         if (c.Hand.Reload) p.CarryReload = true;
                         if (c.Hand.WeaponKey != 0) p.CarryWeapon = c.Hand.WeaponKey;
+                        if (c.Hand.Pickup) { p.CarryPickup = true; p.CarryPickId = c.Hand.PickId; }
+                        if (c.Hand.Drop) p.CarryDrop = true;
                         if (c.HasSculpt) { p.CarrySculpt = true; p.CarrySculptCmd = c; }
                         // Mark so redundant copies are not counted again.
                         p.Ring[idx] = c;
@@ -293,6 +302,7 @@ namespace Sculpt.Core.Net
         {
             Tick++;
             _combat.Clear();
+            ItemActions.Clear();
             if (Walls != null) Walls.Tick = Tick;
             _worldEvents.Clear();
             _worldEvents.AddRange(_leftEvents);
@@ -333,6 +343,8 @@ namespace Sculpt.Core.Net
                 if (p.CarryToggle) { cmd.Hand.SculptToggle = true; p.CarryToggle = false; }
                 if (p.CarryReload) { cmd.Hand.Reload = true; p.CarryReload = false; }
                 if (p.CarryWeapon != 0) { if (cmd.Hand.WeaponKey == 0) cmd.Hand.WeaponKey = p.CarryWeapon; p.CarryWeapon = 0; }
+                if (p.CarryPickup) { if (!cmd.Hand.Pickup) { cmd.Hand.Pickup = true; cmd.Hand.PickId = p.CarryPickId; } p.CarryPickup = false; }
+                if (p.CarryDrop) { cmd.Hand.Drop = true; p.CarryDrop = false; }
                 if (p.CarrySculpt)
                 {
                     if (!cmd.HasSculpt) { cmd.HasSculpt = true; cmd.SculptSeq = p.CarrySculptCmd.SculptSeq; cmd.Sculpt = p.CarrySculptCmd.Sculpt; }
@@ -352,6 +364,7 @@ namespace Sculpt.Core.Net
                 p.Shots.Clear();
                 NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots);
                 if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
+                if (!p.State.Dead && (cmd.Hand.Pickup || cmd.Hand.Drop)) HandleItems(p, cmd);
                 if (p.DeferredLock != int.MinValue)
                 {
                     HandRules.LockGun(ref p.State.Hand, p.DeferredLock);
@@ -380,8 +393,43 @@ namespace Sculpt.Core.Net
 
             SendCombat();
             SendTiles();
+            if (Items.Version != _itemsSentVersion) { _itemsSentVersion = Items.Version; SendItems(-1); }
             if (Config.SnapshotEveryTicks <= 1 || Tick % Config.SnapshotEveryTicks == 0)
                 SendSnapshots();
+        }
+
+        // ================================================================ Items
+
+        /// <summary>
+        /// Pickup and drop, applied right after the player's movement on the tick they were pressed. Not predicted: the
+        /// client sees its new bag in the next snapshot (the draw time that follows hides most of the round trip).
+        /// </summary>
+        private void HandleItems(ServerPlayer p, in InputCmd cmd)
+        {
+            if (cmd.Hand.Pickup)
+            {
+                Vec3d eye = p.State.Position + new Vec3d(0, PlayerMovement.EyeOf(p.State, Movement), 0);
+                PickupResult r = ItemRules.TryPickup(ref p.State, Items, cmd.Hand.PickId, Grid, eye, p.Id, Tick, Movement);
+                ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, r));
+            }
+            else if (cmd.Hand.Drop && ItemRules.TryDrop(ref p.State, Items, Grid, cmd.Move.Yaw, p.Id, Tick, Movement))
+                ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, PickupResult.Ok));
+        }
+
+        /// <summary>The whole ground list to one connection, or to everyone (-1).</summary>
+        private void SendItems(int connectionId)
+        {
+            var w = new ByteWriter(16 + Items.Count * 24);
+            ItemsProtocol.Write(w, new ItemsMsg { Tick = Tick, Items = new List<GroundItem>(Items.All) });
+            byte[] data = w.ToArray();
+            if (connectionId >= 0) { _send(connectionId, data, true); return; }
+            foreach (ServerPlayer to in _players) _send(to.ConnectionId, data, true);
+        }
+
+        /// <summary>Puts an item on the map (map setup, tests). It rests on the surface below the point.</summary>
+        public int SpawnItem(Item kind, int count, Vec3d at)
+        {
+            return Items.Add(new GroundItem { Kind = kind, Count = count, Position = ItemRules.Settle(Grid, at), DroppedTick = int.MinValue / 2 }, Movement.Items.MaxGroundItems);
         }
 
         // ================================================================ Sculpt
@@ -556,7 +604,7 @@ namespace Sculpt.Core.Net
                         Mode = o.State.Mode,
                         Crouched = o.State.Crouched,
                         Dead = o.State.Dead,
-                        Held = o.State.Hand.Held,
+                        Held = o.State.Hand.HeldItem,
                         Hand = o.State.Hand.Mode,
                     });
                 }

@@ -2,7 +2,7 @@ using System;
 
 namespace Sculpt.Core
 {
-    /// <summary>The fixed loadout. Hotbar 1-4 in this order.</summary>
+    /// <summary>The four guns (their <see cref="Item"/> is this + 1). The standard loadout has them in hotbar 1-4 in this order.</summary>
     public enum Weapon : byte
     {
         Pump = 0,
@@ -34,8 +34,12 @@ namespace Sculpt.Core
     public struct HandState
     {
         public HandMode Mode;
-        /// <summary>The weapon you return to (last held).</summary>
-        public Weapon Held;
+        /// <summary>The selected hotbar slot, 0-4 (the one you return to after sculpt mode).</summary>
+        public byte Slot;
+        /// <summary>The slot selected before it (drawn when the held slot empties, and the Last Weapon key).</summary>
+        public byte PrevSlot;
+        /// <summary>What is in the five slots.</summary>
+        public Bag Bag;
         /// <summary>When the current transition (draw, enter, exit, disarm) ends.</summary>
         public int ReadyTick;
         /// <summary>Gun lock: you cannot leave sculpt mode before this tick (attack and throw windups).</summary>
@@ -49,24 +53,53 @@ namespace Sculpt.Core
         /// </summary>
         public bool HeldReady;
 
-        public static HandState Initial => new HandState { Mode = HandMode.Weapon, Held = Weapon.Pump, ReadyTick = int.MinValue / 2, SculptLockUntil = int.MinValue / 2 };
+        public static HandState Initial => new HandState { Mode = HandMode.Weapon, Slot = 0, PrevSlot = 1, Bag = Bag.Standard, ReadyTick = int.MinValue / 2, SculptLockUntil = int.MinValue / 2 };
+
+        /// <summary>The item in the selected slot (None = empty hands).</summary>
+        public Item HeldItem => Bag[Slot];
+        /// <summary>A gun is in the selected slot.</summary>
+        public bool HasGun => Items.IsGun(HeldItem);
+
+        /// <summary>
+        /// The gun in the selected slot. Only meaningful when <see cref="HasGun"/> is true (otherwise Pump; callers check
+        /// HasGun first). Setting it selects the slot that holds that gun (tests and tools).
+        /// </summary>
+        public Weapon Held
+        {
+            get => HasGun ? Items.GunOf(HeldItem) : Weapon.Pump;
+            set
+            {
+                int k = Bag.SlotOf(Items.Of(value));
+                if (k < 0) throw new InvalidOperationException($"No {value} in the bag.");
+                Slot = (byte)k;
+            }
+        }
 
         public bool InSculptMode => Mode == HandMode.SculptEnter || Mode == HandMode.Sculpt;
         /// <summary>Sculpt confirms are accepted this tick.</summary>
         public bool CanConfirmSculpt => Mode == HandMode.Sculpt;
-        public bool CanFire => Mode == HandMode.Weapon;
+        /// <summary>The held gun can fire this tick (a gun is in hand and out).</summary>
+        public bool CanFire => Mode == HandMode.Weapon && HasGun;
+        /// <summary>The held item (gun or not) is out and ready.</summary>
+        public bool ItemReady => Mode == HandMode.Weapon && HeldItem != Item.None;
 
-        public bool Equals(in HandState o) => Mode == o.Mode && Held == o.Held && ReadyTick == o.ReadyTick &&
-                                               SculptLockUntil == o.SculptLockUntil && ExitQueued == o.ExitQueued && HeldReady == o.HeldReady;
+        public bool Equals(in HandState o) => Mode == o.Mode && Slot == o.Slot && PrevSlot == o.PrevSlot && Bag.Equals(o.Bag) &&
+                                               ReadyTick == o.ReadyTick && SculptLockUntil == o.SculptLockUntil &&
+                                               ExitQueued == o.ExitQueued && HeldReady == o.HeldReady;
     }
 
-    /// <summary>Per-tick hand input. Presses only; a weapon key is 1-4 (0 = none).</summary>
+    /// <summary>Per-tick hand input. Presses only; a weapon key is a hotbar slot 1-5 (0 = none).</summary>
     public struct HandInput
     {
         public bool SculptToggle;
         public byte WeaponKey;
         /// <summary>Reload press (R by default).</summary>
         public bool Reload;
+        /// <summary>Interact press aimed at a ground item: pick up item <see cref="PickId"/> (the server checks it).</summary>
+        public bool Pickup;
+        public int PickId;
+        /// <summary>Drop the held slot (the interact key held while not aiming at an item).</summary>
+        public bool Drop;
     }
 
     /// <summary>Hand timings (Ben approved 2026-11-20). Ticks at 60 Hz.</summary>
@@ -75,9 +108,16 @@ namespace Sculpt.Core
         public int SculptEnterTicks = 6;
         public int[] DrawTicks = { 24, 18, 21, 12 };  // pump, SMG, AR, pistol
         public int[] ExitTicks = { 12, 9, 10, 6 };    // sculpt mode back to that weapon
+        /// <summary>Grenades out of the bag, and back out of sculpt mode (tuning, Claude 2026-11-21).</summary>
+        public int GrenadeDrawTicks = 12;
+        public int GrenadeExitTicks = 6;
 
         public int Draw(Weapon w) => DrawTicks[(int)w];
         public int Exit(Weapon w) => ExitTicks[(int)w];
+
+        /// <summary>Draw time of any item; empty hands are ready at once.</summary>
+        public int Draw(Item i) => Items.IsGun(i) ? Draw(Items.GunOf(i)) : i == Item.Grenade ? GrenadeDrawTicks : 0;
+        public int Exit(Item i) => Items.IsGun(i) ? Exit(Items.GunOf(i)) : i == Item.Grenade ? GrenadeExitTicks : 0;
     }
 
     public static class HandRules
@@ -91,24 +131,25 @@ namespace Sculpt.Core
             if (h.Mode == HandMode.Disarmed && tick >= h.ReadyTick)
             {
                 h.Mode = HandMode.Drawing;
-                h.ReadyTick = tick + cfg.Draw(h.Held);
+                h.ReadyTick = tick + cfg.Draw(h.HeldItem);
             }
             if (h.Mode == HandMode.Disarmed) return; // nothing works while disarmed
 
-            Weapon? pick = input.WeaponKey >= 1 && input.WeaponKey <= 4 ? (Weapon)(input.WeaponKey - 1) : (Weapon?)null;
+            // A slot key picks that slot; an empty slot can't be picked (the key does nothing).
+            int pick = input.WeaponKey >= 1 && input.WeaponKey <= Items.Slots && h.Bag[input.WeaponKey - 1] != Item.None ? input.WeaponKey - 1 : -1;
 
             if (h.InSculptMode)
             {
-                if (input.SculptToggle || pick.HasValue)
+                if (input.SculptToggle || pick >= 0)
                 {
-                    if (pick.HasValue && pick.Value != h.Held) { h.Held = pick.Value; h.HeldReady = false; }
+                    if (pick >= 0 && pick != h.Slot) { Select(ref h, pick); h.HeldReady = false; }
                     h.ExitQueued = true;
                 }
                 if (h.ExitQueued && tick >= h.SculptLockUntil)
                 {
                     h.ExitQueued = false;
                     h.Mode = HandMode.SculptExit;
-                    h.ReadyTick = tick + (h.HeldReady ? cfg.Exit(h.Held) : cfg.Draw(h.Held));
+                    h.ReadyTick = tick + (h.HeldReady ? cfg.Exit(h.HeldItem) : cfg.Draw(h.HeldItem));
                 }
                 return;
             }
@@ -123,12 +164,48 @@ namespace Sculpt.Core
                 h.ExitQueued = false;
                 return;
             }
-            if (pick.HasValue && (pick.Value != h.Held || h.Mode == HandMode.SculptExit))
+            if (pick >= 0 && (pick != h.Slot || h.Mode == HandMode.SculptExit))
             {
-                h.Held = pick.Value;
+                Select(ref h, pick);
                 h.Mode = HandMode.Drawing;
-                h.ReadyTick = tick + cfg.Draw(h.Held);
+                h.ReadyTick = tick + cfg.Draw(h.HeldItem);
             }
+        }
+
+        private static void Select(ref HandState h, int slot)
+        {
+            if (slot == h.Slot) return;
+            h.PrevSlot = h.Slot;
+            h.Slot = (byte)slot;
+        }
+
+        /// <summary>
+        /// The held slot just got a new item (a pickup into it): draw it. In sculpt mode nothing is in hand, so leaving
+        /// later pays its full draw.
+        /// </summary>
+        public static void Redraw(ref HandState h, int tick, HandConfig cfg)
+        {
+            if (h.InSculptMode) { h.HeldReady = false; return; }
+            if (h.Mode == HandMode.Disarmed) return; // the forced redraw at the end of the disarm draws it
+            h.Mode = HandMode.Drawing;
+            h.ReadyTick = tick + cfg.Draw(h.HeldItem);
+        }
+
+        /// <summary>
+        /// The held slot emptied (dropped, or the last grenade thrown): draw the previous slot if it has something, else
+        /// the first slot that does, else stay empty-handed.
+        /// </summary>
+        public static void OnHeldEmptied(ref HandState h, int tick, HandConfig cfg)
+        {
+            if (h.HeldItem != Item.None) return;
+            int next = -1;
+            if (h.PrevSlot != h.Slot && h.Bag[h.PrevSlot] != Item.None) next = h.PrevSlot;
+            for (int k = 0; next < 0 && k < Items.Slots; k++) if (h.Bag[k] != Item.None) next = k;
+            if (next < 0) { if (!h.InSculptMode && h.Mode != HandMode.Disarmed) h.Mode = HandMode.Weapon; return; }
+            byte emptied = h.Slot;
+            h.Slot = (byte)next;
+            h.PrevSlot = emptied;
+            Redraw(ref h, tick, cfg);
         }
 
         /// <summary>A throw hit: no weapons and no sculpting for <paramref name="ticks"/>, then a forced redraw.</summary>

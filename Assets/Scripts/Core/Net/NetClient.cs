@@ -15,7 +15,7 @@ namespace Sculpt.Core.Net
         public MoveMode Mode;
         public bool Crouched;
         public bool Dead;
-        public Weapon Held;
+        public Item Held;
         public HandMode Hand;
         /// <summary>True when the snapshot stream ran dry and this pose is extrapolated or held.</summary>
         public bool Extrapolated;
@@ -75,6 +75,10 @@ namespace Sculpt.Core.Net
         public readonly List<KeyValuePair<int, CombatEvent>> Combat = new List<KeyValuePair<int, CombatEvent>>();
         private readonly List<CombatEvent> _combatScratch = new List<CombatEvent>();
         private readonly List<TileChange> _tileScratch = new List<TileChange>();
+        private readonly List<GroundItem> _itemScratch = new List<GroundItem>();
+
+        /// <summary>This client's copy of the items on the ground (only the server's Items messages change it).</summary>
+        public readonly GroundItems Items = new GroundItems();
 
         public double TickSeconds => 1.0 / SimTime.TicksPerSecond;
         /// <summary>Fraction of a tick elapsed since the last predicted tick, for drawing. 0..1.</summary>
@@ -165,6 +169,13 @@ namespace Sculpt.Core.Net
                             Walls.Set(c.Tile, c.To, c.Health, tm.Join ? TileCause.Server : c.Cause, c.By);
                         }
                         if (Walls.Changes.Count > 4096) Walls.Changes.RemoveRange(0, 2048); // nobody is draining (tests)
+                        break;
+                    }
+                    case MsgType.Items:
+                    {
+                        if (!Joined) return;
+                        ItemsMsg im = ItemsProtocol.Read(ref r, _itemScratch);
+                        Items.ReplaceAll(im.Items);
                         break;
                     }
                     case MsgType.Snapshot:

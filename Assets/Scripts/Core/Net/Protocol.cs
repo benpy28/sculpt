@@ -17,6 +17,7 @@ namespace Sculpt.Core.Net
         // their Thrown event, so they need no entity stream.
         Combat = 7,    // server -> client, reliable: shots, hits and kills of one tick
         Tiles = 8,     // server -> client, reliable: wall tile changes of one tick, or every changed tile for a late joiner
+        Items = 9,     // server -> client, reliable: the whole list of items on the ground, whenever it changes (and on join)
     }
 
     public struct WelcomeMsg
@@ -49,8 +50,8 @@ namespace Sculpt.Core.Net
         public MoveMode Mode;
         public bool Crouched;
         public bool Dead;
-        /// <summary>Gun in hand, and whether they are in sculpt mode etc. (a visible tell).</summary>
-        public Weapon Held;
+        /// <summary>Item in hand, and whether they are in sculpt mode etc. (a visible tell).</summary>
+        public Item Held;
         public HandMode Hand;
     }
 
@@ -70,7 +71,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 9;
+        public const byte Version = 10;
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
@@ -164,7 +165,7 @@ namespace Sculpt.Core.Net
                 w.F32(p.Yaw);
                 w.F32(p.Pitch);
                 w.U8((byte)p.Mode);
-                w.U8((byte)((p.Crouched ? 1 : 0) | (p.Dead ? 2 : 0) | ((byte)p.Held << 2) | ((byte)p.Hand << 4)));
+                w.U8((byte)((p.Crouched ? 1 : 0) | (p.Dead ? 2 : 0) | (((byte)p.Held & 7) << 2) | ((byte)p.Hand << 5)));
             }
         }
 
@@ -198,8 +199,10 @@ namespace Sculpt.Core.Net
                 byte pf = r.U8();
                 p.Crouched = (pf & 1) != 0;
                 p.Dead = (pf & 2) != 0;
-                p.Held = (Weapon)((pf >> 2) & 3);
-                int hm = pf >> 4;
+                int held = (pf >> 2) & 7;
+                if (held > (int)Items.Last) throw new NetFormatException("Bad item.");
+                p.Held = (Item)held;
+                int hm = pf >> 5;
                 if (hm > (int)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
                 p.Hand = (HandMode)hm;
                 othersInto.Add(p);
@@ -244,7 +247,10 @@ namespace Sculpt.Core.Net
             w.Vec(s.LastWallKickNormal);
             w.I32(s.LastSlideJumpTick);
             w.U8((byte)s.Hand.Mode);
-            w.U8((byte)((byte)s.Hand.Held | (s.Hand.HeldReady ? 0x40 : 0) | (s.Hand.ExitQueued ? 0x80 : 0)));
+            w.U8((byte)((s.Hand.Slot & 7) | ((s.Hand.PrevSlot & 7) << 3) | (s.Hand.HeldReady ? 0x40 : 0) | (s.Hand.ExitQueued ? 0x80 : 0)));
+            Bag bag = s.Hand.Bag;
+            for (int k = 0; k < Items.Slots; k++) w.U8((byte)bag[k]);
+            w.U8(bag.Grenades);
             w.I32(s.Hand.ReadyTick);
             w.I32(s.Hand.SculptLockUntil);
             WeaponState g = s.Weapon;
@@ -296,10 +302,18 @@ namespace Sculpt.Core.Net
             if (hm > (byte)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
             s.Hand.Mode = (HandMode)hm;
             byte hw = r.U8();
-            if ((hw & 0x3F) > (byte)Weapon.Pistol) throw new NetFormatException("Bad weapon.");
-            s.Hand.Held = (Weapon)(hw & 0x3F);
+            if ((hw & 7) >= Items.Slots || ((hw >> 3) & 7) >= Items.Slots) throw new NetFormatException("Bad slot.");
+            s.Hand.Slot = (byte)(hw & 7);
+            s.Hand.PrevSlot = (byte)((hw >> 3) & 7);
             s.Hand.HeldReady = (hw & 0x40) != 0;
             s.Hand.ExitQueued = (hw & 0x80) != 0;
+            for (int k = 0; k < Items.Slots; k++)
+            {
+                byte it = r.U8();
+                if (it > (byte)Items.Last) throw new NetFormatException("Bad item.");
+                s.Hand.Bag[k] = (Item)it;
+            }
+            s.Hand.Bag.Grenades = r.U8();
             s.Hand.ReadyTick = r.I32();
             s.Hand.SculptLockUntil = r.I32();
             var g = new WeaponState

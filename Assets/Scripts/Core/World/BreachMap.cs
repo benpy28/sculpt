@@ -12,6 +12,8 @@ namespace Sculpt.Core
         /// <summary>Tile ids of the two test walls (team 1 side, team 2 side) and the sealed room in the middle.</summary>
         public int[] TestWallA, TestWallB, Room;
         public double SizeX, SizeZ;
+        /// <summary>Items lying on the map at the start (the server spawns them): grenade refills by each spawn.</summary>
+        public readonly List<GroundItem> ItemSpawns = new List<GroundItem>();
     }
 
     /// <summary>
@@ -48,6 +50,12 @@ namespace Sculpt.Core
             {
                 info.TeamSpawns[0].Add(new Vec3d(mid - 3 + 3 * i, 0, 30));
                 info.TeamSpawns[1].Add(new Vec3d(mid - 3 + 3 * i, 0, info.SizeZ - 30));
+            }
+            // Grenade refills a few steps in front of each spawn row (two stacks of two per side).
+            foreach (double x in new[] { mid - 5.0, mid + 5.0 })
+            {
+                info.ItemSpawns.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = new Vec3d(x, 0, 34) });
+                info.ItemSpawns.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = new Vec3d(x, 0, info.SizeZ - 34) });
             }
             return w;
         }

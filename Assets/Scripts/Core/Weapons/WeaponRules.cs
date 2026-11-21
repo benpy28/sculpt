@@ -99,12 +99,14 @@ namespace Sculpt.Core
         {
             WeaponsConfig cfg = mc.Weapons;
             ref WeaponState w = ref s.Weapon;
-            Weapon held = s.Hand.Held;
+            // No gun in hand (a grenade or empty hands): recoil still recovers by the last gun's numbers.
+            bool hasGun = s.Hand.HasGun;
+            Weapon held = hasGun ? s.Hand.Held : w.BloomGun;
             WeaponStats st = cfg.Of(held);
 
             // Bloom is per gun: a different gun in hand replaces it with that gun's small swap penalty, which only starts
             // recovering once the gun is out (not during the draw).
-            if (w.BloomGun != held)
+            if (hasGun && w.BloomGun != held)
             {
                 w.BloomGun = held;
                 w.Bloom = st.SwapBloom;
@@ -125,7 +127,7 @@ namespace Sculpt.Core
 
             bool pressed = input.FirePressed || (input.FireHeld && !w.TriggerWasHeld);
             w.TriggerWasHeld = input.FireHeld;
-            if (pressed && !s.Hand.InSculptMode) w.BufferedPressTick = tick; // a sculpt click is never a buffered shot
+            if (pressed && !s.Hand.InSculptMode && hasGun) w.BufferedPressTick = tick; // a sculpt click or a throw is never a buffered shot
 
             if (s.Dead) { w.Reloading = false; return; }
             Reload(ref s, tick, st, reloadPressed);
@@ -180,6 +182,7 @@ namespace Sculpt.Core
         public static void Reload(ref MotorState s, int tick, WeaponStats st, bool pressed)
         {
             ref WeaponState w = ref s.Weapon;
+            if (!s.Hand.HasGun) { w.Reloading = false; return; }
             Weapon held = s.Hand.Held;
             if (w.Reloading && (w.ReloadGun != held || s.Hand.Mode != HandMode.Weapon)) w.Reloading = false;
 

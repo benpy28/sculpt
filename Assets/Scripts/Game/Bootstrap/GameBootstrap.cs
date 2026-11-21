@@ -60,6 +60,7 @@ namespace Sculpt.Game.Bootstrap
             if (weaponSettings != null) weaponSettings.ApplyTo(movement.Weapons);
             if (breachSettings == null) breachSettings = ScriptableObject.CreateInstance<BreachSettings>(); // code defaults
             breachSettings.ApplyTo(sculptConfig);
+            breachSettings.ApplyTo(movement.Items);
             var breach = new BreachConfig();
             breachSettings.ApplyTo(breach);
             var netConfig = new NetConfig { AllowDevWarp = GameInput.DevBuild };
@@ -99,7 +100,13 @@ namespace Sculpt.Game.Bootstrap
                 spawns = new[] { pads, pads };
                 yaw = new[] { spawnYaw, spawnYaw };
             }
-            _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain);
+            Action<NetServer> setup = null;
+            if (breachInfo != null)
+            {
+                BreachMapInfo bi = breachInfo;
+                setup = server => { foreach (GroundItem g in bi.ItemSpawns) server.SpawnItem(g.Kind, g.Count, g.Position); };
+            }
+            _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup);
 
             _world = new GameObject("World").AddComponent<WorldView>();
             _world.Init(_grid, sculptConfig, mapInfo);
@@ -126,6 +133,7 @@ namespace Sculpt.Game.Bootstrap
             _world.TrackPlayers(_player, _session);
 
             new GameObject("Remote Players").AddComponent<RemotePlayersView>().Init(_session, movement);
+            new GameObject("Ground Items").AddComponent<ItemsView>().Init(_session, _player);
 
             _rig = new GameObject("Camera Rig").AddComponent<CameraRig>();
             _rig.Init();

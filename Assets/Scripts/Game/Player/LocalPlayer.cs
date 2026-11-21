@@ -53,7 +53,19 @@ namespace Sculpt.Game.Player
         private ClientSettings _client;
         private bool _jumpLatch, _crouchLatch, _respawnLatch, _toggleLatch, _fireLatch, _reloadLatch;
         private bool _sprintOn, _crouchOn, _zoomOn;
-        private Weapon _lastHeld = Weapon.Pump, _prevHeld = Weapon.Smg;
+        private int _lastSlot = -1;
+
+        // ---- Items (read by the HUD) ----
+        /// <summary>Index into <see cref="NetClient.Items"/> of the ground item under the crosshair, or -1.</summary>
+        public int PickTarget { get; private set; } = -1;
+        /// <summary>What pressing interact on <see cref="PickTarget"/> would do.</summary>
+        public PickupPlan PickPlan { get; private set; }
+        /// <summary>0..1 progress of a held interact key toward dropping the held item (0 when not holding).</summary>
+        public float DropHold { get; private set; }
+        public string InteractKeyName => UI.SculptHud.Key(_input.Interact);
+        private bool _pickupLatch, _dropLatch, _holdForDrop;
+        private int _pickupId;
+        private float _holdStart;
 
         /// <summary>Right mouse zoom (hold or toggle) while a gun is out. The camera scales the FOV by the gun's AimFovScale.</summary>
         public bool Zoomed { get; private set; }
@@ -135,6 +147,7 @@ namespace Sculpt.Game.Player
             else LookDelta = Vector2.zero;
 
             UpdateSculptAim();
+            UpdateItems();
 
             if (InputBlocked || !CursorLocked) return;
             if (_input.Jump.WasPressedThisFrame()) _jumpLatch = true;
@@ -142,8 +155,8 @@ namespace Sculpt.Game.Player
             if (GameInput.DevBuild && _input.DevRespawn.WasPressedThisFrame()) _respawnLatch = true;
             if (GameInput.DevBuild && _course != null && _input.DevShowcase.WasPressedThisFrame()) _showcaseLatch = true;
             if (_input.SculptToggle.WasPressedThisFrame()) _toggleLatch = true;
-            for (int i = 0; i < 4; i++) if (_input.Hotbar[i].WasPressedThisFrame()) _weaponLatch = (byte)(i + 1);
-            if (_input.LastWeapon.WasPressedThisFrame()) _weaponLatch = (byte)((int)_prevHeld + 1);
+            for (int i = 0; i < Items.Slots; i++) if (_input.Hotbar[i].WasPressedThisFrame()) _weaponLatch = (byte)(i + 1);
+            if (_input.LastWeapon.WasPressedThisFrame()) _weaponLatch = (byte)(State.Hand.PrevSlot + 1);
             if (!InSculptMode && !clickToLock && _input.Fire.WasPressedThisFrame()) _fireLatch = true;
             if (!InSculptMode && _input.Reload.WasPressedThisFrame()) _reloadLatch = true;
             if (_client.SprintToggle && _input.Sprint.WasPressedThisFrame()) _sprintOn = !_sprintOn;
@@ -160,6 +173,42 @@ namespace Sculpt.Game.Player
             if (_input.SculptRaise.WasPressedThisFrame()) Confirm(SculptAction.Raise(t.Sub, t.Point, reinforce));
             if (_input.SculptSink.WasPressedThisFrame()) Confirm(SculptAction.Sink(t.Sub, t.Point, reinforce));
             if (_input.SculptThrow.WasPressedThisFrame()) Confirm(SculptAction.Throw(t.Sub, t.Point, LookDir));
+        }
+
+        /// <summary>
+        /// Interact key (E): pressed while aiming at an item picks it up (the server decides, the prompt shows what will
+        /// happen); held for <see cref="ItemConfig.DropHoldTicks"/> while not aiming at one drops the held item.
+        /// </summary>
+        private void UpdateItems()
+        {
+            PickTarget = -1;
+            if (!Net.Joined || State.Dead) { _holdForDrop = false; DropHold = 0; return; }
+            int i = ItemRules.FindTarget(Net.Items, Net.Grid, SimEye, LookDir, _cfg.Items);
+            if (i >= 0)
+            {
+                PickTarget = i;
+                PickPlan = ItemRules.Plan(State, Net.Items[i], Net.PlayerId, Net.Tick, _cfg.Items);
+            }
+            bool active = CursorLocked && !InputBlocked;
+            if (active && _input.Interact.WasPressedThisFrame())
+            {
+                if (PickTarget >= 0)
+                {
+                    if (PickPlan.Allowed) { _pickupLatch = true; _pickupId = Net.Items[PickTarget].Id; }
+                    _holdForDrop = false;
+                }
+                else { _holdForDrop = true; _holdStart = Time.unscaledTime; }
+            }
+            if (_holdForDrop && (!active || !_input.Interact.IsPressed() || State.Hand.HeldItem == Item.None || State.Hand.InSculptMode))
+                _holdForDrop = false;
+            DropHold = 0;
+            if (!_holdForDrop) return;
+            float need = _cfg.Items.DropHoldTicks / (float)SimTime.TicksPerSecond;
+            DropHold = Mathf.Clamp01((Time.unscaledTime - _holdStart) / Mathf.Max(0.01f, need));
+            if (DropHold < 1f) return;
+            _dropLatch = true;
+            _holdForDrop = false;
+            DropHold = 0;
         }
 
         private void Confirm(SculptAction a)
@@ -220,7 +269,7 @@ namespace Sculpt.Game.Player
             Vector2 move = active ? _input.Move.ReadValue<Vector2>() : Vector2.zero;
             bool sculpting = State.Hand.InSculptMode;
             HandState h0 = State.Hand;
-            if (h0.Held != _lastHeld) { _prevHeld = _lastHeld; _lastHeld = h0.Held; _zoomOn = false; }
+            if (h0.Slot != _lastSlot) { _lastSlot = h0.Slot; _zoomOn = false; }
             if (sculpting) _zoomOn = false;
             if (move.sqrMagnitude < 0.01f) _sprintOn = false; // a toggled sprint ends when you stop
             bool sprintHeld = active && (_client.SprintToggle ? _sprintOn : _input.Sprint.IsPressed());
@@ -243,8 +292,14 @@ namespace Sculpt.Game.Player
                 FirePressed = active && !sculpting && _fireLatch,
             };
             _fireLatch = false;
-            var hand = new HandInput { SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0, Reload = _reloadLatch && active };
+            var hand = new HandInput
+            {
+                SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0, Reload = _reloadLatch && active,
+                Pickup = _pickupLatch && active, PickId = _pickupId, Drop = _dropLatch && active,
+            };
             _reloadLatch = false;
+            _pickupLatch = false;
+            _dropLatch = false;
             bool respawn = _respawnLatch;
             bool confirm = _confirmLatch && active;
             SculptAction action = _confirmAction;

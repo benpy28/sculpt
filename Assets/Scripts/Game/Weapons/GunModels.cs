@@ -89,6 +89,23 @@ namespace Sculpt.Game.Weapons
             return m;
         }
 
+        private static readonly Color Olive = new Color(0.30f, 0.34f, 0.22f);
+
+        /// <summary>A frag grenade in the hand (or on the ground): olive body, steel fuse head and spoon. Origin at its centre.</summary>
+        public static GameObject BuildGrenade(Material mat, int layer = 0)
+        {
+            var root = new GameObject("Grenade") { layer = layer };
+            var b = new BoxBuilder();
+            b.Box(Vector3.zero, new Vector3(0.062f, 0.075f, 0.062f), Olive);                          // body
+            b.Box(Vector3.zero, new Vector3(0.07f, 0.05f, 0.05f), Olive);                             // rounded sides
+            b.Box(Vector3.zero, new Vector3(0.05f, 0.05f, 0.07f), Olive);
+            b.Box(new Vector3(0, 0.048f, 0), new Vector3(0.026f, 0.022f, 0.026f), DarkSteel);         // fuse head
+            b.Box(new Vector3(0, 0.03f, -0.03f), new Vector3(0.014f, 0.05f, 0.008f), Steel, -12f);    // spoon
+            b.Box(new Vector3(0.018f, 0.055f, 0), new Vector3(0.012f, 0.016f, 0.004f), Steel);        // pin ring
+            Attach(root.transform, "Body", b.ToMesh("Grenade"), mat, layer);
+            return root;
+        }
+
         private static Transform Attach(Transform parent, string name, Mesh mesh, Material mat, int layer)
         {
             var go = new GameObject(name) { layer = layer };

@@ -37,7 +37,8 @@ namespace Sculpt.Core.Net
             c.Move.MoveZ = QuantizeAxis(c.Move.MoveZ);
             c.Move.Yaw = QuantizeYaw(c.Move.Yaw);
             c.Pitch = (float)Clamp(double.IsNaN(c.Pitch) ? 0 : c.Pitch, -MaxPitch, MaxPitch);
-            if (c.Hand.WeaponKey > 4) c.Hand.WeaponKey = 0;
+            if (c.Hand.WeaponKey > Items.Slots) c.Hand.WeaponKey = 0;
+            if (!c.Hand.Pickup || c.Hand.PickId < 0) { c.Hand.Pickup = false; c.Hand.PickId = 0; }
             if (c.HasSculpt && !TargetFits(c.Sculpt.Target)) c.HasSculpt = false;
             if (c.HasSculpt)
             {
@@ -85,6 +86,7 @@ namespace Sculpt.Core.Net
         private const byte FJumpPressed = 1, FJumpHeld = 2, FCrouchHeld = 4, FCrouchPressed = 8, FSprint = 16, FShoot = 32, FRespawn = 64, FExt = 128;
         private const byte XToggle = 1, XSculpt = 2, XReinforce = 4, XReload = 8, XWarp = 128;
         private const byte GFireHeld = 1, GFirePressed = 2;
+        private const byte YPickup = 1, YDrop = 2;
 
         internal void Write(ByteWriter w)
         {
@@ -96,7 +98,7 @@ namespace Sculpt.Core.Net
             if (Move.SprintHeld) f |= FSprint;
             if (Move.WantsToShoot) f |= FShoot;
             if (Respawn) f |= FRespawn;
-            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt || Warp;
+            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt || Warp || Hand.Pickup || Hand.Drop;
             if (ext) f |= FExt;
             w.U8(f);
             byte g = 0;
@@ -118,6 +120,11 @@ namespace Sculpt.Core.Net
             if (HasSculpt) x |= XSculpt;
             if (HasSculpt && Sculpt.Reinforce) x |= XReinforce;
             w.U8(x);
+            byte y = 0;
+            if (Hand.Pickup) y |= YPickup;
+            if (Hand.Drop) y |= YDrop;
+            w.U8(y);
+            if (Hand.Pickup) w.I32(Hand.PickId);
             if (!HasSculpt) return;
             w.U8(SculptSeq);
             w.U8((byte)((byte)Sculpt.Type | ((byte)Sculpt.Direction << 4)));
@@ -157,7 +164,15 @@ namespace Sculpt.Core.Net
             c.Hand.Reload = (x & XReload) != 0;
             c.Warp = (x & XWarp) != 0;
             c.Hand.WeaponKey = (byte)((x >> 4) & 7);
-            if (c.Hand.WeaponKey > 4) throw new NetFormatException("Bad weapon key.");
+            if (c.Hand.WeaponKey > Items.Slots) throw new NetFormatException("Bad weapon key.");
+            byte y = r.U8();
+            c.Hand.Pickup = (y & YPickup) != 0;
+            c.Hand.Drop = (y & YDrop) != 0;
+            if (c.Hand.Pickup)
+            {
+                c.Hand.PickId = r.I32();
+                if (c.Hand.PickId < 0) throw new NetFormatException("Bad item id.");
+            }
             if ((x & XSculpt) == 0) return c;
             c.HasSculpt = true;
             c.SculptSeq = r.U8();

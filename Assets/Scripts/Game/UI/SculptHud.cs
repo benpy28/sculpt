@@ -82,7 +82,7 @@ namespace Sculpt.Game.UI
                     else { label = what + "  ·  " + Reason(c.Result).ToUpperInvariant(); col = HudDraw.Dim; }
                 }
             }
-            else if (hand.Mode == HandMode.SculptExit || hand.Mode == HandMode.Drawing) { label = WeaponName(hand.Held).ToUpperInvariant(); col = HudDraw.Dim; }
+            else if (hand.Mode == HandMode.SculptExit || hand.Mode == HandMode.Drawing) { label = hand.HeldItem == Item.None ? null : Items.Name(hand.HeldItem).ToUpperInvariant(); col = HudDraw.Dim; }
             if (hand.InSculptMode && hand.SculptLockUntil > net.Tick) label = (label ?? "SCULPT") + "  ·  GUN LOCKED";
             if (red) col = HudDraw.Red;
             string chip = label == null ? null : cost != null ? label + "     " + cost : label;
@@ -151,7 +151,7 @@ namespace Sculpt.Game.UI
             return _caps;
         }
 
-        private static string Key(UnityEngine.InputSystem.InputAction a)
+        public static string Key(UnityEngine.InputSystem.InputAction a)
         {
             string s = a.GetBindingDisplayString(0);
             if (string.IsNullOrEmpty(s)) return "—";

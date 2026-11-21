@@ -41,6 +41,7 @@ namespace Sculpt.Game.Weapons
 
         private Transform _vmRoot;
         private readonly GunModel[] _guns = new GunModel[4];
+        private GameObject _grenade;
         private Material _vmMat, _lineMat, _flashMat, _puffMat;
         private LineBatch _lines, _flashLines;
         private ParticleSystem _puffs, _sparks;
@@ -119,6 +120,9 @@ namespace Sculpt.Game.Weapons
                 _guns[i].Root.transform.SetParent(_vmRoot, false);
                 _guns[i].Root.SetActive(false);
             }
+            _grenade = GunModels.BuildGrenade(_vmMat);
+            _grenade.transform.SetParent(_vmRoot, false);
+            _grenade.SetActive(false);
             _puffs = MakeParticles("Impact puffs", _puffMat, -0.1f);
             _sparks = MakeParticles("Impact sparks", _puffMat, 1.2f);
         }
@@ -164,13 +168,14 @@ namespace Sculpt.Game.Weapons
             Vector3 at = _rig.Camera.transform.position;
             bool reloading = s.Weapon.Reloading && !s.Dead;
             Weapon held = s.Hand.Held;
-            if (reloading && !_wasReloading && !cfg.Of(held).ShellReload)
+            bool hasGun = s.Hand.HasGun;
+            if (reloading && hasGun && !_wasReloading && !cfg.Of(held).ShellReload)
                 GunAudio.Play(GunAudio.MagOut, at, 0.7f, Random.Range(0.97f, 1.03f), false);
             _wasReloading = reloading;
             for (int i = 0; i < 4; i++)
             {
                 int ammo = s.Weapon.AmmoOf((Weapon)i, cfg);
-                if (_lastAmmo[i] >= 0 && ammo > _lastAmmo[i] && !s.Dead && (int)held == i)
+                if (_lastAmmo[i] >= 0 && ammo > _lastAmmo[i] && !s.Dead && hasGun && (int)held == i)
                 {
                     if (cfg.Of((Weapon)i).ShellReload) { GunAudio.Play(GunAudio.ShellIn, at, 0.7f, Random.Range(0.95f, 1.05f), false); _shellBob = 1f; }
                     else GunAudio.Play(GunAudio.MagIn, at, 0.8f, Random.Range(0.97f, 1.03f), false);
@@ -451,23 +456,27 @@ namespace Sculpt.Game.Weapons
             HandState hand = s.Hand;
             int tick = _session.Client.Tick;
             Weapon held = hand.Held;
+            bool hasGun = hand.HasGun;
+            Item item = hand.HeldItem;
 
             for (int i = 0; i < 4; i++)
             {
-                bool show = i == (int)held && !s.Dead;
+                bool show = hasGun && i == (int)held && !s.Dead;
                 if (_guns[i].Root.activeSelf != show) _guns[i].Root.SetActive(show);
             }
-            if (s.Dead) return;
+            bool nade = item == Item.Grenade && !s.Dead;
+            if (_grenade.activeSelf != nade) _grenade.SetActive(nade);
+            if (s.Dead || item == Item.None) return; // empty hands: no viewmodel
 
             // Lowered: drawing from below, sculpt mode (gun out of the way), disarmed.
             float lowerTarget;
             switch (hand.Mode)
             {
                 case HandMode.Drawing:
-                    lowerTarget = Mathf.Clamp01((hand.ReadyTick - tick) / (float)_mc.Hand.Draw(held));
+                    lowerTarget = Mathf.Clamp01((hand.ReadyTick - tick) / (float)Mathf.Max(1, _mc.Hand.Draw(item)));
                     break;
                 case HandMode.SculptExit:
-                    lowerTarget = Mathf.Clamp01((hand.ReadyTick - tick) / (float)_mc.Hand.Exit(held));
+                    lowerTarget = Mathf.Clamp01((hand.ReadyTick - tick) / (float)Mathf.Max(1, _mc.Hand.Exit(item)));
                     break;
                 case HandMode.SculptEnter:
                 case HandMode.Sculpt:
@@ -490,7 +499,7 @@ namespace Sculpt.Game.Weapons
             _sway = Vector2.Lerp(_sway, new Vector2(Mathf.Clamp(-look.x * 0.5f, -5f, 5f), Mathf.Clamp(-look.y * 0.5f, -5f, 5f)), 1f - Mathf.Exp(-14f * dt));
 
             float size = Mathf.Clamp(_settings.ViewmodelSize, 0.7f, 1.2f);
-            Vector3 basePos = held == Weapon.Pistol ? new Vector3(0.13f, -0.135f, 0.29f) : new Vector3(0.15f, -0.155f, 0.31f);
+            Vector3 basePos = !hasGun ? new Vector3(0.15f, -0.14f, 0.3f) : held == Weapon.Pistol ? new Vector3(0.13f, -0.135f, 0.29f) : new Vector3(0.15f, -0.155f, 0.31f);
             Vector3 bob = new Vector3(Mathf.Cos(_bobPhase) * 0.006f, Mathf.Abs(Mathf.Sin(_bobPhase)) * 0.008f, 0) * bobAmt;
             float ease = _lower * _lower * (3 - 2 * _lower);
             Vector3 pos = basePos + _kickPos + bob + new Vector3(0, -0.3f, -0.06f) * ease + new Vector3(-0.04f, -0.035f, -0.03f) * _sprint;
@@ -498,7 +507,7 @@ namespace Sculpt.Game.Weapons
             if (hand.Mode == HandMode.Disarmed) rot += new Vector3(Mathf.Sin(Time.time * 37f) * 3f, Mathf.Sin(Time.time * 29f) * 3f, 0);
 
             // Reload: the gun tips toward you and rolls (magazine guns), or dips to the loading port per shell (pump).
-            bool shells = _mc.Weapons.Of(held).ShellReload;
+            bool shells = hasGun && _mc.Weapons.Of(held).ShellReload;
             _reload = Mathf.MoveTowards(_reload, s.Weapon.Reloading ? 1f : 0f, dt * 7f);
             _shellBob = Mathf.MoveTowards(_shellBob, 0f, dt * 6f);
             float re = _reload * _reload * (3 - 2 * _reload);
@@ -518,6 +527,7 @@ namespace Sculpt.Game.Weapons
             _vmRoot.localScale = Vector3.one * size;
 
             // Cycling parts: pump grip racks back and forward; the pistol slide snaps back.
+            if (!hasGun) return;
             GunModel g = _guns[(int)held];
             if (g.Cycler != null)
             {

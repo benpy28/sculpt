@@ -41,6 +41,8 @@ namespace Sculpt.Game.Net
 
         private readonly Func<SubGrid> _makeGrid;
         private readonly Func<SubGrid, ITerrain> _terrain;
+        /// <summary>Map setup on every new local server (items lying on the map).</summary>
+        private readonly Action<NetServer> _setupServer;
         private SubGrid _firstClientGrid;
         private readonly MovementConfig _movement;
         private readonly NetConfig _config;
@@ -60,8 +62,9 @@ namespace Sculpt.Game.Net
         /// <param name="terrain">What movement and bullets collide with, built around each side's ground grid (the
         /// breach map adds its buildings). Null: the ground grid alone.</param>
         public NetSession(Func<SubGrid> makeGrid, SubGrid clientGrid, MovementConfig movement, NetConfig config, SculptConfig sculpt, Vec3d[][] teamSpawns, double[] teamYaw,
-                          Func<SubGrid, ITerrain> terrain = null)
+                          Func<SubGrid, ITerrain> terrain = null, Action<NetServer> setupServer = null)
         {
+            _setupServer = setupServer;
             _makeGrid = makeGrid;
             _terrain = terrain ?? (g => g);
             _firstClientGrid = clientGrid;
@@ -120,6 +123,7 @@ namespace Sculpt.Game.Net
             Server = new NetServer(_terrain(serverGrid), _movement, _config, SendFromServer);
             ServerSculpt = new SculptSystem(serverGrid, _sculptConfig);
             Server.Sculpt = ServerSculpt;
+            _setupServer?.Invoke(Server);
             _serverAccum = 0;
             _nextSpawn = 0;
             NewClient();

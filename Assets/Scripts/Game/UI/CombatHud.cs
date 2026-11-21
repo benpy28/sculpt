@@ -82,8 +82,15 @@ namespace Sculpt.Game.UI
             HudDraw.Label(HudDraw.ToGui(HealthX + 16, Margin + 20, 120, 40), hp.ToString(), 30, low ? HudDraw.Red : HudDraw.Text, TextAnchor.MiddleLeft, true);
             HudDraw.Label(HudDraw.ToGui(HealthX + 80, Margin + 24, 60, 30), "HP", 12, HudDraw.Dim, TextAnchor.MiddleLeft, true);
 
-            // Gun and ammo (bottom right).
-            if (!s.Dead)
+            // Gun and ammo (bottom right); a grenade shows its count.
+            if (!s.Dead && s.Hand.HeldItem == Item.Grenade)
+            {
+                float px = w - Margin - PanelW;
+                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), "GRENADE", 13, HudDraw.Dim, TextAnchor.MiddleLeft, true);
+                HudDraw.Label(HudDraw.ToGui(px + PanelW - 96, Margin + 16, 50, 40), s.Hand.Bag.Grenades.ToString(), 30, HudDraw.Text, TextAnchor.MiddleRight, true);
+                HudDraw.Label(HudDraw.ToGui(px + PanelW - 44, Margin + 18, 40, 30), "/ " + _player.Config.Items.GrenadeCarry, 13, HudDraw.Dim, TextAnchor.MiddleLeft);
+            }
+            else if (!s.Dead && s.Hand.HasGun)
             {
                 Weapon held = s.Hand.Held;
                 WeaponStats st = cfg.Of(held);
@@ -99,15 +106,35 @@ namespace Sculpt.Game.UI
                     HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 14, 150, 20), hint, 11, reloading ? HudDraw.Text : ammoCol, TextAnchor.MiddleLeft, true);
             }
 
-            // Hotbar keys and names.
-            for (int i = 0; i < 5; i++)
+            // Hotbar keys and what is in each slot.
+            for (int i = 0; i < Items.Slots; i++)
             {
                 UnityEngine.Rect r = SlotRect(i, w, h);
-                bool held = i < 4 && i == (int)s.Hand.Held;
-                Color tc = i == 4 ? HudDraw.A(HudDraw.Dim, 0.5f) : held ? HudDraw.Text : HudDraw.Dim;
+                Item it = s.Hand.Bag[i];
+                bool held = i == s.Hand.Slot && it != Item.None;
+                Color tc = it == Item.None ? HudDraw.A(HudDraw.Dim, 0.5f) : held ? HudDraw.Text : HudDraw.Dim;
                 HudDraw.Label(HudDraw.ToGui(r.x + 7, r.y + r.height - 15, 20, 12), (i + 1).ToString(), 10, HudDraw.A(tc, 0.8f), TextAnchor.MiddleLeft, true);
-                HudDraw.Label(HudDraw.ToGui(r.x, r.y + 3, r.width, r.height - 8), i < 4 ? Names[i] : "—", 12, tc, TextAnchor.MiddleCenter, held);
+                string name = it == Item.None ? "—" : it == Item.Grenade ? "Nade x" + s.Hand.Bag.Grenades : Items.Name(it);
+                HudDraw.Label(HudDraw.ToGui(r.x, r.y + 3, r.width, r.height - 8), name, 12, tc, TextAnchor.MiddleCenter, held);
             }
+
+            // Pickup prompt under the crosshair.
+            if (!s.Dead && _player.PickTarget >= 0 && _player.PickTarget < net.Items.Count)
+            {
+                GroundItem g = net.Items[_player.PickTarget];
+                PickupPlan plan = _player.PickPlan;
+                string key = _player.InteractKeyName;
+                string what = Items.Name(g.Kind) + (g.Count > 1 ? " x" + g.Count : "");
+                string line;
+                Color col = HudDraw.Text;
+                if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
+                else if (plan.Allowed) line = $"{key}  Pick up {what}";
+                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
+                else { line = what; col = HudDraw.Dim; }
+                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), line, 14, col, TextAnchor.MiddleCenter, true);
+            }
+            else if (!s.Dead && _player.DropHold > 0f)
+                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), "Dropping " + Items.Name(s.Hand.HeldItem) + "...", 13, HudDraw.Dim, TextAnchor.MiddleCenter, true);
 
             // Damage dealt by the last hit, next to the crosshair.
             if (Time.time - _view.HitTime < 0.5f)
@@ -157,6 +184,12 @@ namespace Sculpt.Game.UI
             if (hand.InSculptMode)
             {
                 Cross(cx, cy, 3f, 5f, 1.5f, new Color(1, 1, 1, 0.9f));
+                return;
+            }
+            if (!hand.HasGun)
+            {
+                // A grenade or empty hands: a plain dot (the throw arc arrives with grenades).
+                Dot(cx, cy, 2f, hand.ItemReady ? new Color(1, 1, 1, 0.95f) : new Color(1, 1, 1, 0.4f));
                 return;
             }
             WeaponStats st = cfg.Of(hand.Held);
@@ -307,6 +340,16 @@ namespace Sculpt.Game.UI
             if (s.Dead) return;
             float px = w - Margin - PanelW;
             HudDraw.PanelRect(px, Margin, PanelW, PanelH);
+            if (s.Hand.HeldItem == Item.Grenade)
+            {
+                float gx = px + 16, gy = Margin + 12;
+                int carry = Mathf.Max(1, _player.Config.Items.GrenadeCarry);
+                float pw = (PanelW - 32 - 6 * (carry - 1)) / carry;
+                for (int i = 0; i < carry; i++)
+                    HudDraw.RoundRect(gx + i * (pw + 6), gy, pw, 5, 1.5f, i < s.Hand.Bag.Grenades ? HudDraw.A(HudDraw.Text, 0.9f) : new Color(1, 1, 1, 0.12f));
+                return;
+            }
+            if (!s.Hand.HasGun) return;
             Weapon held = s.Hand.Held;
             WeaponStats st = cfg.Of(held);
             int ammo = s.Weapon.AmmoOf(held, cfg);
@@ -338,13 +381,14 @@ namespace Sculpt.Game.UI
 
         private void DrawHotbar(in MotorState s, int tick, float w)
         {
-            for (int i = 0; i < 5; i++)
+            for (int i = 0; i < Items.Slots; i++)
             {
                 UnityEngine.Rect r = SlotRect(i, w, Screen.height);
-                bool held = i < 4 && i == (int)s.Hand.Held;
-                HudDraw.RoundRect(r.x, r.y, r.width, r.height, 7, held ? new Color(0.05f, 0.06f, 0.08f, 0.72f) : new Color(0.05f, 0.06f, 0.08f, i == 4 ? 0.25f : 0.42f));
+                Item it = s.Hand.Bag[i];
+                bool held = i == s.Hand.Slot && it != Item.None;
+                HudDraw.RoundRect(r.x, r.y, r.width, r.height, 7, held ? new Color(0.05f, 0.06f, 0.08f, 0.72f) : new Color(0.05f, 0.06f, 0.08f, it == Item.None ? 0.25f : 0.42f));
                 if (held) HudDraw.RoundRect(r.x + 14, r.y + 3, r.width - 28, 2, 1, HudDraw.Text);
-                if (i == (int)Weapon.Pump)
+                if (it == Item.Pump)
                 {
                     float k = Mathf.Clamp01(1f - (s.Weapon.NextPump - tick * 1000L) / (float)_player.Config.Weapons.Of(Weapon.Pump).FireIntervalMilliTicks);
                     if (k < 1f) HudDraw.RoundRect(r.x + 6, r.y + r.height - 4, (r.width - 12) * k, 2, 1, HudDraw.A(HudDraw.Text, 0.6f));
