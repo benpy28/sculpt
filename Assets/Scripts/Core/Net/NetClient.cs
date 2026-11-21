@@ -71,6 +71,8 @@ namespace Sculpt.Core.Net
 
         /// <summary>Shots the local player fired in prediction (each once, never on replays). The Game layer drains it.</summary>
         public readonly List<WeaponShot> LocalShots = new List<WeaponShot>();
+        /// <summary>Your own grenade throws and blasts as predicted (each once, never on replays). The Game layer drains it.</summary>
+        public readonly List<GrenadeEvent> LocalGrenades = new List<GrenadeEvent>();
         /// <summary>Combat events from the server (others' shots, hits, kills), with their server tick. The Game layer drains it.</summary>
         public readonly List<KeyValuePair<int, CombatEvent>> Combat = new List<KeyValuePair<int, CombatEvent>>();
         private readonly List<CombatEvent> _combatScratch = new List<CombatEvent>();
@@ -398,8 +400,9 @@ namespace Sculpt.Core.Net
             Sculpt?.TakeLandingMove(out moved, out moveTo, out kick);
             ApplyLanding(ref _pred, moved, moveTo, kick);
             if (LocalShots.Count > 1024) LocalShots.Clear(); // nobody is draining (tests)
+            if (LocalGrenades.Count > 1024) LocalGrenades.Clear();
             int shotsBefore = LocalShots.Count;
-            NetSim.Simulate(Grid, Movement, Config, ref _pred, cmd, Spawn, events, LocalShots);
+            NetSim.Simulate(Grid, Movement, Config, ref _pred, cmd, Spawn, events, LocalShots, LocalGrenades);
             for (int k = shotsBefore; k < LocalShots.Count; k++)
             {
                 WeaponShot sh = LocalShots[k];

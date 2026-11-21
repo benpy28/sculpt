@@ -42,6 +42,8 @@ namespace Sculpt.Core.Net
         internal readonly bool[] DeadHistory;
         /// <summary>Shots fired this tick (resolved after every player has moved).</summary>
         internal readonly List<WeaponShot> Shots = new List<WeaponShot>();
+        /// <summary>Grenade throws and blasts from this tick's simulation.</summary>
+        internal readonly List<GrenadeEvent> Nades = new List<GrenadeEvent>();
         internal bool CarryFire;
 
         /// <summary>Kills and deaths since joining (dev HUD).</summary>
@@ -362,7 +364,8 @@ namespace Sculpt.Core.Net
                 p.Body.Kick = Vec3d.Zero;
                 bool wasDead = p.State.Dead;
                 p.Shots.Clear();
-                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots);
+                p.Nades.Clear();
+                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades);
                 if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
                 if (!p.State.Dead && (cmd.Hand.Pickup || cmd.Hand.Drop)) HandleItems(p, cmd);
                 if (p.DeferredLock != int.MinValue)
@@ -382,6 +385,7 @@ namespace Sculpt.Core.Net
             }
 
             ResolveShots();
+            ResolveGrenades();
 
             if (Sculpt != null)
             {

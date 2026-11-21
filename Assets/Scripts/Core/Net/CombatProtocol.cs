@@ -10,6 +10,8 @@ namespace Sculpt.Core.Net
         Hit = 1,
         /// <summary>A player died.</summary>
         Kill = 2,
+        /// <summary>A grenade was thrown or went off (sent to everyone but the thrower, who predicted it).</summary>
+        Grenade = 3,
     }
 
     /// <summary>What did the damage.</summary>
@@ -18,6 +20,8 @@ namespace Sculpt.Core.Net
         Pump = 0, Smg = 1, Ar = 2, Pistol = 3,
         Throw = 4,
         Fall = 5,
+        Grenade = 6,
+        Punch = 7,
     }
 
     public struct CombatEvent
@@ -41,6 +45,9 @@ namespace Sculpt.Core.Net
         public bool Killed;
         /// <summary>Hit: the victim's health after it (only filled in the copy sent to the attacker and victim).</summary>
         public int HealthAfter;
+        // Grenade: thrown (Origin = start, Aim = launch velocity) or exploded (Point = blast), and the thrower's throw number.
+        public GrenadeEventType Nade;
+        public byte NadeSeq;
 
         public bool Headshot => HeadPellets > 0;
 
@@ -94,9 +101,18 @@ namespace Sculpt.Core.Net
                         w.U16((ushort)e.Victim);
                         w.U8(e.HeadPellets);
                         break;
+                    case CombatEventType.Grenade:
+                        w.U8((byte)e.Nade);
+                        w.U8(e.NadeSeq);
+                        if (e.Nade == GrenadeEventType.Thrown) { w.Vec(e.Origin); w.Vec(e.Aim); }
+                        else w.VecF(e.Point);
+                        break;
                 }
             }
         }
+
+        private static bool Finite(Vec3d v) => !(double.IsNaN(v.X) || double.IsNaN(v.Y) || double.IsNaN(v.Z) ||
+                                                 double.IsInfinity(v.X) || double.IsInfinity(v.Y) || double.IsInfinity(v.Z));
 
         public static CombatMsg Read(ref ByteReader r, List<CombatEvent> into)
         {
@@ -107,10 +123,10 @@ namespace Sculpt.Core.Net
             for (int i = 0; i < n; i++)
             {
                 byte t = r.U8();
-                if (t > (byte)CombatEventType.Kill) throw new NetFormatException("Bad combat event.");
+                if (t > (byte)CombatEventType.Grenade) throw new NetFormatException("Bad combat event.");
                 var e = new CombatEvent { Type = (CombatEventType)t, Attacker = r.U16() };
                 byte src = r.U8();
-                if (src > (byte)DamageSource.Fall) throw new NetFormatException("Bad damage source.");
+                if (src > (byte)DamageSource.Punch) throw new NetFormatException("Bad damage source.");
                 e.Source = (DamageSource)src;
                 switch (e.Type)
                 {
@@ -135,6 +151,21 @@ namespace Sculpt.Core.Net
                         e.Victim = r.U16();
                         e.HeadPellets = r.U8();
                         break;
+                    case CombatEventType.Grenade:
+                    {
+                        byte k = r.U8();
+                        if (k > (byte)GrenadeEventType.Exploded) throw new NetFormatException("Bad grenade event.");
+                        e.Nade = (GrenadeEventType)k;
+                        e.NadeSeq = r.U8();
+                        if (e.Nade == GrenadeEventType.Thrown)
+                        {
+                            e.Origin = r.Vec();
+                            e.Aim = r.Vec();
+                            if (!Finite(e.Origin) || !Finite(e.Aim)) throw new NetFormatException("Bad grenade.");
+                        }
+                        else e.Point = r.VecFinite();
+                        break;
+                    }
                 }
                 into.Add(e);
             }

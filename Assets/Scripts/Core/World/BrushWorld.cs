@@ -132,6 +132,13 @@ namespace Sculpt.Core
 
         // ------------------------------------------------------------------ queries
 
+        /// <summary>Indices of brushes whose hash cells touch the box (solid or not; callers test the exact shape).</summary>
+        internal void BrushesNear(Aabb box, List<int> into)
+        {
+            into.Clear();
+            into.AddRange(Near(box));
+        }
+
         public bool BoxOverlapsSolid(Aabb box)
         {
             List<int> near = Near(box);

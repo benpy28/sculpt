@@ -8,7 +8,7 @@ namespace Sculpt.Game.Config
     /// can tune without code changes"). Create one with Assets > Create > SCULPT > Breach Settings and drag it onto the
     /// Bootstrap object's Breach Settings slot. Without one, these code defaults are used. Movement numbers stay in
     /// Movement Settings.
-    /// Item numbers are here too. Grenade, punch, charge, heal and bar numbers arrive with their steps. Read when the map is built (enter Play mode
+    /// Item and grenade numbers are here too. Punch, charge, heal and bar numbers arrive with their steps. Read when the map is built (enter Play mode
     /// again after changing tile numbers).
     /// </summary>
     [CreateAssetMenu(menuName = "SCULPT/Breach Settings", fileName = "BreachSettings")]
@@ -42,6 +42,30 @@ namespace Sculpt.Game.Config
         [Range(0.1f, 1.5f)] public float dropHoldSeconds = 0.3f;
         [Min(1)] public int maxGroundItems = 64;
 
+        [Header("Grenades (own: no damage, big push; enemy: damage, smaller push)")]
+        [Tooltip("Throw speed along the look direction, m/s (your own velocity is added).")]
+        [Min(1f)] public float grenadeThrowSpeed = 20f;
+        [Tooltip("The throw leaves this many degrees above the crosshair.")]
+        [Range(0f, 20f)] public float grenadeThrowUpDegrees = 6f;
+        [Min(0f)] public float grenadeGravity = 15f;
+        [Tooltip("It goes off on the first thing it touches, or after this many seconds in the air.")]
+        [Range(0.5f, 6f)] public float grenadeFuseSeconds = 3f;
+        [Tooltip("Time from a throw until the next grenade is ready, seconds.")]
+        [Range(0.1f, 2f)] public float grenadeRecoverySeconds = 0.4f;
+        [Tooltip("Players within this distance of the blast (to the chest) are affected, metres.")]
+        [Min(0.5f)] public float grenadeRadius = 4f;
+        [Tooltip("Full effect inside this distance, then linear to nothing at the radius.")]
+        [Min(0f)] public float grenadeFullRadius = 1f;
+        [Min(0f)] public float grenadeEnemyDamage = 70f;
+        [Tooltip("Speed your own grenade adds to you at full effect, m/s (15 at your feet lifts you about 3.7 m).")]
+        [Min(0f)] public float grenadeSelfBoost = 15f;
+        [Tooltip("Speed a grenade adds to anyone else at full effect, m/s.")]
+        [Min(0f)] public float grenadeOtherKnock = 5f;
+        [Tooltip("Tiles within this distance of the blast along every axis take the grenade tile damage (1.2 m: a 3 x 3 hole mid-tile, 2 x 2 at a seam).")]
+        [Range(0.76f, 2.2f)] public float grenadeTileRadius = 1.2f;
+        [Tooltip("Damage to every tile in the blast: 150 breaks anything but Reinforced (200).")]
+        [Min(0)] public int grenadeTileDamage = 150;
+
         public void ApplyTo(ItemConfig items)
         {
             items.GrenadeCarry = grenadeCarry;
@@ -49,6 +73,18 @@ namespace Sculpt.Game.Config
             items.AimConeDegrees = pickupConeDegrees;
             items.DropHoldTicks = Mathf.Max(1, Mathf.RoundToInt(dropHoldSeconds * SimTime.TicksPerSecond));
             items.MaxGroundItems = maxGroundItems;
+            GrenadeConfig g = items.Grenade;
+            g.ThrowSpeed = grenadeThrowSpeed;
+            g.ThrowUpDegrees = grenadeThrowUpDegrees;
+            g.Gravity = grenadeGravity;
+            g.MaxFuseTicks = Mathf.Max(1, Mathf.RoundToInt(grenadeFuseSeconds * SimTime.TicksPerSecond));
+            g.ThrowRecoveryTicks = Mathf.Max(1, Mathf.RoundToInt(grenadeRecoverySeconds * SimTime.TicksPerSecond));
+            g.Radius = grenadeRadius;
+            g.FullRadius = Mathf.Min(grenadeFullRadius, grenadeRadius - 0.01f);
+            g.EnemyDamage = grenadeEnemyDamage;
+            g.SelfBoost = grenadeSelfBoost;
+            g.OtherKnock = grenadeOtherKnock;
+            g.TileRadius = grenadeTileRadius;
         }
 
         public void ApplyTo(SculptConfig sculpt)
@@ -66,6 +102,7 @@ namespace Sculpt.Game.Config
             b.SmgTileDamage = smgTileDamage;
             b.ArTileDamage = arTileDamage;
             b.PistolTileDamage = pistolTileDamage;
+            b.GrenadeTileDamage = grenadeTileDamage;
         }
     }
 }

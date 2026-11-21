@@ -28,6 +28,8 @@ namespace Sculpt.Game.Weapons
         public readonly List<FeedLine> Feed = new List<FeedLine>();
         public int KilledBy;
         public DamageSource KilledWith;
+        /// <summary>Gets the server's grenade events (set by the bootstrap).</summary>
+        public GrenadeView Grenades;
 
         public struct DamageArrow { public Vector3 From; public float Time; public int Damage; }
         public struct FeedLine { public float Time; public int Killer, Victim; public DamageSource Source; public bool Head; }
@@ -317,6 +319,9 @@ namespace Sculpt.Game.Weapons
             {
                 case CombatEventType.Shot:
                     if (e.Attacker != me) OnRemoteShot(e, now);
+                    break;
+                case CombatEventType.Grenade:
+                    if (Grenades != null) Grenades.OnServer(e);
                     break;
                 case CombatEventType.Hit:
                 {

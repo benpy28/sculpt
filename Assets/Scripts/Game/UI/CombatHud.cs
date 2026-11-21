@@ -166,8 +166,17 @@ namespace Sculpt.Game.UI
             st.normal.textColor = old;
         }
 
-        private static string SourceName(DamageSource s) =>
-            s == DamageSource.Throw ? "Throw" : s == DamageSource.Fall ? "Fall" : Names[(int)s];
+        private static string SourceName(DamageSource s)
+        {
+            switch (s)
+            {
+                case DamageSource.Throw: return "Throw";
+                case DamageSource.Fall: return "Fall";
+                case DamageSource.Grenade: return "Grenade";
+                case DamageSource.Punch: return "Punch";
+                default: return (int)s < Names.Length ? Names[(int)s] : s.ToString();
+            }
+        }
 
         // ---------------------------------------------------------------- Crosshair
 

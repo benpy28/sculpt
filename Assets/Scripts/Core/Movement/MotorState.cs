@@ -85,6 +85,11 @@ namespace Sculpt.Core
         /// <summary>Gun timers, bloom and recoil.</summary>
         public WeaponState Weapon;
 
+        /// <summary>Your own grenades in the air (their flight and your own blast push are predicted).</summary>
+        public GrenadeFlight Nade0, Nade1;
+        /// <summary>Counts your throws (labels each grenade).</summary>
+        public byte NadeSeq;
+
         /// <summary>Damage taken since spawning; health = max - Damage. Fall damage is predicted, hits come from the server.</summary>
         public int Damage;
         public bool Dead;

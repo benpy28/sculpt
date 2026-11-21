@@ -71,7 +71,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 10;
+        public const byte Version = 11;
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
@@ -262,6 +262,30 @@ namespace Sculpt.Core.Net
             w.U8(g.UsedPump); w.U8(g.UsedSmg); w.U8(g.UsedAr); w.U8(g.UsedPistol);
             w.I32(g.ReloadTick);
             w.I32(s.Damage); w.Bool(s.Dead); w.I32(s.RespawnTick);
+            WriteFlight(w, s.Nade0);
+            WriteFlight(w, s.Nade1);
+            w.U8(s.NadeSeq);
+        }
+
+        private static void WriteFlight(ByteWriter w, in GrenadeFlight f)
+        {
+            w.Bool(f.Active);
+            if (!f.Active) return;
+            w.Vec(f.Position);
+            w.Vec(f.Velocity);
+            w.I32(f.ThrowTick);
+            w.U8(f.Seq);
+        }
+
+        private static GrenadeFlight ReadFlight(ref ByteReader r)
+        {
+            var f = new GrenadeFlight { Active = r.Bool() };
+            if (!f.Active) return f;
+            f.Position = r.Vec();
+            f.Velocity = r.Vec();
+            f.ThrowTick = r.I32();
+            f.Seq = r.U8();
+            return f;
         }
 
         public static MotorState ReadMotor(ref ByteReader r)
@@ -333,6 +357,9 @@ namespace Sculpt.Core.Net
             s.Damage = r.I32();
             s.Dead = r.Bool();
             s.RespawnTick = r.I32();
+            s.Nade0 = ReadFlight(ref r);
+            s.Nade1 = ReadFlight(ref r);
+            s.NadeSeq = r.U8();
             return s;
         }
 
@@ -351,7 +378,8 @@ namespace Sculpt.Core.Net
                    a.WallHitTick == b.WallHitTick && a.WallHitSpeed.Equals(b.WallHitSpeed) && a.WallHitNormal.Equals(b.WallHitNormal) &&
                    a.WallKicks == b.WallKicks && a.LastWallKickTick == b.LastWallKickTick && a.LastWallKickNormal.Equals(b.LastWallKickNormal) && a.LastSlideJumpTick == b.LastSlideJumpTick &&
                    a.Hand.Equals(b.Hand) && a.Weapon.Equals(b.Weapon) &&
-                   a.Damage == b.Damage && a.Dead == b.Dead && a.RespawnTick == b.RespawnTick;
+                   a.Damage == b.Damage && a.Dead == b.Dead && a.RespawnTick == b.RespawnTick &&
+                   a.Nade0.Equals(b.Nade0) && a.Nade1.Equals(b.Nade1) && a.NadeSeq == b.NadeSeq;
         }
 
         private static MoveMode ReadMode(ref ByteReader r)

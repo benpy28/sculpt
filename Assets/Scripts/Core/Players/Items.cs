@@ -136,6 +136,8 @@ namespace Sculpt.Core
         public double DropForward = 0.9;
         /// <summary>Oldest items on the ground disappear past this many.</summary>
         public int MaxGroundItems = 64;
+        /// <summary>Throw, flight and blast numbers.</summary>
+        public GrenadeConfig Grenade = new GrenadeConfig();
     }
 
     /// <summary>One item lying on the ground. Items don't move: they rest where they were dropped.</summary>

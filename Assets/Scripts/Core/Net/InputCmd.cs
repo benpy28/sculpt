@@ -209,10 +209,12 @@ namespace Sculpt.Core.Net
         [ThreadStatic] private static List<MoveEvent> _scratch;
 
         /// <summary>
-        /// Order inside a tick: death/respawn timer, hand, movement (fall damage), then the gun. Shots fired go into
+        /// Order inside a tick: death/respawn timer, hand, movement (fall damage), own grenades (flights, blast push,
+        /// throw), then the gun. Grenade events go into <paramref name="grenades"/> (null while replaying). Shots fired go into
         /// <paramref name="shots"/> (null while replaying). Damage from other players is applied by the server only.
         /// </summary>
-        public static void Simulate(ITerrain grid, MovementConfig mc, NetConfig nc, ref MotorState s, in InputCmd cmd, Vec3d spawn, List<MoveEvent> events, List<WeaponShot> shots = null)
+        public static void Simulate(ITerrain grid, MovementConfig mc, NetConfig nc, ref MotorState s, in InputCmd cmd, Vec3d spawn, List<MoveEvent> events, List<WeaponShot> shots = null,
+            List<GrenadeEvent> grenades = null)
         {
             if (cmd.Respawn)
             {
@@ -226,6 +228,7 @@ namespace Sculpt.Core.Net
             }
             if (s.Dead)
             {
+                GrenadeRules.Step(grid, mc, ref s, cmd.Tick, cmd.Move, cmd.Pitch, grenades); // grenades already thrown still fly
                 if (cmd.Tick >= s.RespawnTick) Respawn(ref s, spawn, cmd.Tick, events);
                 return; // frozen where they fell
             }
@@ -245,6 +248,7 @@ namespace Sculpt.Core.Net
 
             if (s.Position.Y < nc.KillY) { Respawn(ref s, spawn, cmd.Tick, events); return; }
             if (s.Dead) return;
+            GrenadeRules.Step(grid, mc, ref s, cmd.Tick, cmd.Move, cmd.Pitch, grenades);
             WeaponRules.Step(ref s, cmd.Tick, cmd.Move, cmd.Pitch, mc, shots, cmd.Hand.Reload);
         }
 

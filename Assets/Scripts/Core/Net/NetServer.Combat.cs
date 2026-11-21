@@ -65,6 +65,52 @@ namespace Sculpt.Core.Net
             }
         }
 
+        private readonly List<int> _blastTiles = new List<int>();
+
+        /// <summary>
+        /// Grenade throws and blasts from this tick. The thrower's own push already happened inside their (predicted)
+        /// simulation; here the blast hurts enemies, pushes everyone else (less), and breaks the tiles around it. Players
+        /// are checked before the tiles break, so the wall the grenade hit still shields whoever is behind it.
+        /// </summary>
+        private void ResolveGrenades()
+        {
+            GrenadeConfig gc = Movement.Items.Grenade;
+            foreach (ServerPlayer p in _players)
+            {
+                foreach (GrenadeEvent e in p.Nades)
+                {
+                    if (e.Type == GrenadeEventType.Thrown)
+                    {
+                        _combat.Add(new CombatEvent { Type = CombatEventType.Grenade, Attacker = p.Id, Source = DamageSource.Grenade, Nade = e.Type, NadeSeq = e.Seq, Origin = e.Position, Aim = e.Velocity });
+                        continue;
+                    }
+                    _combat.Add(new CombatEvent { Type = CombatEventType.Grenade, Attacker = p.Id, Source = DamageSource.Grenade, Nade = e.Type, NadeSeq = e.Seq, Point = e.Position });
+                    foreach (ServerPlayer o in _players)
+                    {
+                        if (o == p || o.State.Dead) continue;
+                        double height = PlayerMovement.HeightOf(o.State, Movement);
+                        bool enemy = o.Team != p.Team || Weapons.FriendlyFire;
+                        int dmg = enemy ? GrenadeRules.Damage(Grid, e.Position, o.State.Position, height, gc) : 0;
+                        Vec3d push = GrenadeRules.Push(Grid, e.Position, o.State.Position, height, gc, gc.OtherKnock);
+                        if (push.LengthSquared > 0) GrenadeRules.Knock(ref o.State, push);
+                        if (dmg <= 0) continue;
+                        bool killed = WeaponRules.ApplyDamage(ref o.State, dmg, Tick, Weapons);
+                        _combat.Add(new CombatEvent
+                        {
+                            Type = CombatEventType.Hit, Attacker = p.Id, Victim = o.Id, Source = DamageSource.Grenade,
+                            Damage = dmg, Pellets = 1, Point = GrenadeRules.Chest(o.State.Position, height), Killed = killed,
+                            HealthAfter = o.State.Health(Weapons), Origin = e.Position,
+                        });
+                        if (killed) OnKilled(o, p.Id, DamageSource.Grenade, false);
+                    }
+                    if (Walls == null) continue;
+                    GrenadeRules.TilesInBlast(Walls, e.Position, gc, _blastTiles);
+                    foreach (int t in _blastTiles) Walls.Damage(t, Walls.Config.GrenadeTileDamage, TileCause.Grenade, p.Id);
+                }
+                p.Nades.Clear();
+            }
+        }
+
         /// <summary>Everyone but the shooter, as the shooter saw them at <paramref name="viewTick"/> + frac/256.</summary>
         private void BuildTargets(ServerPlayer shooter, int viewTick, byte viewFrac)
         {
@@ -170,7 +216,7 @@ namespace Sculpt.Core.Net
                 _combatTo.Clear();
                 foreach (CombatEvent e in _combat)
                 {
-                    if (e.Type == CombatEventType.Shot && e.Attacker == to.Id) continue;
+                    if ((e.Type == CombatEventType.Shot || e.Type == CombatEventType.Grenade) && e.Attacker == to.Id) continue;
                     CombatEvent c = e;
                     if (c.Type == CombatEventType.Hit && c.Attacker != to.Id && c.Victim != to.Id) c.HealthAfter = -1;
                     _combatTo.Add(c);

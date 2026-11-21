@@ -142,6 +142,8 @@ namespace Sculpt.Game.Bootstrap
 
             _weapons = new GameObject("Weapon View").AddComponent<WeaponView>();
             _weapons.Init(_player, _session, _rig, firstPerson, client, movement);
+            _weapons.Grenades = new GameObject("Grenades").AddComponent<GrenadeView>();
+            _weapons.Grenades.Init(_session, firstPerson.Shake);
 
             gameObject.AddComponent<DevHud>().Init(_player, client, _session);
             _player.gameObject.AddComponent<MovementAudio>().Init(_player);

@@ -56,6 +56,13 @@ namespace Sculpt.Core
         public int ArTileDamage = 13;
         public int PistolTileDamage = 17;
 
+        /// <summary>Grenade blast damage to every tile in its radius: breaks Intact, Damaged and Patched tiles at once;
+        /// a Reinforced tile (200) survives one blast with 50 left.</summary>
+        public int GrenadeTileDamage = 150;
+        /// <summary>Punch (Ben: half an unreinforced wall, 50) and what it does to a Reinforced tile.</summary>
+        public int PunchTileDamage = 50;
+        public int PunchReinforcedTileDamage = 25;
+
         public int TileDamageOf(Weapon w)
         {
             switch (w)
@@ -238,6 +245,20 @@ namespace Sculpt.Core
             }
             return broke;
         }
+
+        /// <summary>Tiles whose box touches <paramref name="box"/> (any state), in no particular order.</summary>
+        public void TilesNear(Aabb box, List<int> into)
+        {
+            into.Clear();
+            var brushes = _nearScratch ??= new List<int>();
+            World.BrushesNear(box, brushes);
+            foreach (int b in brushes)
+            {
+                int t = TileOfBrush(b);
+                if (t >= 0 && World[b].Bounds.Overlaps(box) && !into.Contains(t)) into.Add(t);
+            }
+        }
+        [ThreadStatic] private static List<int> _nearScratch;
 
         /// <summary>The building world's tiles behind a terrain (unwraps <see cref="CompositeTerrain"/>), or null.</summary>
         public static TileWalls Find(ITerrain terrain)
