@@ -106,6 +106,24 @@ namespace Sculpt.Game.Weapons
             return root;
         }
 
+        private static readonly Color Glove = new Color(0.16f, 0.15f, 0.14f);
+        private static readonly Color GloveCuff = new Color(0.26f, 0.24f, 0.21f);
+
+        /// <summary>A gloved fist and forearm for the punch, knuckles along +Z.</summary>
+        public static GameObject BuildFist(Material mat, int layer = 0)
+        {
+            var root = new GameObject("Fist") { layer = layer };
+            var b = new BoxBuilder();
+            b.Box(new Vector3(0, 0, 0), new Vector3(0.085f, 0.075f, 0.09f), Glove);                    // fist
+            for (int k = 0; k < 4; k++)                                                                  // knuckles
+                b.Box(new Vector3(-0.03f + k * 0.02f, 0.012f, 0.047f), new Vector3(0.018f, 0.03f, 0.012f), Glove);
+            b.Box(new Vector3(-0.045f, -0.01f, 0.01f), new Vector3(0.02f, 0.035f, 0.05f), Glove);       // thumb
+            b.Box(new Vector3(0, -0.005f, -0.07f), new Vector3(0.07f, 0.06f, 0.06f), GloveCuff);        // cuff
+            b.Box(new Vector3(0, -0.01f, -0.22f), new Vector3(0.065f, 0.06f, 0.26f), Polymer);          // sleeve
+            Attach(root.transform, "Body", b.ToMesh("Fist"), mat, layer);
+            return root;
+        }
+
         private static Transform Attach(Transform parent, string name, Mesh mesh, Material mat, int layer)
         {
             var go = new GameObject(name) { layer = layer };

@@ -65,6 +65,41 @@ namespace Sculpt.Core.Net
             }
         }
 
+        /// <summary>
+        /// Punch hits from this tick, against players as the puncher saw them (same rewind as shots) and the current
+        /// tiles: 30 to the nearest player in reach, else half an unreinforced tile (a quarter of a reinforced one).
+        /// </summary>
+        private void ResolvePunches()
+        {
+            PunchConfig pc = Movement.Punch;
+            foreach (ServerPlayer p in _players)
+            {
+                foreach (PunchSwing swing in p.Punches)
+                {
+                    PunchSwing sw = swing;
+                    sw.PlayerId = p.Id;
+                    BuildTargets(p, p.LastCmd.ViewTick, p.LastCmd.ViewFrac);
+                    BulletHit h = PunchRules.Resolve(Grid, Walls, sw, pc, _targets, p.Team, Weapons.FriendlyFire, out int tile);
+                    if (h.Kind == HitKind.Player)
+                    {
+                        ServerPlayer victim = FindById(_targets[h.Target].Id);
+                        if (victim == null || victim.State.Dead || pc.PlayerDamage <= 0) continue;
+                        bool killed = WeaponRules.ApplyDamage(ref victim.State, pc.PlayerDamage, Tick, Weapons);
+                        _combat.Add(new CombatEvent
+                        {
+                            Type = CombatEventType.Hit, Attacker = p.Id, Victim = victim.Id, Source = DamageSource.Punch,
+                            Damage = pc.PlayerDamage, Pellets = 1, Point = h.Point, Killed = killed,
+                            HealthAfter = victim.State.Health(Weapons), Origin = sw.Origin,
+                        });
+                        if (killed) OnKilled(victim, p.Id, DamageSource.Punch, false);
+                    }
+                    else if (tile >= 0)
+                        Walls.Damage(tile, PunchRules.TileDamage(Walls[tile].State, Walls.Config), TileCause.Punch, p.Id);
+                }
+                p.Punches.Clear();
+            }
+        }
+
         private readonly List<int> _blastTiles = new List<int>();
 
         /// <summary>

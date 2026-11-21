@@ -100,6 +100,8 @@ namespace Sculpt.Core
         public int PickId;
         /// <summary>Drop the held slot (the interact key held while not aiming at an item).</summary>
         public bool Drop;
+        /// <summary>Punch press (its own bind, F by default).</summary>
+        public bool Punch;
     }
 
     /// <summary>Hand timings (Ben approved 2026-11-20). Ticks at 60 Hz.</summary>

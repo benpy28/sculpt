@@ -92,7 +92,7 @@ namespace Sculpt.Core
             bool pressed = input.FirePressed || (input.FireHeld && !s.Weapon.TriggerWasHeld);
             if (s.Hand.HeldItem != Item.Grenade) return;
             if (pressed && !s.Hand.InSculptMode) s.Weapon.BufferedPressTick = tick;
-            if (!s.Hand.ItemReady || s.Mode == MoveMode.Mantle) return;
+            if (!s.Hand.ItemReady || s.Mode == MoveMode.Mantle || PunchRules.Punching(s, tick, mc.Punch)) return;
             if (tick - s.Weapon.BufferedPressTick > ThrowBufferTicks) return;
             if (s.Hand.Bag.Grenades == 0) return;
             if (s.Nade0.Active && s.Nade1.Active) return;

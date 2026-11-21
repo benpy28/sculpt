@@ -86,7 +86,7 @@ namespace Sculpt.Core.Net
         private const byte FJumpPressed = 1, FJumpHeld = 2, FCrouchHeld = 4, FCrouchPressed = 8, FSprint = 16, FShoot = 32, FRespawn = 64, FExt = 128;
         private const byte XToggle = 1, XSculpt = 2, XReinforce = 4, XReload = 8, XWarp = 128;
         private const byte GFireHeld = 1, GFirePressed = 2;
-        private const byte YPickup = 1, YDrop = 2;
+        private const byte YPickup = 1, YDrop = 2, YPunch = 4;
 
         internal void Write(ByteWriter w)
         {
@@ -98,7 +98,7 @@ namespace Sculpt.Core.Net
             if (Move.SprintHeld) f |= FSprint;
             if (Move.WantsToShoot) f |= FShoot;
             if (Respawn) f |= FRespawn;
-            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt || Warp || Hand.Pickup || Hand.Drop;
+            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt || Warp || Hand.Pickup || Hand.Drop || Hand.Punch;
             if (ext) f |= FExt;
             w.U8(f);
             byte g = 0;
@@ -123,6 +123,7 @@ namespace Sculpt.Core.Net
             byte y = 0;
             if (Hand.Pickup) y |= YPickup;
             if (Hand.Drop) y |= YDrop;
+            if (Hand.Punch) y |= YPunch;
             w.U8(y);
             if (Hand.Pickup) w.I32(Hand.PickId);
             if (!HasSculpt) return;
@@ -168,6 +169,7 @@ namespace Sculpt.Core.Net
             byte y = r.U8();
             c.Hand.Pickup = (y & YPickup) != 0;
             c.Hand.Drop = (y & YDrop) != 0;
+            c.Hand.Punch = (y & YPunch) != 0;
             if (c.Hand.Pickup)
             {
                 c.Hand.PickId = r.I32();
@@ -210,11 +212,11 @@ namespace Sculpt.Core.Net
 
         /// <summary>
         /// Order inside a tick: death/respawn timer, hand, movement (fall damage), own grenades (flights, blast push,
-        /// throw), then the gun. Grenade events go into <paramref name="grenades"/> (null while replaying). Shots fired go into
+        /// throw), then the gun. Grenade events go into <paramref name="grenades"/> (null while replaying). Punch hits go into <paramref name="punches"/> (null while replaying). Shots fired go into
         /// <paramref name="shots"/> (null while replaying). Damage from other players is applied by the server only.
         /// </summary>
         public static void Simulate(ITerrain grid, MovementConfig mc, NetConfig nc, ref MotorState s, in InputCmd cmd, Vec3d spawn, List<MoveEvent> events, List<WeaponShot> shots = null,
-            List<GrenadeEvent> grenades = null)
+            List<GrenadeEvent> grenades = null, List<PunchSwing> punches = null)
         {
             if (cmd.Respawn)
             {
@@ -249,6 +251,7 @@ namespace Sculpt.Core.Net
             if (s.Position.Y < nc.KillY) { Respawn(ref s, spawn, cmd.Tick, events); return; }
             if (s.Dead) return;
             GrenadeRules.Step(grid, mc, ref s, cmd.Tick, cmd.Move, cmd.Pitch, grenades);
+            PunchRules.Step(ref s, cmd.Tick, cmd.Hand.Punch, cmd.Move.Yaw, cmd.Pitch, mc, punches);
             WeaponRules.Step(ref s, cmd.Tick, cmd.Move, cmd.Pitch, mc, shots, cmd.Hand.Reload);
         }
 

@@ -71,7 +71,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 11;
+        public const byte Version = 12;
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
@@ -265,6 +265,8 @@ namespace Sculpt.Core.Net
             WriteFlight(w, s.Nade0);
             WriteFlight(w, s.Nade1);
             w.U8(s.NadeSeq);
+            w.I32(s.PunchTick);
+            w.I32(s.PunchBufferTick);
         }
 
         private static void WriteFlight(ByteWriter w, in GrenadeFlight f)
@@ -360,6 +362,8 @@ namespace Sculpt.Core.Net
             s.Nade0 = ReadFlight(ref r);
             s.Nade1 = ReadFlight(ref r);
             s.NadeSeq = r.U8();
+            s.PunchTick = r.I32();
+            s.PunchBufferTick = r.I32();
             return s;
         }
 
@@ -379,7 +383,8 @@ namespace Sculpt.Core.Net
                    a.WallKicks == b.WallKicks && a.LastWallKickTick == b.LastWallKickTick && a.LastWallKickNormal.Equals(b.LastWallKickNormal) && a.LastSlideJumpTick == b.LastSlideJumpTick &&
                    a.Hand.Equals(b.Hand) && a.Weapon.Equals(b.Weapon) &&
                    a.Damage == b.Damage && a.Dead == b.Dead && a.RespawnTick == b.RespawnTick &&
-                   a.Nade0.Equals(b.Nade0) && a.Nade1.Equals(b.Nade1) && a.NadeSeq == b.NadeSeq;
+                   a.Nade0.Equals(b.Nade0) && a.Nade1.Equals(b.Nade1) && a.NadeSeq == b.NadeSeq &&
+                   a.PunchTick == b.PunchTick && a.PunchBufferTick == b.PunchBufferTick;
         }
 
         private static MoveMode ReadMode(ref ByteReader r)

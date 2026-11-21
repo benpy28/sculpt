@@ -44,6 +44,11 @@ namespace Sculpt.Game.Weapons
         private Transform _vmRoot;
         private readonly GunModel[] _guns = new GunModel[4];
         private GameObject _grenade;
+        private GameObject _fist;
+        private int _lastPunch = int.MinValue;
+        private bool _punchHitDone = true;
+        /// <summary>0..1 how far the gun is pushed aside by a punch this frame.</summary>
+        private float _punchAside;
         private Material _vmMat, _lineMat, _flashMat, _puffMat;
         private LineBatch _lines, _flashLines;
         private ParticleSystem _puffs, _sparks;
@@ -125,6 +130,9 @@ namespace Sculpt.Game.Weapons
             _grenade = GunModels.BuildGrenade(_vmMat);
             _grenade.transform.SetParent(_vmRoot, false);
             _grenade.SetActive(false);
+            _fist = GunModels.BuildFist(_vmMat);
+            _fist.transform.SetParent(rig.Camera.transform, false);
+            _fist.SetActive(false);
             _puffs = MakeParticles("Impact puffs", _puffMat, -0.1f);
             _sparks = MakeParticles("Impact sparks", _puffMat, 1.2f);
         }
@@ -222,6 +230,7 @@ namespace Sculpt.Game.Weapons
 
         public void PostCamera(float dt)
         {
+            PosePunch();
             PoseViewmodel(dt);
 
             // Own shots: tracers start at the gun's muzzle as drawn this frame.
@@ -453,6 +462,65 @@ namespace Sculpt.Game.Weapons
             Arrows.RemoveAll(a => now - a.Time > 1.4f);
         }
 
+        // ================================================================ Punch
+
+        /// <summary>
+        /// The punch from the predicted state: the gun dips aside, the left fist comes up during the wind-up, jabs out to
+        /// full reach on the hit tick and pulls back. A whoosh on the press; a thud if it lands on a wall (players get the
+        /// server's hit marker).
+        /// </summary>
+        private void PosePunch()
+        {
+            MotorState s = _player.State;
+            NetClient net = _session.Client;
+            PunchConfig pc = _mc.Punch;
+            float t = net.Tick - 1 + (float)net.Alpha - s.PunchTick; // ticks since the punch started, smooth
+            bool on = !s.Dead && s.PunchTick > int.MinValue / 2 && t >= 0 && t < pc.TotalTicks;
+            Vector3 cam = _rig.Camera.transform.position;
+            if (s.PunchTick != _lastPunch)
+            {
+                if (_lastPunch != int.MinValue && on && t < 4f)
+                {
+                    GunAudio.Play(Whoosh, cam, 0.55f, Random.Range(0.93f, 1.07f), false);
+                    _punchHitDone = false;
+                }
+                _lastPunch = s.PunchTick;
+            }
+            if (!_punchHitDone && t >= pc.HitTicks)
+            {
+                _punchHitDone = true;
+                Transform ct = _rig.Camera.transform;
+                TerrainHit h = net.Grid.Raycast(ct.position.ToCore(), ct.forward.ToCore(), pc.Reach);
+                if (h.Hit)
+                {
+                    Vector3 at = h.Point.ToUnity();
+                    GunAudio.Play(GunAudio.Impact, at, 0.9f, Random.Range(0.6f, 0.7f), true, 40f, 2f);
+                    _rollVel += Random.Range(-25f, 25f);
+                }
+            }
+            if (_fist.activeSelf != on) _fist.SetActive(on);
+            float hitT = pc.HitTicks, endT = pc.TotalTicks;
+            // aside: in fast, hold, out over the last third.
+            _punchAside = !on ? 0f : t < hitT ? Smooth(t / hitT) : t > endT * 0.66f ? 1f - Smooth((t - endT * 0.66f) / (endT * 0.34f)) : 1f;
+            if (!on) return;
+            Vector3 low = new Vector3(-0.2f, -0.32f, 0.12f), cocked = new Vector3(-0.15f, -0.13f, 0.2f), out_ = new Vector3(-0.05f, -0.05f, 0.58f);
+            Vector3 p;
+            Vector3 r;
+            if (t < hitT * 0.6f) { float k = Smooth(t / (hitT * 0.6f)); p = Vector3.Lerp(low, cocked, k); r = new Vector3(20f, 25f, -10f); }
+            else if (t < hitT) { float k = (t - hitT * 0.6f) / (hitT * 0.4f); k *= k; p = Vector3.Lerp(cocked, out_, k); r = Vector3.Lerp(new Vector3(20f, 25f, -10f), new Vector3(0f, 4f, -80f), k); }
+            else { float k = Smooth((t - hitT) / (endT - hitT)); p = Vector3.Lerp(out_, low, k); r = Vector3.Lerp(new Vector3(0f, 4f, -80f), new Vector3(20f, 25f, -10f), k); }
+            float size = Mathf.Clamp(_settings.ViewmodelSize, 0.7f, 1.2f);
+            _fist.transform.localPosition = p * size;
+            _fist.transform.localRotation = Quaternion.Euler(r);
+            _fist.transform.localScale = Vector3.one * size;
+        }
+
+        private static float Smooth(float x) { x = Mathf.Clamp01(x); return x * x * (3 - 2 * x); }
+
+        private static AudioClip _whoosh;
+        private static AudioClip Whoosh => _whoosh ? _whoosh : _whoosh = Audio.Synth.Make("punch-whoosh", 0.2f, false, (t, n) =>
+            Audio.Synth.Noise(n) * Mathf.Sin(Mathf.PI * Mathf.Clamp01(t / 0.18f)) * Mathf.Sin(Mathf.PI * Mathf.Clamp01(t / 0.18f)) * 0.5f);
+
         // ================================================================ Viewmodel
 
         private void PoseViewmodel(float dt)
@@ -507,8 +575,10 @@ namespace Sculpt.Game.Weapons
             Vector3 basePos = !hasGun ? new Vector3(0.15f, -0.14f, 0.3f) : held == Weapon.Pistol ? new Vector3(0.13f, -0.135f, 0.29f) : new Vector3(0.15f, -0.155f, 0.31f);
             Vector3 bob = new Vector3(Mathf.Cos(_bobPhase) * 0.006f, Mathf.Abs(Mathf.Sin(_bobPhase)) * 0.008f, 0) * bobAmt;
             float ease = _lower * _lower * (3 - 2 * _lower);
-            Vector3 pos = basePos + _kickPos + bob + new Vector3(0, -0.3f, -0.06f) * ease + new Vector3(-0.04f, -0.035f, -0.03f) * _sprint;
-            Vector3 rot = _kickRot + new Vector3(32f * ease + 14f * _sprint + _sway.y, -24f * _sprint + _sway.x, 7f * _slideTilt - _sway.x * 0.4f);
+            Vector3 pos = basePos + _kickPos + bob + new Vector3(0, -0.3f, -0.06f) * ease + new Vector3(-0.04f, -0.035f, -0.03f) * _sprint
+                          + new Vector3(0.05f, -0.09f, -0.04f) * _punchAside;
+            Vector3 rot = _kickRot + new Vector3(32f * ease + 14f * _sprint + _sway.y, -24f * _sprint + _sway.x, 7f * _slideTilt - _sway.x * 0.4f)
+                          + new Vector3(14f, 10f, -18f) * _punchAside;
             if (hand.Mode == HandMode.Disarmed) rot += new Vector3(Mathf.Sin(Time.time * 37f) * 3f, Mathf.Sin(Time.time * 29f) * 3f, 0);
 
             // Reload: the gun tips toward you and rolls (magazine guns), or dips to the loading port per shell (pump).

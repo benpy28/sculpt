@@ -51,7 +51,7 @@ namespace Sculpt.Game.Player
         private MovementSettings _settingsAsset;
         private GameInput _input;
         private ClientSettings _client;
-        private bool _jumpLatch, _crouchLatch, _respawnLatch, _toggleLatch, _fireLatch, _reloadLatch;
+        private bool _jumpLatch, _crouchLatch, _respawnLatch, _toggleLatch, _fireLatch, _reloadLatch, _punchLatch;
         private bool _sprintOn, _crouchOn, _zoomOn;
         private int _lastSlot = -1;
 
@@ -159,6 +159,7 @@ namespace Sculpt.Game.Player
             if (_input.LastWeapon.WasPressedThisFrame()) _weaponLatch = (byte)(State.Hand.PrevSlot + 1);
             if (!InSculptMode && !clickToLock && _input.Fire.WasPressedThisFrame()) _fireLatch = true;
             if (!InSculptMode && _input.Reload.WasPressedThisFrame()) _reloadLatch = true;
+            if (_input.Punch.WasPressedThisFrame()) _punchLatch = true;
             if (_client.SprintToggle && _input.Sprint.WasPressedThisFrame()) _sprintOn = !_sprintOn;
             if (_client.CrouchToggle && _input.Crouch.WasPressedThisFrame()) _crouchOn = !_crouchOn;
             if (_client.ZoomToggle && !InSculptMode && _input.Aim.WasPressedThisFrame()) _zoomOn = !_zoomOn;
@@ -295,9 +296,10 @@ namespace Sculpt.Game.Player
             var hand = new HandInput
             {
                 SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0, Reload = _reloadLatch && active,
-                Pickup = _pickupLatch && active, PickId = _pickupId, Drop = _dropLatch && active,
+                Pickup = _pickupLatch && active, PickId = _pickupId, Drop = _dropLatch && active, Punch = _punchLatch && active,
             };
             _reloadLatch = false;
+            _punchLatch = false;
             _pickupLatch = false;
             _dropLatch = false;
             bool respawn = _respawnLatch;

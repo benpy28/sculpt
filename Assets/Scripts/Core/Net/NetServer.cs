@@ -20,7 +20,7 @@ namespace Sculpt.Core.Net
         internal readonly InputCmd[] Ring;
         internal readonly bool[] Has;
         internal int NewestReceived = int.MinValue;
-        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop;
+        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch;
         internal byte CarryWeapon;
         internal int CarryPickId;
         internal InputCmd CarrySculptCmd;
@@ -44,6 +44,7 @@ namespace Sculpt.Core.Net
         internal readonly List<WeaponShot> Shots = new List<WeaponShot>();
         /// <summary>Grenade throws and blasts from this tick's simulation.</summary>
         internal readonly List<GrenadeEvent> Nades = new List<GrenadeEvent>();
+        internal readonly List<PunchSwing> Punches = new List<PunchSwing>();
         internal bool CarryFire;
 
         /// <summary>Kills and deaths since joining (dev HUD).</summary>
@@ -248,6 +249,7 @@ namespace Sculpt.Core.Net
                         if (c.Hand.WeaponKey != 0) p.CarryWeapon = c.Hand.WeaponKey;
                         if (c.Hand.Pickup) { p.CarryPickup = true; p.CarryPickId = c.Hand.PickId; }
                         if (c.Hand.Drop) p.CarryDrop = true;
+                        if (c.Hand.Punch) p.CarryPunch = true;
                         if (c.HasSculpt) { p.CarrySculpt = true; p.CarrySculptCmd = c; }
                         // Mark so redundant copies are not counted again.
                         p.Ring[idx] = c;
@@ -347,6 +349,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryWeapon != 0) { if (cmd.Hand.WeaponKey == 0) cmd.Hand.WeaponKey = p.CarryWeapon; p.CarryWeapon = 0; }
                 if (p.CarryPickup) { if (!cmd.Hand.Pickup) { cmd.Hand.Pickup = true; cmd.Hand.PickId = p.CarryPickId; } p.CarryPickup = false; }
                 if (p.CarryDrop) { cmd.Hand.Drop = true; p.CarryDrop = false; }
+                if (p.CarryPunch) { cmd.Hand.Punch = true; p.CarryPunch = false; }
                 if (p.CarrySculpt)
                 {
                     if (!cmd.HasSculpt) { cmd.HasSculpt = true; cmd.SculptSeq = p.CarrySculptCmd.SculptSeq; cmd.Sculpt = p.CarrySculptCmd.Sculpt; }
@@ -365,7 +368,8 @@ namespace Sculpt.Core.Net
                 bool wasDead = p.State.Dead;
                 p.Shots.Clear();
                 p.Nades.Clear();
-                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades);
+                p.Punches.Clear();
+                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches);
                 if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
                 if (!p.State.Dead && (cmd.Hand.Pickup || cmd.Hand.Drop)) HandleItems(p, cmd);
                 if (p.DeferredLock != int.MinValue)
@@ -385,6 +389,7 @@ namespace Sculpt.Core.Net
             }
 
             ResolveShots();
+            ResolvePunches();
             ResolveGrenades();
 
             if (Sculpt != null)

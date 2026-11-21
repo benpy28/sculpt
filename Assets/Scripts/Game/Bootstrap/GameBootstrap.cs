@@ -61,6 +61,7 @@ namespace Sculpt.Game.Bootstrap
             if (breachSettings == null) breachSettings = ScriptableObject.CreateInstance<BreachSettings>(); // code defaults
             breachSettings.ApplyTo(sculptConfig);
             breachSettings.ApplyTo(movement.Items);
+            breachSettings.ApplyTo(movement.Punch);
             var breach = new BreachConfig();
             breachSettings.ApplyTo(breach);
             var netConfig = new NetConfig { AllowDevWarp = GameInput.DevBuild };

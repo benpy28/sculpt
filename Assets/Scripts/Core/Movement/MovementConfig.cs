@@ -112,6 +112,8 @@ namespace Sculpt.Core
         public HandConfig Hand = new HandConfig();
         /// <summary>Hotbar items, pickup and drop.</summary>
         public ItemConfig Items = new ItemConfig();
+        /// <summary>The punch (own bind, not an item).</summary>
+        public PunchConfig Punch = new PunchConfig();
 
         /// <summary>Guns, health and hit rules. Stepped with movement so the netcode predicts firing too.</summary>
         public WeaponsConfig Weapons = new WeaponsConfig();

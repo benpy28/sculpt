@@ -90,6 +90,10 @@ namespace Sculpt.Core
         /// <summary>Counts your throws (labels each grenade).</summary>
         public byte NadeSeq;
 
+        /// <summary>Tick the last punch started, and of a punch press waiting for the punch to be ready.</summary>
+        public int PunchTick;
+        public int PunchBufferTick;
+
         /// <summary>Damage taken since spawning; health = max - Damage. Fall damage is predicted, hits come from the server.</summary>
         public int Damage;
         public bool Dead;
@@ -110,6 +114,8 @@ namespace Sculpt.Core
             WallHitTick = int.MinValue / 2,
             LastWallKickTick = int.MinValue / 2,
             LastSlideJumpTick = int.MinValue / 2,
+            PunchTick = int.MinValue / 2,
+            PunchBufferTick = int.MinValue / 2,
             AirPeakY = feet.Y,
             Hand = HandState.Initial,
             Weapon = WeaponState.Initial,

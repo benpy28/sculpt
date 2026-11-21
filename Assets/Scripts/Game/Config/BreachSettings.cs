@@ -8,7 +8,7 @@ namespace Sculpt.Game.Config
     /// can tune without code changes"). Create one with Assets > Create > SCULPT > Breach Settings and drag it onto the
     /// Bootstrap object's Breach Settings slot. Without one, these code defaults are used. Movement numbers stay in
     /// Movement Settings.
-    /// Item and grenade numbers are here too. Punch, charge, heal and bar numbers arrive with their steps. Read when the map is built (enter Play mode
+    /// Item, grenade and punch numbers are here too. Charge, heal and bar numbers arrive with their steps. Read when the map is built (enter Play mode
     /// again after changing tile numbers).
     /// </summary>
     [CreateAssetMenu(menuName = "SCULPT/Breach Settings", fileName = "BreachSettings")]
@@ -66,6 +66,18 @@ namespace Sculpt.Game.Config
         [Tooltip("Damage to every tile in the blast: 150 breaks anything but Reinforced (200).")]
         [Min(0)] public int grenadeTileDamage = 150;
 
+        [Header("Punch (own bind, not an item)")]
+        [Tooltip("Reach from the eye along the crosshair, metres.")]
+        [Range(1f, 3.5f)] public float punchReach = 2f;
+        [Tooltip("The hit lands this long after the press, seconds.")]
+        [Range(0f, 0.4f)] public float punchHitSeconds = 0.1f;
+        [Tooltip("The whole punch, seconds: the gun can't fire and you can't punch again until it ends.")]
+        [Range(0.15f, 1.5f)] public float punchSeconds = 0.45f;
+        [Min(0)] public int punchPlayerDamage = 30;
+        [Tooltip("Ben: half an unreinforced wall tile.")]
+        [Min(0)] public int punchTileDamage = 50;
+        [Min(0)] public int punchReinforcedTileDamage = 25;
+
         public void ApplyTo(ItemConfig items)
         {
             items.GrenadeCarry = grenadeCarry;
@@ -87,6 +99,14 @@ namespace Sculpt.Game.Config
             g.TileRadius = grenadeTileRadius;
         }
 
+        public void ApplyTo(PunchConfig p)
+        {
+            p.Reach = punchReach;
+            p.TotalTicks = Mathf.Max(1, Mathf.RoundToInt(punchSeconds * SimTime.TicksPerSecond));
+            p.HitTicks = Mathf.Clamp(Mathf.RoundToInt(punchHitSeconds * SimTime.TicksPerSecond), 0, p.TotalTicks - 1);
+            p.PlayerDamage = punchPlayerDamage;
+        }
+
         public void ApplyTo(SculptConfig sculpt)
         {
             sculpt.BlockMovesEnabled = blockMovesEnabled;
@@ -103,6 +123,8 @@ namespace Sculpt.Game.Config
             b.ArTileDamage = arTileDamage;
             b.PistolTileDamage = pistolTileDamage;
             b.GrenadeTileDamage = grenadeTileDamage;
+            b.PunchTileDamage = punchTileDamage;
+            b.PunchReinforcedTileDamage = punchReinforcedTileDamage;
         }
     }
 }
