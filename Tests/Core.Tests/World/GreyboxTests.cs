@@ -72,13 +72,15 @@ namespace Sculpt.Core.Tests
                     Assert.That(BrushWorld.Overlaps(_w[o], box.Expand(-1e-6)), Is.False, $"tile {t} at {box.Min} overlaps a {_w[o].Kind} at {_w[o].Bounds.Min}");
                 }
             }
-            foreach (int c in B.Climbs)
+            for (int ci = 0; ci < B.Climbs.Count; ci++)
             {
-                Brush s = _w[c];
+                Brush s = B.Climbs[ci];
+                var own = new HashSet<int>();
+                foreach (int t in B.ClimbTiles[ci]) own.Add(_w.Tiles[t].Brush);
                 _w.BrushesNear(s.Bounds, near);
                 foreach (int o in near)
                 {
-                    if (o == c || !_w[o].Solid || _w[o].Kind == BrushKind.Marker) continue;
+                    if (own.Contains(o) || !_w[o].Solid || _w[o].Kind == BrushKind.Marker) continue;
                     // Wedge vs box: probe the wedge's solid with small boxes under its slope.
                     Brush other = _w[o];
                     for (double u = 0.05; u < 1; u += 0.1)
@@ -110,9 +112,8 @@ namespace Sculpt.Core.Tests
         [Test]
         public void EveryStairAndRampHasStandingHeadroomAllTheWay()
         {
-            foreach (int c in B.Climbs)
+            foreach (Brush s in B.Climbs)
             {
-                Brush s = _w[c];
                 double len = Math.Max(s.Bounds.Max.X - s.Bounds.Min.X, s.Bounds.Max.Z - s.Bounds.Min.Z);
                 for (double u = 0.02; u <= 0.98; u += 0.04)
                 {
@@ -130,9 +131,8 @@ namespace Sculpt.Core.Tests
         public void EveryFlightAndTheRoofRamp_CanBeRunUp()
         {
             Assert.That(B.Climbs.Count, Is.EqualTo(7), "two flights in each of three stairwells, and the ramp to C's roof");
-            foreach (int c in B.Climbs)
+            foreach (Brush s in B.Climbs)
             {
-                Brush s = _w[c];
                 Vec3d start = Lerp(s, 0, 0.5, -0.02) - DirVec(s.Rise) * 1.0; // a step before the bottom
                 start = new Vec3d(start.X, s.Bounds.Min.Y, start.Z);
                 double run = Math.Max(s.Bounds.Max.X - s.Bounds.Min.X, s.Bounds.Max.Z - s.Bounds.Min.Z);
@@ -148,7 +148,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void StairsKeepYourSpeed_SprintingUpAFlightIsNotSlowedByBumps()
         {
-            Brush s = _w[B.Climbs[0]];
+            Brush s = B.Climbs[0];
             Vec3d start = new Vec3d((s.Bounds.Min.X + s.Bounds.Max.X) / 2, 0, s.Bounds.Min.Z - 6);
             double minSpeed = double.MaxValue;
             MotorState st = MotorState.At(start);

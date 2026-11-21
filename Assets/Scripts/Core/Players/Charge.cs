@@ -56,6 +56,7 @@ namespace Sculpt.Core
             foreach (int t in near)
             {
                 WallTile tile = w[t];
+                if (tile.Kind != TileKind.Wall) continue; // floors, stairs and frame never take a charge (collision still stops you)
                 if (tile.State == TileState.Broken)
                 {
                     if (w.ChargedAt(t) == tick) charged = true; // replaying the tick we charged through it

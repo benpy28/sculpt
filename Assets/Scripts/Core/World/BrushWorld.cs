@@ -240,7 +240,7 @@ namespace Sculpt.Core
         }
 
         /// <summary>Ray against one convex brush (the bounds' six planes plus the slope plane for a wedge).</summary>
-        private static bool Clip(in Brush b, Vec3d o, Vec3d d, double maxT, out double tHit, out Vec3d nHit)
+        internal static bool Clip(in Brush b, Vec3d o, Vec3d d, double maxT, out double tHit, out Vec3d nHit)
         {
             double tEnter = 0, tExit = maxT;
             nHit = default;

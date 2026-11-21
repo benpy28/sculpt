@@ -120,6 +120,7 @@ namespace Sculpt.Core
         /// <summary>Can this kind of heal be done on a tile in this state (ignoring range, bar and other healers)?</summary>
         public static HealResult StateCheck(in WallTile t, HealKind kind, BreachConfig c)
         {
+            if (t.Links != null) return HealResult.NothingToHeal; // frame followers come back with the tiles around them
             if (kind == HealKind.Reinforce)
                 return t.State == TileState.Reinforced && t.Health >= c.ReinforcedHealth ? HealResult.AlreadyReinforced : HealResult.Ok;
             switch (t.State)
@@ -145,11 +146,14 @@ namespace Sculpt.Core
         {
             Aabb b = Walls.BoundsOf(tile);
             Vec3d c = (b.Min + b.Max) * 0.5;
-            bool thinX = Walls[tile].Facing == Dir.East; // the tile is thin in X: its face spans Y and Z
+            Dir facing = Walls[tile].Facing;
+            bool thinX = facing == Dir.East; // the tile is thin in X: its face spans Y and Z
+            bool flat = facing == Dir.Up;    // floors, stair and ramp segments: the face spans X and Z
             double h = Config.TileSize * 0.25;
             for (int k = 0; k < 5; k++)
             {
                 Vec3d off = k == 0 ? Vec3d.Zero
+                    : flat ? (k <= 2 ? new Vec3d(k == 1 ? h : -h, 0, 0) : new Vec3d(0, 0, k == 3 ? h : -h))
                     : k == 1 ? new Vec3d(0, h, 0) : k == 2 ? new Vec3d(0, -h, 0)
                     : thinX ? new Vec3d(0, 0, k == 3 ? h : -h) : new Vec3d(k == 3 ? h : -h, 0, 0);
                 Vec3d p = c + off;
@@ -164,12 +168,26 @@ namespace Sculpt.Core
             return false;
         }
 
-        /// <summary>Anyone's box inside the tile's space?</summary>
+        /// <summary>
+        /// Anyone's box inside the tile's space (its exact shape: over a stair segment's slope is not inside it), or inside
+        /// any broken frame piece that would come back with it?
+        /// </summary>
         public bool Occupied(int tile, IReadOnlyList<HealerStatus> players)
         {
-            Aabb b = Walls.BoundsOf(tile);
+            if (Inside(tile, players)) return true;
+            Walls.RestoredWith(tile, _restored);
+            foreach (int f in _restored)
+                if (Inside(f, players)) return true;
+            return false;
+        }
+
+        private readonly List<int> _restored = new List<int>();
+
+        private bool Inside(int tile, IReadOnlyList<HealerStatus> players)
+        {
+            Brush b = Walls.ShapeOf(tile);
             for (int i = 0; i < players.Count; i++)
-                if (players[i].Alive && players[i].Box.Overlaps(b)) return true;
+                if (players[i].Alive && BrushWorld.Overlaps(b, players[i].Box)) return true;
             return false;
         }
 

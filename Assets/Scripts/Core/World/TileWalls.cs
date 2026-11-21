@@ -18,6 +18,21 @@ namespace Sculpt.Core
         Reinforced = 4,
     }
 
+    /// <summary>What part of a building a tile is (its look, and which rules apply). Step 8 (Ben 2026-11-21).</summary>
+    public enum TileKind : byte
+    {
+        /// <summary>A 1.5 m wall tile.</summary>
+        Wall = 0,
+        /// <summary>A 1.5 m floor or roof tile (0.3 m thick).</summary>
+        Floor = 1,
+        /// <summary>A segment of a stair flight (a wedge: collides as part of the ramp, drawn as steps).</summary>
+        Stair = 2,
+        /// <summary>A segment of a plain ramp (a wedge).</summary>
+        Ramp = 3,
+        /// <summary>Frame: column pieces, beam strips over the wall lines, and the nodes where they meet.</summary>
+        Frame = 4,
+    }
+
     /// <summary>Why a tile changed (for effects and logs).</summary>
     public enum TileCause : byte
     {
@@ -132,6 +147,15 @@ namespace Sculpt.Core
         public Dir Facing;
         /// <summary>True once the tile has ever left its built state (sent to late joiners).</summary>
         public bool Changed;
+        public TileKind Kind;
+        /// <summary>
+        /// A follower (thin frame: column pieces, beam strips, nodes) takes no damage of its own: it is Broken exactly
+        /// when every tile it links to is Broken, and comes back whole when any of them comes back. So a thin piece only
+        /// ever goes when the big tiles around it have gone, and merges their holes into one large opening: never a slit
+        /// (Ben: "you arent shot through a tiny gap"). Null for an ordinary tile.
+        /// </summary>
+        public int[] Links;
+        public bool IsFollower => Links != null;
     }
 
     /// <summary>One change to one tile, in the order they happened.</summary>
@@ -186,14 +210,78 @@ namespace Sculpt.Core
         /// <summary>The tile a terrain hit landed on, or -1 (<see cref="TerrainHit.Brush"/> is brush index + 1).</summary>
         public int TileOfHit(in TerrainHit hit) => hit.Hit && hit.Brush > 0 ? TileOfBrush(hit.Brush - 1) : -1;
 
-        /// <summary>Adds one tile with the given bounds, Intact at full health.</summary>
-        public int AddTile(Aabb bounds, Dir facing)
+        /// <summary>Adds one box tile with the given bounds, Intact at full health. Floors face Up.</summary>
+        public int AddTile(Aabb bounds, Dir facing, TileKind kind = TileKind.Wall) => AddShape(Brush.Box(bounds, BrushKind.Tile), facing, kind, null);
+
+        /// <summary>Adds one wedge tile (a stair or ramp segment) rising toward <paramref name="rise"/>.</summary>
+        public int AddWedgeTile(Aabb bounds, Dir rise, TileKind kind) => AddShape(Brush.Wedge(bounds, rise, BrushKind.Tile), Dir.Up, kind, null);
+
+        /// <summary>
+        /// Adds a frame follower linked to <paramref name="links"/> (see <see cref="WallTile.Links"/>). With no links it
+        /// is an ordinary breakable frame tile (a free-standing column piece has nothing around it to leave a slit in).
+        /// </summary>
+        public int AddFollower(Aabb bounds, IReadOnlyCollection<int> links)
         {
-            int brush = World.Add(Brush.Box(bounds, BrushKind.Tile));
+            int[] l = null;
+            if (links != null && links.Count > 0)
+            {
+                l = new int[links.Count];
+                int k = 0;
+                foreach (int t in links)
+                {
+                    if (t < 0 || t >= _tiles.Count) throw new ArgumentException("A follower links to tiles that already exist.", nameof(links));
+                    l[k++] = t;
+                }
+                Array.Sort(l);
+            }
+            int id = AddShape(Brush.Box(bounds, BrushKind.Tile), Dir.Up, TileKind.Frame, l);
+            if (l != null)
+                foreach (int t in l)
+                {
+                    if (!_followers.TryGetValue(t, out var f)) _followers[t] = f = new List<int>(2);
+                    if (!f.Contains(id)) f.Add(id);
+                }
+            return id;
+        }
+
+        private int AddShape(Brush b, Dir facing, TileKind kind, int[] links)
+        {
+            int brush = World.Add(b);
             int id = _tiles.Count;
-            _tiles.Add(new WallTile { Brush = brush, State = TileState.Intact, Health = Config.IntactHealth, Facing = facing });
+            _tiles.Add(new WallTile { Brush = brush, State = TileState.Intact, Health = Config.IntactHealth, Facing = facing, Kind = kind, Links = links });
             _byBrush[brush] = id;
             return id;
+        }
+
+        private readonly Dictionary<int, List<int>> _followers = new Dictionary<int, List<int>>();
+        private static readonly List<int> NoFollowers = new List<int>();
+
+        /// <summary>The followers linked to a tile (empty if none).</summary>
+        public IReadOnlyList<int> FollowersOf(int tile) => _followers.TryGetValue(tile, out var f) ? f : NoFollowers;
+
+        public bool IsFollower(int tile) => _tiles[tile].Links != null;
+
+        /// <summary>The brush shape of a tile (a box, or a wedge for stair and ramp segments).</summary>
+        public Brush ShapeOf(int tile) => World[_tiles[tile].Brush];
+
+        /// <summary>
+        /// The broken followers that come back if <paramref name="tile"/> comes back (directly or through other followers),
+        /// so a heal can check nobody is standing in them.
+        /// </summary>
+        public void RestoredWith(int tile, List<int> into)
+        {
+            into.Clear();
+            Collect(tile, into);
+        }
+
+        private void Collect(int tile, List<int> into)
+        {
+            foreach (int f in FollowersOf(tile))
+            {
+                if (_tiles[f].State != TileState.Broken || into.Contains(f)) continue;
+                into.Add(f);
+                Collect(f, into);
+            }
         }
 
         /// <summary>
@@ -239,6 +327,23 @@ namespace Sculpt.Core
             else _chargedAt.Remove(tile);
             Changes.Add(new TileChange { Tick = Tick, Tile = tile, From = from, To = state, Health = health, Cause = cause, By = by });
             Revision++;
+            if ((from == TileState.Broken) != (state == TileState.Broken)) Propagate(tile, cause, by);
+        }
+
+        /// <summary>Brings the followers of a tile in line with their links (Broken exactly when all links are Broken).</summary>
+        private void Propagate(int tile, TileCause cause, int by)
+        {
+            if (!_followers.TryGetValue(tile, out var list)) return;
+            for (int i = 0; i < list.Count; i++)
+            {
+                int f = list[i];
+                WallTile ft = _tiles[f];
+                bool all = true;
+                foreach (int l in ft.Links)
+                    if (_tiles[l].State != TileState.Broken) { all = false; break; }
+                if (all && ft.State != TileState.Broken) Set(f, TileState.Broken, 0, cause, by);
+                else if (!all && ft.State == TileState.Broken) Set(f, TileState.Intact, Config.IntactHealth, cause, by);
+            }
         }
 
         /// <summary>
@@ -249,7 +354,7 @@ namespace Sculpt.Core
         public bool Damage(int tile, int amount, TileCause cause, int by = 0)
         {
             WallTile t = _tiles[tile];
-            if (amount <= 0 || t.State == TileState.Broken) return false;
+            if (amount <= 0 || t.State == TileState.Broken || t.Links != null) return false; // followers only go with their links
             AfterDamage(t.State, t.Health, amount, Config, out TileState s, out int h);
             Set(tile, s, h, cause, by);
             return s == TileState.Broken;
@@ -287,7 +392,7 @@ namespace Sculpt.Core
             return broke;
         }
 
-        /// <summary>Tiles whose box touches <paramref name="box"/> (any state), in no particular order.</summary>
+        /// <summary>Tiles whose bounds touch <paramref name="box"/> (any state), in no particular order.</summary>
         public void TilesNear(Aabb box, List<int> into)
         {
             into.Clear();

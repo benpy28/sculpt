@@ -62,7 +62,8 @@ namespace Sculpt.Core
             if (terrain != null)
             {
                 TerrainHit h = terrain.Raycast(eye, dir, dist + 1e-6);
-                if (h.Hit && h.Distance < dist - 1e-6 && walls.TileOfHit(h) < 0) return TileTarget.None; // frame, floor, rock in front
+                int ht = walls.TileOfHit(h);
+                if (h.Hit && h.Distance < dist - 1e-6 && (ht < 0 || walls.IsFollower(ht))) return TileTarget.None; // frame, floor, rock in front
             }
             if ((walls.BoundsOf(tile).ClosestPoint(eye) - eye).Length > range) return TileTarget.None;
             return new TileTarget { Tile = tile, Point = eye + dir * dist };
@@ -81,7 +82,11 @@ namespace Sculpt.Core
             int best = -1;
             foreach (int t in near)
             {
-                if (!Slab(walls.BoundsOf(t), o, dir, dist, out double d)) continue;
+                if (walls.IsFollower(t)) continue; // frame followers are never a heal target (and block like frame, see Ray)
+                Brush shape = walls.ShapeOf(t);
+                double d;
+                if (shape.IsRamp) { if (!BrushWorld.Clip(shape, o, dir, dist, out d, out _)) continue; } // the slope, not its box
+                else if (!Slab(shape.Bounds, o, dir, dist, out d)) continue;
                 if (best >= 0 && d >= dist) continue;
                 best = t;
                 dist = d;

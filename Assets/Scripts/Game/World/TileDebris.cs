@@ -62,7 +62,7 @@ namespace Sculpt.Game.World
         public void Burst(Aabb tile, Dir facing, Color col, int chunks, bool dust)
         {
             Vector3 lo = tile.Min.ToUnity(), hi = tile.Max.ToUnity();
-            Vector3 n = facing == Dir.North ? Vector3.forward : Vector3.right;
+            Vector3 n = facing == Dir.North ? Vector3.forward : facing == Dir.Up ? Vector3.up : Vector3.right;
             int total = chunks + (dust ? chunks / 2 + 4 : 0);
             for (int k = 0; k < total; k++)
             {

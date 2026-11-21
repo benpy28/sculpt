@@ -13,6 +13,10 @@ namespace Sculpt.Game.World
     /// Breakable wall tiles (step 2) are drawn from the local client's copy of their state in their own per-block meshes,
     /// rebuilt only when a tile in that block changes look: terracotta brick when Intact, cracked below half health,
     /// a pale cement patch inside a brick border when Patched, bright steel bands when Reinforced, nothing when Broken.
+    /// Step 8: the block's floors, stairs and roof ramp are breakable tiles too, in warm clay (terracotta, lighter than
+    /// the wall brick, so breakable still reads apart from the unbreakable greybox) with the same state looks on their
+    /// top and bottom faces; stairs keep their yellow noses. Frame tiles stay dark steel: they only ever go together
+    /// with the tiles around them.
     /// </summary>
     public sealed class BrushView : MonoBehaviour
     {
@@ -32,9 +36,26 @@ namespace Sculpt.Game.World
         public static readonly Color PatchCement = new Color(0.80f, 0.78f, 0.72f);
         public static readonly Color SteelBand = new Color(0.80f, 0.84f, 0.87f);
         public static readonly Color Crack = new Color(0.10f, 0.08f, 0.07f);
+        /// <summary>Breakable floors, stairs and ramps (step 8).</summary>
+        public static readonly Color Clay = new Color(0.78f, 0.56f, 0.42f);
+        public static readonly Color ClayDamaged = new Color(0.66f, 0.47f, 0.35f);
+        public static readonly Color ClayRamp = new Color(0.84f, 0.64f, 0.50f);
 
         /// <summary>The colour debris from a tile in this state takes.</summary>
         public static Color DebrisColour(TileState s) => s == TileState.Patched ? PatchCement : s == TileState.Reinforced ? SteelBand : Brick;
+
+        public static Color DebrisColour(TileKind k, TileState s)
+        {
+            if (s == TileState.Patched || s == TileState.Reinforced) return DebrisColour(s);
+            switch (k)
+            {
+                case TileKind.Frame: return Frame;
+                case TileKind.Floor:
+                case TileKind.Stair: return Clay;
+                case TileKind.Ramp: return ClayRamp;
+                default: return Brick;
+            }
+        }
 
         private readonly List<GameObject> _blocks = new List<GameObject>();
         private Material _mat;
@@ -100,9 +121,12 @@ namespace Sculpt.Game.World
             {
                 if (c.Cause == TileCause.Server || c.Cause == TileCause.Built) continue;
                 Aabb b = _tiles.BoundsOf(c.Tile);
-                Dir facing = _tiles[c.Tile].Facing;
-                if (c.To == TileState.Broken) _debris.Burst(b, facing, DebrisColour(c.From), 16, true);
-                else if (c.To == TileState.Damaged && c.From == TileState.Intact) _debris.Burst(b, facing, BrickDamaged, 5, false);
+                WallTile ct = _tiles[c.Tile];
+                Dir facing = ct.Facing;
+                bool thin = ct.Kind == TileKind.Frame; // frame pieces are small: fewer chunks
+                if (c.To == TileState.Broken) _debris.Burst(b, facing, DebrisColour(ct.Kind, c.From), thin ? 4 : 16, !thin);
+                else if (c.To == TileState.Damaged && c.From == TileState.Intact)
+                    _debris.Burst(b, facing, ct.Kind == TileKind.Wall ? BrickDamaged : ClayDamaged, 5, false);
             }
             _tiles.Changes.Clear();
             if (_tiles.Revision == _tilesRev) return;
@@ -148,19 +172,46 @@ namespace Sculpt.Game.World
         private void AddTile(MeshBits m, int id, in WallTile t)
         {
             if (t.State == TileState.Broken) return;
-            Aabb b = _tiles.World[t.Brush].Bounds;
+            Brush shape = _tiles.World[t.Brush];
+            bool damaged = t.State == TileState.Damaged;
+            switch (t.Kind)
+            {
+                case TileKind.Frame:
+                    AddBox(m, shape.Bounds.Min.ToUnity(), shape.Bounds.Max.ToUnity(), damaged ? Frame * 0.8f : Frame);
+                    return;
+                case TileKind.Stair:
+                case TileKind.Ramp:
+                    // The look of the state is the segment's colour (its faces are slopes and steps, not panels).
+                    Color c = t.State == TileState.Patched ? PatchCement
+                        : t.State == TileState.Reinforced ? Color.Lerp(SteelBand, Clay, 0.35f)
+                        : damaged || (_look[id] & 3) > 0 ? ClayDamaged
+                        : t.Kind == TileKind.Ramp ? ClayRamp : Clay;
+                    if (t.Kind == TileKind.Stair) AddStairs(m, shape, c); else AddWedge(m, shape, c);
+                    return;
+            }
+            Aabb b = shape.Bounds;
             Vector3 lo = b.Min.ToUnity(), hi = b.Max.ToUnity();
-            AddBox(m, lo, hi, t.State == TileState.Damaged ? BrickDamaged : Brick);
+            bool floor = t.Kind == TileKind.Floor;
+            AddBox(m, lo, hi, floor ? (damaged ? ClayDamaged : Clay) : (damaged ? BrickDamaged : Brick));
             Vector3 centre = (lo + hi) * 0.5f, size = hi - lo;
-            bool thinZ = t.Facing == Dir.North;
-            Vector3 n = thinZ ? Vector3.forward : Vector3.right;
-            float half = (thinZ ? size.z : size.x) * 0.5f + 0.004f; // just proud of each face
-            float w = (thinZ ? size.x : size.z) * 0.5f, h = size.y * 0.5f;
+            // The two big faces: across the thin axis. Walls face North (thin in z) or East (thin in x); floors face Up.
+            Vector3 n, up;
+            float half, w, h;
+            if (floor) { n = Vector3.up; up = Vector3.forward; half = size.y * 0.5f; w = size.x * 0.5f; h = size.z * 0.5f; }
+            else
+            {
+                bool thinZ = t.Facing == Dir.North;
+                n = thinZ ? Vector3.forward : Vector3.right;
+                up = Vector3.up;
+                half = (thinZ ? size.z : size.x) * 0.5f;
+                w = (thinZ ? size.x : size.z) * 0.5f;
+                h = size.y * 0.5f;
+            }
+            half += 0.004f; // just proud of each face
             int crack = _look[id] & 3;
             for (int side = -1; side <= 1; side += 2)
             {
                 Vector3 fn = n * side, fc = centre + fn * half;
-                Vector3 up = Vector3.up;
                 if (t.State == TileState.Patched)
                     Panel(m, fc, fn, up, h - 0.15f, w - 0.15f, PatchCement);
                 else if (t.State == TileState.Reinforced)
