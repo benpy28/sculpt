@@ -222,7 +222,7 @@ namespace Sculpt.Core.Net
                 _w.Clear();
                 TileProtocol.Write(_w, new TilesMsg { Tick = Tick, Changes = _tileScratch, Heals = start == 0 ? heals : null });
                 byte[] data = _w.ToArray();
-                foreach (ServerPlayer to in _players) _send(to.ConnectionId, data, true);
+                foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
             }
             Walls.Changes.Clear();
         }
@@ -241,7 +241,7 @@ namespace Sculpt.Core.Net
             if (all.Count == 0 && running.Count == 0) return;
             var w = new ByteWriter(16 + all.Count * 8 + running.Count * 8);
             TileProtocol.Write(w, new TilesMsg { Tick = Tick, Join = true, Changes = all, Heals = running });
-            _send(to.ConnectionId, w.ToArray(), true);
+            Send(to.ConnectionId, w.ToArray(), true);
         }
 
         /// <summary>One reliable message per tick with events. Shots skip their shooter; health is told only to the two involved.</summary>
@@ -262,7 +262,7 @@ namespace Sculpt.Core.Net
                 if (_combatTo.Count == 0) continue;
                 _w.Clear();
                 CombatProtocol.Write(_w, new CombatMsg { Tick = Tick, Events = _combatTo });
-                _send(to.ConnectionId, _w.ToArray(), true);
+                Send(to.ConnectionId, _w.ToArray(), true);
             }
         }
     }

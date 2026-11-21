@@ -172,7 +172,7 @@ namespace Sculpt.Core.Net
                 Spawn = spawn,
                 SpawnYaw = spawnYaw,
             });
-            _send(connectionId, _w.ToArray(), true);
+            Send(connectionId, _w.ToArray(), true);
             if (Sculpt != null) SendJoinState(p);
             SendTileJoinState(p);
             SendItems(p.ConnectionId);
@@ -185,6 +185,7 @@ namespace Sculpt.Core.Net
             _byConn.Remove(connectionId);
             _players.Remove(p);
             Healing?.Cancel(p.Id, HealResult.Stopped, null, Tick);
+            _dummies.Remove(p.Id);
             _ownBars.Remove(p.Id);
             if (Sculpt != null)
             {
@@ -329,6 +330,7 @@ namespace Sculpt.Core.Net
                 }
             }
 
+            FeedBots();
             foreach (ServerPlayer p in _players)
             {
                 // Slots for ticks in the lead window must be cleared lazily; a slot is valid only if its tick matches.
@@ -441,8 +443,8 @@ namespace Sculpt.Core.Net
             var w = new ByteWriter(16 + Items.Count * 24);
             ItemsProtocol.Write(w, new ItemsMsg { Tick = Tick, Items = new List<GroundItem>(Items.All) });
             byte[] data = w.ToArray();
-            if (connectionId >= 0) { _send(connectionId, data, true); return; }
-            foreach (ServerPlayer to in _players) _send(to.ConnectionId, data, true);
+            if (connectionId >= 0) { Send(connectionId, data, true); return; }
+            foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
         }
 
         /// <summary>Puts an item on the map (map setup, tests). It rests on the surface below the point.</summary>
@@ -582,7 +584,7 @@ namespace Sculpt.Core.Net
             _w.Clear();
             WorldProtocol.Write(_w, new WorldMsg { Tick = Tick, Ops = _opsScratch, Events = _worldEvents });
             byte[] data = _w.ToArray();
-            foreach (ServerPlayer to in _players) _send(to.ConnectionId, data, true);
+            foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
         }
 
         /// <summary>Late join: the whole op log, windups in progress, pieces in flight.</summary>
@@ -601,7 +603,7 @@ namespace Sculpt.Core.Net
             for (int k = 0; k < _opsSent && k < Sculpt.Pieces.Ops.Count; k++) ops.Add(Sculpt.Pieces.Ops[k]);
             var w = new ByteWriter(4096);
             WorldProtocol.Write(w, new WorldMsg { Tick = Tick, Join = true, Ops = ops, Events = events });
-            _send(to.ConnectionId, w.ToArray(), true);
+            Send(to.ConnectionId, w.ToArray(), true);
         }
 
         private void SendSnapshots()
@@ -638,7 +640,7 @@ namespace Sculpt.Core.Net
                     SelfBar = BarOf(to.Id).Value,
                     Others = _others,
                 });
-                _send(to.ConnectionId, _w.ToArray(), false);
+                Send(to.ConnectionId, _w.ToArray(), false);
             }
         }
 

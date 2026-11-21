@@ -106,6 +106,19 @@ namespace Sculpt.Game.Config
         [Tooltip("Extra bar per 10 damage you deal to enemy players, percent.")]
         [Range(0f, 10f)] public float barPercentPer10Damage = 1f;
 
+        [Header("Practice dummy (stands in the sealed room in the middle, heals its broken walls)")]
+        public bool practiceDummy = true;
+        [Tooltip("A wall tile of its room has to stay broken this long before it heals it, seconds.")]
+        [Range(0.5f, 20f)] public float dummyHealDelaySeconds = 3f;
+        [Tooltip("Also heal cracked tiles (off: leaves them so you can practise charging through).")]
+        public bool dummyHealsCracks = false;
+
+        public void ApplyTo(DummyConfig d)
+        {
+            d.HealDelayTicks = Ticks(dummyHealDelaySeconds);
+            d.HealDamaged = dummyHealsCracks;
+        }
+
         public void ApplyTo(ItemConfig items)
         {
             items.GrenadeCarry = grenadeCarry;

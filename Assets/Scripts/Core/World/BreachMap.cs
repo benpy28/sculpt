@@ -11,6 +11,8 @@ namespace Sculpt.Core
         public CourseInfo Course;
         /// <summary>Tile ids of the two test walls (team 1 side, team 2 side) and the sealed room in the middle.</summary>
         public int[] TestWallA, TestWallB, Room;
+        /// <summary>Feet position in the middle of the sealed room (the practice dummy's post).</summary>
+        public Vec3d RoomCentre;
         public double SizeX, SizeZ;
         /// <summary>Items lying on the map at the start (the server spawns them): grenade refills by each spawn.</summary>
         public readonly List<GroundItem> ItemSpawns = new List<GroundItem>();
@@ -48,6 +50,7 @@ namespace Sculpt.Core
             info.TestWallA = TestWall(w.Tiles, mid - 6, 50);
             info.TestWallB = TestWall(w.Tiles, mid - 6, info.SizeZ - 50 - w.Tiles.Config.TileThickness);
             info.Room = SealedRoom(w, mid - 3.3, mid - 3.3);
+            info.RoomCentre = new Vec3d(mid, 0, mid);
             info.Block = GreyboxBlock.Build(w);
             w.Tiles.Changes.Clear(); // the build itself is not news
             // Spawns face each other across the block: team 1 south of the south berm, team 2 north of the north hill.

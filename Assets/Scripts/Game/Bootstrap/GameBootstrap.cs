@@ -105,7 +105,15 @@ namespace Sculpt.Game.Bootstrap
             if (breachInfo != null)
             {
                 BreachMapInfo bi = breachInfo;
-                setup = server => { foreach (GroundItem g in bi.ItemSpawns) server.SpawnItem(g.Kind, g.Count, g.Position); };
+                var dummy = new DummyConfig();
+                breachSettings.ApplyTo(dummy);
+                bool withDummy = breachSettings.practiceDummy;
+                setup = server =>
+                {
+                    foreach (GroundItem g in bi.ItemSpawns) server.SpawnItem(g.Kind, g.Count, g.Position);
+                    // Practice dummy in the sealed room: break in, push through, watch it heal (Ben, step 7).
+                    if (withDummy) server.AddDummy(new PracticeDummy(bi.RoomCentre, Math.PI, bi.Room, dummy), team: 2);
+                };
             }
             _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup);
 
