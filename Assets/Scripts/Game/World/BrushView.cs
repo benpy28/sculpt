@@ -10,6 +10,9 @@ namespace Sculpt.Game.World
     /// steel, stairs concrete with a yellow nose on every step, ramps lighter concrete with yellow edges, plain walls
     /// slate. Never purple (reserved for sculptable). Stairs are drawn as steps but collide as a smooth ramp: each
     /// step's tread is centred on the slope, so the drawn steps stay within half a step (7.5 cm) of what you touch.
+    /// Breakable wall tiles (step 2) are drawn from the local client's copy of their state in their own per-block meshes,
+    /// rebuilt only when a tile in that block changes look: terracotta brick when Intact, cracked below half health,
+    /// a pale cement patch inside a brick border when Patched, bright steel bands when Reinforced, nothing when Broken.
     /// </summary>
     public sealed class BrushView : MonoBehaviour
     {
@@ -24,15 +27,197 @@ namespace Sculpt.Game.World
         public static readonly Color Wall = new Color(0.40f, 0.43f, 0.46f);
         public static readonly Color Ground = new Color(0.46f, 0.52f, 0.38f);
         public static readonly Color Marker = new Color(0.20f, 0.85f, 0.45f);
+        public static readonly Color Brick = new Color(0.72f, 0.42f, 0.30f);
+        public static readonly Color BrickDamaged = new Color(0.62f, 0.36f, 0.26f);
+        public static readonly Color PatchCement = new Color(0.80f, 0.78f, 0.72f);
+        public static readonly Color SteelBand = new Color(0.80f, 0.84f, 0.87f);
+        public static readonly Color Crack = new Color(0.10f, 0.08f, 0.07f);
+
+        /// <summary>The colour debris from a tile in this state takes.</summary>
+        public static Color DebrisColour(TileState s) => s == TileState.Patched ? PatchCement : s == TileState.Reinforced ? SteelBand : Brick;
 
         private readonly List<GameObject> _blocks = new List<GameObject>();
         private Material _mat;
         private bool _linear;
 
+        // Tiles: the client's copy, which block each tile is drawn in, and the look each block was last built with.
+        private TileWalls _tiles;
+        private int _tilesRev = -1;
+        private int[] _look;
+        private readonly Dictionary<Vector2Int, List<int>> _tilesByBlock = new Dictionary<Vector2Int, List<int>>();
+        private readonly Dictionary<Vector2Int, Mesh> _tileMeshes = new Dictionary<Vector2Int, Mesh>();
+        private readonly HashSet<Vector2Int> _dirty = new HashSet<Vector2Int>();
+        private TileDebris _debris;
+
+        private static Vector2Int BlockOf(in Brush b)
+        {
+            Vector3 c = ((b.Bounds.Min + b.Bounds.Max) * 0.5).ToUnity();
+            return new Vector2Int(Mathf.FloorToInt(c.x / BlockSize), Mathf.FloorToInt(c.z / BlockSize));
+        }
+
+        /// <summary>
+        /// Draw the tiles of this client copy (call again when the session makes a new client). Tile changes the
+        /// server sent become debris and dust here; this view drains the copy's change list.
+        /// </summary>
+        public void BindTiles(TileWalls tiles)
+        {
+            _tiles = tiles;
+            _tilesRev = -1;
+            foreach (Mesh m in _tileMeshes.Values) m.Clear();
+            _tilesByBlock.Clear();
+            _dirty.Clear();
+            if (tiles == null) return;
+            tiles.Changes.Clear();
+            _look = new int[tiles.Count];
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                Vector2Int key = BlockOf(tiles.World[tiles[i].Brush]);
+                if (!_tilesByBlock.TryGetValue(key, out var list)) _tilesByBlock[key] = list = new List<int>();
+                list.Add(i);
+                _look[i] = -1;
+            }
+            if (_debris == null) _debris = new GameObject("Tile Debris").AddComponent<TileDebris>();
+            _debris.transform.SetParent(transform, false);
+        }
+
+        /// <summary>What a tile looks like, as a number: state, plus a crack level from its health.</summary>
+        private int LookOf(in WallTile t)
+        {
+            int crack = 0;
+            int max = _tiles.Config.MaxHealthOf(t.State);
+            if (t.State != TileState.Broken && max > 0)
+            {
+                if (t.State == TileState.Damaged || t.Health * 2 < max) crack = 1;
+                if (t.Health * 4 < max) crack = 2;
+            }
+            return (int)t.State * 4 + crack;
+        }
+
+        private void LateUpdate()
+        {
+            if (_tiles == null || _mat == null) return;
+            foreach (TileChange c in _tiles.Changes)
+            {
+                if (c.Cause == TileCause.Server || c.Cause == TileCause.Built) continue;
+                Aabb b = _tiles.BoundsOf(c.Tile);
+                Dir facing = _tiles[c.Tile].Facing;
+                if (c.To == TileState.Broken) _debris.Burst(b, facing, DebrisColour(c.From), 16, true);
+                else if (c.To == TileState.Damaged && c.From == TileState.Intact) _debris.Burst(b, facing, BrickDamaged, 5, false);
+            }
+            _tiles.Changes.Clear();
+            if (_tiles.Revision == _tilesRev) return;
+            _tilesRev = _tiles.Revision;
+            for (int i = 0; i < _tiles.Count; i++)
+            {
+                int look = LookOf(_tiles[i]);
+                if (look == _look[i]) continue;
+                _look[i] = look;
+                _dirty.Add(BlockOf(_tiles.World[_tiles[i].Brush]));
+            }
+            foreach (Vector2Int key in _dirty) RebuildTiles(key);
+            _dirty.Clear();
+        }
+
+        private void RebuildTiles(Vector2Int key)
+        {
+            if (!_tileMeshes.TryGetValue(key, out Mesh mesh))
+            {
+                mesh = new Mesh { name = $"Tiles {key}", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+                mesh.MarkDynamic();
+                var go = new GameObject(mesh.name);
+                go.transform.SetParent(transform, false);
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var r = go.AddComponent<MeshRenderer>();
+                r.sharedMaterial = _mat;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                r.receiveShadows = false;
+                _tileMeshes[key] = mesh;
+                _blocks.Add(go);
+            }
+            var m = new MeshBits();
+            if (_tilesByBlock.TryGetValue(key, out var ids))
+                foreach (int id in ids) AddTile(m, id, _tiles[id]);
+            mesh.Clear();
+            mesh.SetVertices(m.V);
+            mesh.SetNormals(m.N);
+            mesh.SetColors(m.C);
+            mesh.SetTriangles(m.T, 0);
+            mesh.RecalculateBounds();
+        }
+
+        private void AddTile(MeshBits m, int id, in WallTile t)
+        {
+            if (t.State == TileState.Broken) return;
+            Aabb b = _tiles.World[t.Brush].Bounds;
+            Vector3 lo = b.Min.ToUnity(), hi = b.Max.ToUnity();
+            AddBox(m, lo, hi, t.State == TileState.Damaged ? BrickDamaged : Brick);
+            Vector3 centre = (lo + hi) * 0.5f, size = hi - lo;
+            bool thinZ = t.Facing == Dir.North;
+            Vector3 n = thinZ ? Vector3.forward : Vector3.right;
+            float half = (thinZ ? size.z : size.x) * 0.5f + 0.004f; // just proud of each face
+            float w = (thinZ ? size.x : size.z) * 0.5f, h = size.y * 0.5f;
+            int crack = _look[id] & 3;
+            for (int side = -1; side <= 1; side += 2)
+            {
+                Vector3 fn = n * side, fc = centre + fn * half;
+                Vector3 up = Vector3.up;
+                if (t.State == TileState.Patched)
+                    Panel(m, fc, fn, up, h - 0.15f, w - 0.15f, PatchCement);
+                else if (t.State == TileState.Reinforced)
+                {
+                    Panel(m, fc + up * (h * 0.55f), fn, up, 0.09f, w, SteelBand);
+                    Panel(m, fc - up * (h * 0.55f), fn, up, 0.09f, w, SteelBand);
+                    Panel(m, fc, fn, up, h, 0.09f, SteelBand);
+                }
+                if (crack > 0) AddCracks(m, id, fc + fn * 0.002f, fn, up, w, h, crack == 2 ? 6 : 3);
+            }
+        }
+
+        /// <summary>A flat rectangle facing <paramref name="n"/>: half sizes along up and right.</summary>
+        private void Panel(MeshBits m, Vector3 c, Vector3 n, Vector3 up, float hu, float hr, Color col)
+        {
+            // Quad's normal is Cross(b - a, d - a): with b - a along up and d - a along right that is Cross(up, right) = n.
+            Vector3 r = Vector3.Cross(n, up).normalized * hr, u = up * hu;
+            Quad(m, c - r - u, c - r + u, c + r + u, c + r - u, col);
+        }
+
+        /// <summary>Jagged dark crack lines out from near the middle, the same for a tile every time (hashed from its id).</summary>
+        private void AddCracks(MeshBits m, int id, Vector3 c, Vector3 n, Vector3 up, float w, float h, int count)
+        {
+            uint seed = (uint)(id * 2654435761u + 0x9E3779B9u);
+            float Rand()
+            {
+                seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+                return (seed & 0xFFFFFF) / (float)0x1000000;
+            }
+            Vector3 r = Vector3.Cross(n, up).normalized;
+            Vector3 start = c + r * ((Rand() - 0.5f) * w * 0.5f) + up * ((Rand() - 0.5f) * h * 0.5f);
+            for (int k = 0; k < count; k++)
+            {
+                float a = (k + Rand() * 0.6f) * Mathf.PI * 2f / count;
+                Vector3 p = start;
+                float len = Mathf.Min(w, h) * (0.55f + Rand() * 0.4f);
+                for (int seg = 0; seg < 3; seg++)
+                {
+                    a += (Rand() - 0.5f) * 0.9f;
+                    Vector3 dir = r * Mathf.Cos(a) + up * Mathf.Sin(a);
+                    Vector3 q = p + dir * (len / 3f);
+                    // Keep inside the face.
+                    q = c + r * Mathf.Clamp(Vector3.Dot(q - c, r), -w + 0.03f, w - 0.03f) + up * Mathf.Clamp(Vector3.Dot(q - c, up), -h + 0.03f, h - 0.03f);
+                    Vector3 across = Vector3.Cross(n, (q - p).normalized) * (0.022f - seg * 0.005f);
+                    Quad(m, p - across, q - across, q + across, p + across, Crack);
+                    p = q;
+                }
+            }
+        }
+
         public void Build(BrushWorld world)
         {
             foreach (GameObject g in _blocks) Destroy(g);
             _blocks.Clear();
+            _tileMeshes.Clear();
+            _tilesRev = -1;
+            if (_look != null) for (int i = 0; i < _look.Length; i++) _look[i] = -1;
             Shader shader = Shader.Find("SCULPT/Greybox");
             if (shader == null)
             {
@@ -46,8 +231,8 @@ namespace Sculpt.Game.World
             for (int i = 0; i < world.Count; i++)
             {
                 Brush b = world[i];
-                Vector3 c = ((b.Bounds.Min + b.Bounds.Max) * 0.5).ToUnity();
-                var key = new Vector2Int(Mathf.FloorToInt(c.x / BlockSize), Mathf.FloorToInt(c.z / BlockSize));
+                if (b.Kind == BrushKind.Tile) continue; // drawn from the client's tile state (BindTiles)
+                Vector2Int key = BlockOf(b);
                 if (!byBlock.TryGetValue(key, out MeshBits m)) byBlock[key] = m = new MeshBits();
                 AddBrush(m, b);
             }

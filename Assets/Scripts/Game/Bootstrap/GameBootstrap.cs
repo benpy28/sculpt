@@ -60,6 +60,8 @@ namespace Sculpt.Game.Bootstrap
             if (weaponSettings != null) weaponSettings.ApplyTo(movement.Weapons);
             if (breachSettings == null) breachSettings = ScriptableObject.CreateInstance<BreachSettings>(); // code defaults
             breachSettings.ApplyTo(sculptConfig);
+            var breach = new BreachConfig();
+            breachSettings.ApplyTo(breach);
             var netConfig = new NetConfig { AllowDevWarp = GameInput.DevBuild };
             // The client's own copy of the map (what it draws and predicts against). The server builds its own.
             Vec3d[][] spawns;
@@ -73,9 +75,9 @@ namespace Sculpt.Game.Bootstrap
             {
                 build = BreachMap.BuildGround;
                 _grid = BreachMap.BuildGround();
-                // Static for now: both sides build the same brushes from code (tile state comes with step 2).
-                brushes = BreachMap.BuildBrushes(out breachInfo);
-                terrain = g => BreachMap.Terrain(g, BreachMap.BuildBrushes(out _)); // the server and each client get their own copy
+                // Both sides build the same brushes from code; only tile changes travel (server to client).
+                brushes = BreachMap.BuildBrushes(out breachInfo, breach); // drawn (static parts); tiles draw the client's copy
+                terrain = g => BreachMap.Terrain(g, BreachMap.BuildBrushes(out _, breach)); // the server and each client get their own copy
                 spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
                 yaw = breachInfo.SpawnYaw;
                 netConfig.DevWarpPoint = breachInfo.Course.Start;
@@ -103,7 +105,13 @@ namespace Sculpt.Game.Bootstrap
             _world.Init(_grid, sculptConfig, mapInfo);
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
-            if (brushes != null) new GameObject("Buildings").AddComponent<BrushView>().Build(brushes);
+            if (brushes != null)
+            {
+                var buildings = new GameObject("Buildings").AddComponent<BrushView>();
+                buildings.Build(brushes);
+                buildings.BindTiles(_session.Client.Walls);
+                _session.ClientChanged += () => buildings.BindTiles(_session.Client.Walls);
+            }
 
             // Sky, haze, fixed sun and the distant hills around the arena.
             float half = (float)(_grid.SizeX * SubGrid.SubSize * 0.5);
