@@ -63,6 +63,13 @@ namespace Sculpt.Core
         public int PunchTileDamage = 50;
         public int PunchReinforcedTileDamage = 25;
 
+        /// <summary>Charge: moving at least this share of top sprint speed into Damaged or Patched tiles breaks them.</summary>
+        public double ChargeSpeedFraction = 0.8;
+        /// <summary>Share of horizontal speed kept when you charge through (Ben: "keeps most speed").</summary>
+        public double ChargeKeep = 0.85;
+        /// <summary>You must hit the wall within this many degrees of head-on (a glancing scrape along it never breaks it).</summary>
+        public double ChargeMaxAngleDegrees = 60;
+
         public int TileDamageOf(Weapon w)
         {
             switch (w)
@@ -130,6 +137,11 @@ namespace Sculpt.Core
         public int Revision { get; private set; }
         /// <summary>The tick stamped on changes (the server sets it each tick).</summary>
         public int Tick;
+        /// <summary>Tiles broken by a charge, and the tick (so a replay of that tick charges through the same tile).</summary>
+        private readonly Dictionary<int, int> _chargedAt = new Dictionary<int, int>();
+
+        /// <summary>The tick this tile was charged through, or int.MinValue (never, or it has been healed since).</summary>
+        public int ChargedAt(int tile) => _chargedAt.TryGetValue(tile, out int t) ? t : int.MinValue;
 
         internal TileWalls(BrushWorld world, BreachConfig config)
         {
@@ -196,6 +208,8 @@ namespace Sculpt.Core
             if (cause != TileCause.Built) t.Changed = true;
             _tiles[tile] = t;
             if ((from == TileState.Broken) != (state == TileState.Broken)) World.SetSolid(t.Brush, state != TileState.Broken);
+            if (state == TileState.Broken && cause == TileCause.Charge) _chargedAt[tile] = Tick;
+            else _chargedAt.Remove(tile);
             Changes.Add(new TileChange { Tick = Tick, Tile = tile, From = from, To = state, Health = health, Cause = cause, By = by });
             Revision++;
         }

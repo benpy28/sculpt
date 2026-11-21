@@ -38,6 +38,8 @@ namespace Sculpt.Core.Net
         /// <summary>This client's copy of the wall tiles behind <see cref="Grid"/> (null without buildings). Only the
         /// server's Tiles messages change it; its Changes list is for the Game layer to drain (effects).</summary>
         public readonly TileWalls Walls;
+        /// <summary>Your own charge breaks, predicted on <see cref="Walls"/> until the server confirms or refuses them.</summary>
+        public readonly PredictedChargeBreaker Charges = new PredictedChargeBreaker();
         public readonly MovementConfig Movement;
         public readonly NetConfig Config;
         /// <summary>Optional: networked sculpting on a sub-cell grid (prediction, server ops, windups, flights).</summary>
@@ -283,6 +285,7 @@ namespace Sculpt.Core.Net
 
         private void Reconcile(int serverTick, in MotorState server)
         {
+            if (Walls != null) Charges.OnServerState(Walls, serverTick, server.ChargeTick);
             if (serverTick > Tick)
             {
                 // We are behind the server (start-up or a stall): adopt its state outright.
@@ -306,7 +309,7 @@ namespace Sculpt.Core.Net
                 if (_histTick[k] != t) break;
                 prev = s;
                 ApplyLanding(ref s, _histMoved[k], _histMoveTo[k], _histKick[k]);
-                NetSim.Simulate(Grid, Movement, Config, ref s, _histCmd[k], Spawn, null);
+                NetSim.Simulate(Grid, Movement, Config, ref s, _histCmd[k], Spawn, null, null, null, null, Walls != null ? Charges : null);
                 if (_histLock[k] != int.MinValue) HandRules.LockGun(ref s.Hand, _histLock[k]);
                 _histState[k] = s;
             }
@@ -402,7 +405,7 @@ namespace Sculpt.Core.Net
             if (LocalShots.Count > 1024) LocalShots.Clear(); // nobody is draining (tests)
             if (LocalGrenades.Count > 1024) LocalGrenades.Clear();
             int shotsBefore = LocalShots.Count;
-            NetSim.Simulate(Grid, Movement, Config, ref _pred, cmd, Spawn, events, LocalShots, LocalGrenades);
+            NetSim.Simulate(Grid, Movement, Config, ref _pred, cmd, Spawn, events, LocalShots, LocalGrenades, null, Walls != null ? Charges : null);
             for (int k = shotsBefore; k < LocalShots.Count; k++)
             {
                 WeaponShot sh = LocalShots[k];

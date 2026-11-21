@@ -82,6 +82,7 @@ namespace Sculpt.Core.Net
         public readonly ITerrain Grid;
         /// <summary>The breakable wall tiles behind <see cref="Grid"/> (null on maps without buildings). The server owns them.</summary>
         public readonly TileWalls Walls;
+        private readonly ServerChargeBreaker _charge = new ServerChargeBreaker();
         public readonly MovementConfig Movement;
         public readonly NetConfig Config;
         public int Tick { get; private set; }
@@ -369,7 +370,8 @@ namespace Sculpt.Core.Net
                 p.Shots.Clear();
                 p.Nades.Clear();
                 p.Punches.Clear();
-                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches);
+                _charge.By = p.Id;
+                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches, Walls != null ? _charge : null);
                 if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
                 if (!p.State.Dead && (cmd.Hand.Pickup || cmd.Hand.Drop)) HandleItems(p, cmd);
                 if (p.DeferredLock != int.MinValue)

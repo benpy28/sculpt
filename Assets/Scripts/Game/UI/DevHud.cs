@@ -208,7 +208,8 @@ namespace Sculpt.Game.UI
             // Marks with labels.
             Mark(x, y, w, h, (float)c.RunSpeed, maxV, "run");
             Mark(x, y, w, h, (float)c.SprintSpeed, maxV, "sprint");
-            Mark(x, y, w, h, (float)(c.SprintSpeed * 0.8), maxV, "charge");
+            double chargeAt = _session.Client.Walls != null ? _session.Client.Walls.Config.ChargeSpeedFraction : 0.8;
+            Mark(x, y, w, h, (float)(c.SprintSpeed * chargeAt), maxV, "charge");
             Mark(x, y, w, h, (float)c.SlideMaxSpeed, maxV, "cap");
 
             // Trace of the last 3 s.

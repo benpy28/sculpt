@@ -93,6 +93,8 @@ namespace Sculpt.Core
         /// <summary>Tick the last punch started, and of a punch press waiting for the punch to be ready.</summary>
         public int PunchTick;
         public int PunchBufferTick;
+        /// <summary>Tick you last charged through a wall tile.</summary>
+        public int ChargeTick;
 
         /// <summary>Damage taken since spawning; health = max - Damage. Fall damage is predicted, hits come from the server.</summary>
         public int Damage;
@@ -116,6 +118,7 @@ namespace Sculpt.Core
             LastSlideJumpTick = int.MinValue / 2,
             PunchTick = int.MinValue / 2,
             PunchBufferTick = int.MinValue / 2,
+            ChargeTick = int.MinValue / 2,
             AirPeakY = feet.Y,
             Hand = HandState.Initial,
             Weapon = WeaponState.Initial,
@@ -145,6 +148,8 @@ namespace Sculpt.Core
         MantleCancel,
         /// <summary>Counter-strafe brake started this tick (first tick of a brake).</summary>
         Braked,
+        /// <summary>Charged through one or more wall tiles. Value = tiles broken this tick.</summary>
+        ChargedThrough,
     }
 
     public struct MoveEvent

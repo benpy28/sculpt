@@ -8,7 +8,7 @@ namespace Sculpt.Game.Config
     /// can tune without code changes"). Create one with Assets > Create > SCULPT > Breach Settings and drag it onto the
     /// Bootstrap object's Breach Settings slot. Without one, these code defaults are used. Movement numbers stay in
     /// Movement Settings.
-    /// Item, grenade and punch numbers are here too. Charge, heal and bar numbers arrive with their steps. Read when the map is built (enter Play mode
+    /// Item, grenade, punch and charge numbers are here too. Heal and bar numbers arrive with their step. Read when the map is built (enter Play mode
     /// again after changing tile numbers).
     /// </summary>
     [CreateAssetMenu(menuName = "SCULPT/Breach Settings", fileName = "BreachSettings")]
@@ -78,6 +78,14 @@ namespace Sculpt.Game.Config
         [Min(0)] public int punchTileDamage = 50;
         [Min(0)] public int punchReinforcedTileDamage = 25;
 
+        [Header("Charge (run through Damaged or Patched tiles)")]
+        [Tooltip("Share of top sprint speed you need to break a cracked tile by running into it.")]
+        [Range(0.3f, 1.5f)] public float chargeSpeedFraction = 0.8f;
+        [Tooltip("Share of your horizontal speed kept when you charge through.")]
+        [Range(0.3f, 1f)] public float chargeKeep = 0.85f;
+        [Tooltip("You must hit the wall within this many degrees of head-on.")]
+        [Range(10f, 89f)] public float chargeMaxAngleDegrees = 60f;
+
         public void ApplyTo(ItemConfig items)
         {
             items.GrenadeCarry = grenadeCarry;
@@ -125,6 +133,9 @@ namespace Sculpt.Game.Config
             b.GrenadeTileDamage = grenadeTileDamage;
             b.PunchTileDamage = punchTileDamage;
             b.PunchReinforcedTileDamage = punchReinforcedTileDamage;
+            b.ChargeSpeedFraction = chargeSpeedFraction;
+            b.ChargeKeep = chargeKeep;
+            b.ChargeMaxAngleDegrees = chargeMaxAngleDegrees;
         }
     }
 }

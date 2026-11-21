@@ -18,7 +18,27 @@ namespace Sculpt.Game.Player
         private float _stride;
         private int _stepIndex;
         private static AudioClip[] _steps;
-        private static AudioClip _jump, _land, _slideLoop, _slideLand, _grab;
+        private static AudioClip _jump, _land, _slideLoop, _slideLand, _grab, _crash;
+
+        /// <summary>Charging through a wall: a heavy shoulder thump, then brick cracking apart and rubble spilling.</summary>
+        private static AudioClip Crash => _crash ? _crash : _crash = MakeCrash();
+
+        private static AudioClip MakeCrash()
+        {
+            float phase = 0, lp = 0;
+            return Synth.Make("charge-crash", 0.9f, false, (t, n) =>
+            {
+                float f = 55f + 70f * Mathf.Exp(-t * 18f);
+                phase += 2 * Mathf.PI * f / Synth.Rate;
+                float thump = Mathf.Sin(phase) * Mathf.Exp(-t * 11f) * 0.9f;
+                float crack = Synth.Noise(n) * Mathf.Exp(-t * 30f) * 0.7f;
+                lp += (Synth.Noise(n + 313) - lp) * 0.12f;
+                // Rubble: bursts of filtered noise that thin out.
+                float gate = Synth.Noise(n / 900 + 17) > 0.2f ? 1f : 0.15f;
+                float rubble = lp * 2.2f * gate * Mathf.Exp(-t * 3.5f) * Mathf.Min(1f, t * 25f);
+                return Synth.Soft(thump + crack + rubble);
+            });
+        }
 
         public void Init(LocalPlayer player)
         {
@@ -55,6 +75,9 @@ namespace Sculpt.Game.Player
                     }
                     case MoveEventType.SlideLandSuccess:
                         Synth.Play(SlideLand, feet, 0.7f, 1f, false);
+                        break;
+                    case MoveEventType.ChargedThrough:
+                        Synth.Play(Crash, feet + Vector3.up, 1f, Random.Range(0.92f, 1.04f), false);
                         break;
                     case MoveEventType.Vaulted:
                     case MoveEventType.MantleStarted:

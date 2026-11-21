@@ -205,6 +205,12 @@ namespace Sculpt.Game.Weapons
             }
             net.LocalShots.Clear();
             net.Combat.Clear();
+            foreach (MoveEvent e in _player.Events)
+                if (e.Type == MoveEventType.ChargedThrough)
+                {
+                    _rollVel += Random.Range(0, 2) == 0 ? -70f : 70f; // a shoulder through brick: roll only, aim untouched
+                    _fp.Shake.FovPunch = Mathf.Max(_fp.Shake.FovPunch, 2.5f);
+                }
 
             for (int i = _rackAt.Count - 1; i >= 0; i--)
             {

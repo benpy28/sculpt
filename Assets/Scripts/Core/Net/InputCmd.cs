@@ -212,11 +212,11 @@ namespace Sculpt.Core.Net
 
         /// <summary>
         /// Order inside a tick: death/respawn timer, hand, movement (fall damage), own grenades (flights, blast push,
-        /// throw), then the gun. Grenade events go into <paramref name="grenades"/> (null while replaying). Punch hits go into <paramref name="punches"/> (null while replaying). Shots fired go into
+        /// throw), then the gun. Grenade events go into <paramref name="grenades"/> (null while replaying). Punch hits go into <paramref name="punches"/> (null while replaying). <paramref name="charge"/> breaks tiles you charge through (null: no charging). Shots fired go into
         /// <paramref name="shots"/> (null while replaying). Damage from other players is applied by the server only.
         /// </summary>
         public static void Simulate(ITerrain grid, MovementConfig mc, NetConfig nc, ref MotorState s, in InputCmd cmd, Vec3d spawn, List<MoveEvent> events, List<WeaponShot> shots = null,
-            List<GrenadeEvent> grenades = null, List<PunchSwing> punches = null)
+            List<GrenadeEvent> grenades = null, List<PunchSwing> punches = null, IChargeBreaker charge = null)
         {
             if (cmd.Respawn)
             {
@@ -236,6 +236,7 @@ namespace Sculpt.Core.Net
             }
             HandRules.Step(ref s.Hand, cmd.Tick, cmd.Hand, mc.Hand);
 
+            ChargeRules.Step(grid, mc, ref s, cmd.Tick, charge, events); // breaks the tile before this tick's movement reaches it
             List<MoveEvent> ev = events ?? (_scratch ??= new List<MoveEvent>());
             int before = ev.Count;
             PlayerMovement.Step(grid, mc, ref s, cmd.Move, ev);
