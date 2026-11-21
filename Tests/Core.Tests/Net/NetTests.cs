@@ -32,6 +32,7 @@ namespace Sculpt.Core.Tests.Net
                     },
                     Pitch = (float)((rng.NextDouble() - 0.5) * 200),
                     Respawn = rng.Next(5) == 0,
+                    Warp = rng.Next(7) == 0,
                     ViewTick = 5000 + i - rng.Next(0, 20),
                     ViewFrac = (byte)rng.Next(256),
                 };
@@ -47,6 +48,25 @@ namespace Sculpt.Core.Tests.Net
                 Protocol.ReadInputs(ref r, into);
                 Assert.That(into[0], Is.EqualTo(q), "the server must step with exactly what the client predicted with");
             }
+        }
+
+        [Test]
+        public void DevWarpOnlyWorksWhenTheServerAllowsIt()
+        {
+            var grid = new BrushWorld();
+            grid.AddBox(new Vec3d(-50, -1, -50), new Vec3d(50, 0, 50), BrushKind.Ground);
+            var mc = new MovementConfig();
+            var spawn = new Vec3d(0, 0, 0);
+            var warp = new Vec3d(20, 0, 20);
+            var s = MotorState.At(spawn);
+            var cmd = InputCmd.Quantize(new InputCmd { Tick = 10, Warp = true });
+            NetSim.Simulate(grid, mc, new NetConfig { AllowDevWarp = false, DevWarpPoint = warp }, ref s, cmd, spawn, null);
+            Assert.That(s.Position.X, Is.EqualTo(0).Within(1e-9), "ignored without permission");
+            var events = new List<MoveEvent>();
+            NetSim.Simulate(grid, mc, new NetConfig { AllowDevWarp = true, DevWarpPoint = warp }, ref s, cmd, spawn, events);
+            Assert.That(s.Position, Is.EqualTo(warp));
+            Assert.That(events.Exists(e => e.Type == MoveEventType.Respawned), Is.True);
+            Assert.That(cmd.AsRepeat(11).Warp, Is.False, "a repeated command never warps again");
         }
 
         [Test]

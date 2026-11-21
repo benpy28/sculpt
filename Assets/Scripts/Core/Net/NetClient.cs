@@ -321,6 +321,9 @@ namespace Sculpt.Core.Net
             if (_serverTimeValid) _serverTime += dt * SimTime.TicksPerSecond;
         }
 
+        /// <summary>Dev only: the next predicted tick carries a warp to the dev warp point (F6 showcase).</summary>
+        public bool WarpNext;
+
         /// <summary>Predicts one tick with this input and sends the newest commands to the server.</summary>
         public void PredictTick(in MoveInput move, float pitchDegrees, bool respawn, List<MoveEvent> events) =>
             PredictTick(move, pitchDegrees, respawn, default, false, default, events);
@@ -345,6 +348,7 @@ namespace Sculpt.Core.Net
                 Move = move,
                 Pitch = pitchDegrees,
                 Respawn = respawn,
+                Warp = WarpNext,
                 ViewTick = viewTick,
                 ViewFrac = (byte)Math.Max(0, Math.Min(255, (int)((view - viewTick) * 256))),
                 Hand = hand,
@@ -353,6 +357,7 @@ namespace Sculpt.Core.Net
                 Sculpt = sculpt,
             });
 
+            WarpNext = false;
             _prevPred = _pred;
             if (Sculpt != null)
             {

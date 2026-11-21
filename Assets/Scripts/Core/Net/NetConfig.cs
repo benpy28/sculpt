@@ -54,5 +54,12 @@ namespace Sculpt.Core.Net
 
         /// <summary>Falling below this height respawns the player (server and client run the same rule).</summary>
         public double KillY = -30.0;
+
+        /// <summary>
+        /// Dev warp (F6 movement showcase): where a warp command puts the player, and whether the server accepts it.
+        /// The game only turns it on in the Editor and development builds.
+        /// </summary>
+        public bool AllowDevWarp;
+        public Vec3d DevWarpPoint;
     }
 }

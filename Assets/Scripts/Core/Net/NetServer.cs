@@ -20,7 +20,7 @@ namespace Sculpt.Core.Net
         internal readonly InputCmd[] Ring;
         internal readonly bool[] Has;
         internal int NewestReceived = int.MinValue;
-        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryToggle, CarrySculpt, CarryReload;
+        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload;
         internal byte CarryWeapon;
         internal InputCmd CarrySculptCmd;
 
@@ -229,6 +229,7 @@ namespace Sculpt.Core.Net
                         if (c.Move.CrouchPressed) p.CarryCrouch = true;
                         if (c.Move.FirePressed) p.CarryFire = true;
                         if (c.Respawn) p.CarryRespawn = true;
+                        if (c.Warp) p.CarryWarp = true;
                         if (c.Hand.SculptToggle) p.CarryToggle = true;
                         if (c.Hand.Reload) p.CarryReload = true;
                         if (c.Hand.WeaponKey != 0) p.CarryWeapon = c.Hand.WeaponKey;
@@ -323,6 +324,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryCrouch) { cmd.Move.CrouchPressed = true; p.CarryCrouch = false; }
                 if (p.CarryFire) { cmd.Move.FirePressed = true; p.CarryFire = false; }
                 if (p.CarryRespawn) { cmd.Respawn = true; p.CarryRespawn = false; }
+                if (p.CarryWarp) { cmd.Warp = true; p.CarryWarp = false; }
                 if (p.CarryToggle) { cmd.Hand.SculptToggle = true; p.CarryToggle = false; }
                 if (p.CarryReload) { cmd.Hand.Reload = true; p.CarryReload = false; }
                 if (p.CarryWeapon != 0) { if (cmd.Hand.WeaponKey == 0) cmd.Hand.WeaponKey = p.CarryWeapon; p.CarryWeapon = 0; }

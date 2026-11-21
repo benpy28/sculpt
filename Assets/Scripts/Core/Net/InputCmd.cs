@@ -14,6 +14,8 @@ namespace Sculpt.Core.Net
         /// <summary>View pitch in degrees, -89 (up) .. 89 (down). Used by hit checks later.</summary>
         public float Pitch;
         public bool Respawn;
+        /// <summary>Dev only: put the player at the dev warp point (the movement course start).</summary>
+        public bool Warp;
         /// <summary>Server tick (with fraction) the client was drawing other players at. For lag compensation (M5+).</summary>
         public int ViewTick;
         public byte ViewFrac;
@@ -81,7 +83,7 @@ namespace Sculpt.Core.Net
         private static double Clamp(double v, double lo, double hi) => v < lo ? lo : (v > hi ? hi : v);
 
         private const byte FJumpPressed = 1, FJumpHeld = 2, FCrouchHeld = 4, FCrouchPressed = 8, FSprint = 16, FShoot = 32, FRespawn = 64, FExt = 128;
-        private const byte XToggle = 1, XSculpt = 2, XReinforce = 4, XReload = 8;
+        private const byte XToggle = 1, XSculpt = 2, XReinforce = 4, XReload = 8, XWarp = 128;
         private const byte GFireHeld = 1, GFirePressed = 2;
 
         internal void Write(ByteWriter w)
@@ -94,7 +96,7 @@ namespace Sculpt.Core.Net
             if (Move.SprintHeld) f |= FSprint;
             if (Move.WantsToShoot) f |= FShoot;
             if (Respawn) f |= FRespawn;
-            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt;
+            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt || Warp;
             if (ext) f |= FExt;
             w.U8(f);
             byte g = 0;
@@ -112,6 +114,7 @@ namespace Sculpt.Core.Net
             byte x = (byte)((Hand.WeaponKey & 7) << 4);
             if (Hand.SculptToggle) x |= XToggle;
             if (Hand.Reload) x |= XReload;
+            if (Warp) x |= XWarp;
             if (HasSculpt) x |= XSculpt;
             if (HasSculpt && Sculpt.Reinforce) x |= XReinforce;
             w.U8(x);
@@ -152,6 +155,7 @@ namespace Sculpt.Core.Net
             byte x = r.U8();
             c.Hand.SculptToggle = (x & XToggle) != 0;
             c.Hand.Reload = (x & XReload) != 0;
+            c.Warp = (x & XWarp) != 0;
             c.Hand.WeaponKey = (byte)((x >> 4) & 7);
             if (c.Hand.WeaponKey > 4) throw new NetFormatException("Bad weapon key.");
             if ((x & XSculpt) == 0) return c;
@@ -175,6 +179,7 @@ namespace Sculpt.Core.Net
             c.Move.CrouchPressed = false;
             c.Move.FirePressed = false;
             c.Respawn = false;
+            c.Warp = false;
             c.Hand = default;
             c.HasSculpt = false;
             c.SculptSeq = 0;
@@ -197,6 +202,11 @@ namespace Sculpt.Core.Net
             if (cmd.Respawn)
             {
                 Respawn(ref s, spawn, cmd.Tick, events);
+                return;
+            }
+            if (cmd.Warp && nc.AllowDevWarp)
+            {
+                Respawn(ref s, nc.DevWarpPoint, cmd.Tick, events);
                 return;
             }
             if (s.Dead)
