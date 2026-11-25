@@ -6,7 +6,7 @@ namespace UnityEngine.InputSystem
 {
     public enum InputActionType { Value, Button, PassThrough }
     public struct InputBinding { public string path; public string effectivePath; public string overridePath; public string name; public bool isComposite; public bool isPartOfComposite; public string groups; public string action; public InputBinding(string p, string a = null, string g = null, string pr = null, string i = null, string n = null) { path = p; effectivePath = p; overridePath = null; name = n; isComposite = false; isPartOfComposite = false; groups = g; action = a; } }
-    public class InputControl { public string path; public string name; public string displayName; }
+    public class InputControl { public string path; public string name; public string displayName; public InputDevice device => null; }
     public class InputActionMap : IDisposable
     {
         public InputActionMap(string name) { }
@@ -28,6 +28,10 @@ namespace UnityEngine.InputSystem
         public IReadOnlyList<InputControl> controls => null;
         public CompositeSyntax AddCompositeBinding(string composite, string interactions = null, string processors = null) => default;
         public BindingSyntax AddBinding(string path, string interactions = null, string processors = null, string groups = null) => default;
+        public struct CallbackContext { public InputControl control => null; public double time => 0; public InputAction action => null; }
+        public event Action<CallbackContext> performed { add { } remove { } }
+        public event Action<CallbackContext> started { add { } remove { } }
+        public event Action<CallbackContext> canceled { add { } remove { } }
         public bool WasPressedThisFrame() => false; public bool WasReleasedThisFrame() => false; public bool IsPressed() => false; public bool WasPerformedThisFrame() => false; public bool triggered => false;
         public TValue ReadValue<TValue>() where TValue : struct => default;
         public void Enable() { } public void Disable() { }
@@ -83,7 +87,7 @@ namespace UnityEngine.InputSystem
 {
     using UnityEngine.InputSystem.Controls;
     public enum Key { None, Space, Enter, Tab, Backquote, Quote, Semicolon, Comma, Period, Slash, Backslash, LeftBracket, RightBracket, Minus, Equals, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Digit0, LeftShift, RightShift, LeftAlt, RightAlt, LeftCtrl, RightCtrl, Escape, LeftArrow, RightArrow, UpArrow, DownArrow, Backspace, F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12 }
-    public class InputDevice : InputControl { }
+    public class InputDevice : InputControl { public double lastUpdateTime => 0; }
     public class Keyboard : InputDevice
     {
         public static Keyboard current => null;
