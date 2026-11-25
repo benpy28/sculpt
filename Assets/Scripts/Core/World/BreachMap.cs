@@ -70,7 +70,7 @@ namespace Sculpt.Core
             foreach (double z in new[] { 22.0, info.SizeZ - 22 })
             {
                 info.ItemSpawns.Add(new GroundItem { Kind = Item.C4, Count = 2, Position = new Vec3d(spawnX - 9, 0, z) });
-                info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 4, Position = new Vec3d(spawnX + 9, 0, z) });
+                info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 6, Position = new Vec3d(spawnX + 9, 0, z) });
             }
             return w;
         }

@@ -77,7 +77,7 @@ namespace Sculpt.Core.Tests.Weapons
             Assert.That(pump.BodyDamage * pump.Pellets, Is.EqualTo(84.6).Within(1e-9), "Ben 2026-11-25: ~15% less than 99");
             Assert.That(pump.HeadDamage / pump.BodyDamage, Is.EqualTo(1.5));
             Assert.That((ar.BodyDamage, ar.HeadDamage), Is.EqualTo((21.5, 34.0)));
-            Assert.That((pistol.BodyDamage, pistol.HeadDamage), Is.EqualTo((25.5, 42.5)));
+            Assert.That((pistol.BodyDamage, pistol.HeadDamage), Is.EqualTo((25.5, 37.0)));
             Assert.That(c.MaxHealth, Is.EqualTo(150));
         }
 
@@ -91,7 +91,7 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
-        public void SmgFiresTwelveTimesASecond() => Assert.That(CountShots(Weapon.Smg, 60 * SimTime.Per60, _ => Hold), Is.EqualTo(12));
+        public void SmgFiresElevenTimesASecond() => Assert.That(CountShots(Weapon.Smg, 60 * SimTime.Per60, _ => Hold), Is.EqualTo(11));
 
         [Test]
         public void ArFiresFivePointFiveTimesASecondOnAverage()
@@ -111,10 +111,10 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
-        public void PumpHoldsFireEveryFiftyFourTicks()
+        public void PumpHoldsFireEveryFortyFiveTicks()
         {
             Assert.That(CountShots(Weapon.Pump, 108 * SimTime.Per60 + 1, _ => Hold), Is.EqualTo(3));
-            Assert.That(_shots[1].Tick - _shots[0].Tick, Is.EqualTo(54 * SimTime.Per60));
+            Assert.That(_shots[1].Tick - _shots[0].Tick, Is.EqualTo(45 * SimTime.Per60));
         }
 
         [Test]
@@ -154,7 +154,7 @@ namespace Sculpt.Core.Tests.Weapons
             Step(default, Key(Weapon.Pump));          // and straight back: draw ends at about +44/60 s
             for (int i = 0; i < 80 * SimTime.Per60 && _shots.Count < 2; i++) Step(Hold);
             Assert.That(_shots.Count, Is.EqualTo(2));
-            Assert.That(_shots[1].Tick, Is.EqualTo(shot + 54 * SimTime.Per60), "waits out the remainder of the 0.9 s cycle");
+            Assert.That(_shots[1].Tick, Is.EqualTo(shot + 45 * SimTime.Per60), "waits out the remainder of the 0.75 s cycle");
         }
 
         [Test]
@@ -192,7 +192,7 @@ namespace Sculpt.Core.Tests.Weapons
             Run(8 * SimTime.Per60, default);
             Step(default, new HandInput { SculptToggle = true }); // exit: 12/60 s for the pump
             for (int i = 0; i < 80 * SimTime.Per60 && _shots.Count < 2; i++) Step(Hold);
-            Assert.That(_shots[1].Tick, Is.EqualTo(shot + 54 * SimTime.Per60));
+            Assert.That(_shots[1].Tick, Is.EqualTo(shot + 45 * SimTime.Per60));
         }
 
         [Test]
@@ -253,7 +253,11 @@ namespace Sculpt.Core.Tests.Weapons
             Assert.That(WeaponRules.Spread(s, _mc, ar), Is.GreaterThanOrEqualTo(3));
             WeaponStats pump = _mc.Weapons.Of(Weapon.Pump);
             s.Mode = MoveMode.Air;
-            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.LessThan(pump.PatternSpread * 0.5), "pump fairly accurate in air");
+            // Balance pass 2026-11-25 (Ben): the pump goes wide sliding and in the air (+1.5 deg each), still less than the AR.
+            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.GreaterThanOrEqualTo(1.5), "pump wide in the air");
+            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.LessThan(WeaponRules.Spread(s, _mc, ar)));
+            s.Mode = MoveMode.Slide;
+            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.GreaterThanOrEqualTo(1.5), "pump wide sliding");
         }
 
         [Test]

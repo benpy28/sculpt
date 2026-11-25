@@ -58,7 +58,7 @@ namespace Sculpt.Core.Tests.World
         };
 
         [Test]
-        public void Press_HitLandsAfterTheWindup_GunLockedForTheWholePunch()
+        public void Press_HitLandsAfterTheWindup_GunLockedOnlyForTheGunLock()
         {
             CompositeTerrain t = Arena(out _);
             MotorState s = Settled(t, new Vec3d(20, 0, 4));
@@ -68,8 +68,9 @@ namespace Sculpt.Core.Tests.World
             var swings = Run(t, ref s, Pc.TotalTicks + 30 * SimTime.Per60, k => Cmd(k == t0, k > t0 && k < t0 + Pc.TotalTicks + 10), shots);
             Assert.That(swings.Count, Is.EqualTo(1));
             Assert.That(swings[0].Tick, Is.EqualTo(t0 + Pc.HitTicks));
-            Assert.That(shots.Count, Is.GreaterThan(0), "fire held through the punch shoots once it ends");
-            Assert.That(shots[0].Tick, Is.EqualTo(t0 + Pc.TotalTicks), "not a tick earlier");
+            Assert.That(shots.Count, Is.GreaterThan(0), "fire held through the punch shoots once the gun lock ends");
+            Assert.That(Pc.GunLockTicks, Is.EqualTo(SimTime.SecondsToTicks(0.35)), "balance pass 2026-11-25: 0.35 s, not the whole 0.8 s swing");
+            Assert.That(shots[0].Tick, Is.EqualTo(t0 + Pc.GunLockTicks), "not a tick earlier");
         }
 
         [Test]
@@ -93,8 +94,8 @@ namespace Sculpt.Core.Tests.World
                 NetSim.Simulate(t, Mc, Nc, ref s, c, s.Position, null, shots, null, null);
                 if (shots.Count > 0 && firstShot < 0) firstShot = c.Tick;
             }
-            Assert.That(firstShot, Is.GreaterThan(0), "fires once the punch is over");
-            Assert.That(firstShot - t0, Is.EqualTo(Pc.TotalTicks));
+            Assert.That(firstShot, Is.GreaterThan(0), "fires once the punch's gun lock is over");
+            Assert.That(firstShot - t0, Is.EqualTo(Pc.GunLockTicks));
         }
 
         private static MotorState DrawnPump(ITerrain t, MotorState s)

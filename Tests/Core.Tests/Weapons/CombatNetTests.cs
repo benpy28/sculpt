@@ -219,7 +219,7 @@ namespace Sculpt.Core.Tests.Weapons
             foreach (var kv in b.Client.Combat)
                 if (kv.Value.Type == CombatEventType.Shot) shotTicks.Add(kv.Key);
             Assert.That(shotTicks.Count, Is.EqualTo(2), "pump, then pump again (the SMG never got drawn)");
-            Assert.That(shotTicks[1] - shotTicks[0], Is.EqualTo(54 * SimTime.Per60));
+            Assert.That(shotTicks[1] - shotTicks[0], Is.EqualTo(45 * SimTime.Per60));
             Assert.That(a.Client.Corrections - c0, Is.EqualTo(0));
         }
 

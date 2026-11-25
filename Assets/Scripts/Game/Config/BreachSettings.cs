@@ -115,7 +115,7 @@ namespace Sculpt.Game.Config
 
         [Header("Grenade launcher (slow and clunky up close, strong at range)")]
         [Tooltip("Rounds carried (a launcher pickup comes with this many).")]
-        [Min(1)] public int launcherRounds = 4;
+        [Min(1)] public int launcherRounds = 6;
         [Min(1f)] public float launcherRoundSpeed = 32f;
         [Min(0f)] public float launcherGravity = 9f;
         [Tooltip("A round that hits something before flying this far is a dud, metres.")]
@@ -138,8 +138,10 @@ namespace Sculpt.Game.Config
         [Range(1f, 3.5f)] public float punchReach = 2f;
         [Tooltip("The hit lands this long after the press, seconds.")]
         [Range(0f, 0.5f)] public float punchHitSeconds = 0.2f;
-        [Tooltip("The whole punch, seconds: the gun can't fire and you can't punch again until it ends.")]
+        [Tooltip("The whole punch, seconds: you can't punch again until it ends.")]
         [Range(0.15f, 1.5f)] public float punchSeconds = 0.8f;
+        [Tooltip("The gun can't fire and nothing can be thrown for this long after a punch press, seconds (at most the whole punch).")]
+        [Range(0.05f, 1.5f)] public float punchGunLockSeconds = 0.35f;
         [Min(0)] public int punchPlayerDamage = 30;
         [Tooltip("Ben: half an unreinforced wall (two punches on a spot open it; four on reinforced).")]
         [Min(0)] public int punchTileDamage = 50;
@@ -151,6 +153,8 @@ namespace Sculpt.Game.Config
         [Range(0.3f, 1f)] public float chargeKeep = 0.85f;
         [Tooltip("Share of the wall in your way that must have been hit (0.4: one AR bullet at chest height lets a sprint through).")]
         [Range(0.05f, 1f)] public float chargeHitShare = 0.4f;
+        [Tooltip("Off (balance pass): a freshly healed spot stops a sprint until it is hit again. On: every patched cell counts as hit (the old rule).")]
+        public bool chargePatchedCounts = false;
         [Tooltip("You must hit the wall within this many degrees of head-on.")]
         [Range(10f, 89f)] public float chargeMaxAngleDegrees = 60f;
 
@@ -245,6 +249,7 @@ namespace Sculpt.Game.Config
         {
             p.Reach = punchReach;
             p.TotalSeconds = punchSeconds;
+            p.GunLockSeconds = punchGunLockSeconds;
             p.HitSeconds = Mathf.Min(punchHitSeconds, punchSeconds - 1f / SimTime.TicksPerSecond);
             p.PlayerDamage = punchPlayerDamage;
         }
@@ -292,6 +297,7 @@ namespace Sculpt.Game.Config
             b.ChargeSpeedFraction = chargeSpeedFraction;
             b.ChargeKeep = chargeKeep;
             b.ChargeHitShare = chargeHitShare;
+            b.ChargePatchedCounts = chargePatchedCounts;
             b.ChargeMaxAngleDegrees = chargeMaxAngleDegrees;
             b.HealSeconds = healSeconds;
             b.ReinforceSeconds = reinforceSeconds;

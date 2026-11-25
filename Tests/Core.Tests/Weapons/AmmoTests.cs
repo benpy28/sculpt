@@ -61,7 +61,7 @@ namespace Sculpt.Core.Tests.Weapons
         {
             Equip(Weapon.Smg);
             WeaponStats st = Of(Weapon.Smg);
-            Run((st.MagSize * 5 + 10) * SimTime.Per60, Hold); // far more than a magazine's worth of ticks
+            Run((st.MagSize * 6 + 10) * SimTime.Per60, Hold); // far more than a magazine's worth of ticks
             int fired = _shots.Count;
             Assert.That(fired, Is.EqualTo(st.MagSize), "a magazine and no more");
             Assert.That(_s.Weapon.Reloading, Is.True, "an empty gun starts reloading on its own");
