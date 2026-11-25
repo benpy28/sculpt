@@ -26,6 +26,23 @@ namespace Sculpt.Game.Config
         [Min(1)] public int patchedHealth = 50;
         [Min(1)] public int reinforcedHealth = 200;
 
+        [Header("Blast holes (holes follow the hit on a 19 cm cell grid, never a pixel hole or a sliver)")]
+        [Tooltip("Off: a tile that breaks goes whole (the old rule).")]
+        public bool blastHoles = true;
+        [Tooltip("Hole radius = base + per damage x the breaking hit's damage on that tile, clamped. AR 13 ~0.6 m, punch 50 ~1.15 m, point-blank pump 54 ~1.2 m.")]
+        [Min(0.2f)] public float blastRadiusBase = 0.42f;
+        [Min(0)] public float blastRadiusPerDamage = 0.0145f;
+        [Min(0.2f)] public float blastRadiusMin = 0.55f;
+        [Min(0.2f)] public float blastRadiusMax = 1.6f;
+        [Tooltip("A grenade's hole radius around the blast (m).")]
+        [Min(0.5f)] public float grenadeBlastRadius = 2.2f;
+        [Tooltip("How rough a hole's edge is (m): each spot on a wall reaches up to this much further or shorter.")]
+        [Range(0, 0.4f)] public float blastJitter = 0.16f;
+        [Tooltip("No hole smaller than this (m^2; Ben: about half a body).")]
+        [Min(0.15f)] public float minHoleArea = 0.63f;
+        [Tooltip("A tile with less than this share of its cells left goes entirely.")]
+        [Range(0, 0.9f)] public float breakBelowFraction = 0.25f;
+
         [Header("Tile damage per bullet (pump: per pellet). Flat, no falloff.")]
         [Min(0)] public int pumpPelletTileDamage = 6;
         [Min(0)] public int smgTileDamage = 7;
@@ -170,6 +187,15 @@ namespace Sculpt.Game.Config
             b.SmgTileDamage = smgTileDamage;
             b.ArTileDamage = arTileDamage;
             b.PistolTileDamage = pistolTileDamage;
+            b.BlastHoles = blastHoles;
+            b.BlastRadiusBase = blastRadiusBase;
+            b.BlastRadiusPerDamage = blastRadiusPerDamage;
+            b.BlastRadiusMin = blastRadiusMin;
+            b.BlastRadiusMax = Mathf.Max(blastRadiusMin, blastRadiusMax);
+            b.GrenadeBlastRadius = grenadeBlastRadius;
+            b.BlastJitter = blastJitter;
+            b.MinHoleArea = minHoleArea;
+            b.BreakBelowFraction = breakBelowFraction;
             b.GrenadeTileDamage = grenadeTileDamage;
             b.PunchTileDamage = punchTileDamage;
             b.PunchReinforcedTileDamage = punchReinforcedTileDamage;

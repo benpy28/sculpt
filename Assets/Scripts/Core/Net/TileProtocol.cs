@@ -15,7 +15,8 @@ namespace Sculpt.Core.Net
 
     /// <summary>
     /// Wire format of <see cref="TilesMsg"/>: per change the tile id, new state, health, cause and who caused it
-    /// (7 bytes). The From state is not sent: the client reads it from its own copy when it applies the change.
+    /// (8 bytes), plus the tile's blown-out cells (8 more) when it has any (flag 0x80 on the state byte). The From
+    /// state is not sent: the client reads it from its own copy when it applies the change.
     /// Then the heal events: type and kind, player, tile, ticks to the heal's end, result (8 bytes each).
     /// </summary>
     public static class TileProtocol
@@ -34,10 +35,14 @@ namespace Sculpt.Core.Net
             {
                 TileChange c = m.Changes[i];
                 w.U16((ushort)c.Tile);
-                w.U8((byte)c.To);
+                w.U8((byte)((byte)c.To | (c.Open != 0 ? 0x80 : 0)));
                 w.U16((ushort)System.Math.Max(0, System.Math.Min(ushort.MaxValue, c.Health)));
                 w.U8((byte)c.Cause);
                 w.U16((ushort)c.By);
+                if (c.Open != 0)
+                {
+                    w.I64(unchecked((long)c.Open));
+                }
             }
             int hn = m.Heals?.Count ?? 0;
             if (hn > MaxChanges) throw new System.ArgumentException("Too many heal events.");
@@ -64,6 +69,8 @@ namespace Sculpt.Core.Net
             {
                 var c = new TileChange { Tick = m.Tick, Tile = r.U16() };
                 byte s = r.U8();
+                bool holed = (s & 0x80) != 0;
+                s &= 0x7F;
                 if (s > (byte)TileState.Reinforced) throw new NetFormatException("Bad tile state.");
                 c.To = (TileState)s;
                 c.Health = r.U16();
@@ -71,6 +78,10 @@ namespace Sculpt.Core.Net
                 if (cause > (byte)TileCause.Server) throw new NetFormatException("Bad tile cause.");
                 c.Cause = (TileCause)cause;
                 c.By = r.U16();
+                if (holed)
+                {
+                    c.Open = unchecked((ulong)r.I64());
+                }
                 into.Add(c);
             }
             int hn = r.U16();

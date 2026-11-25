@@ -92,7 +92,7 @@ namespace Sculpt.Core.Net
                 for (int i = 0; i < _tileStart.Length; i++)
                 {
                     if (Walls.IsFollower(i)) continue; // followers come back with their links
-                    if (Walls[i].State != _tileStart[i] || Walls[i].Health != _tileStartHealth[i])
+                    if (Walls[i].State != _tileStart[i] || Walls[i].Health != _tileStartHealth[i] || Walls[i].Open != 0)
                         Walls.Set(i, _tileStart[i], _tileStartHealth[i], TileCause.Built);
                 }
             Items.ReplaceAll(_itemsStart);
