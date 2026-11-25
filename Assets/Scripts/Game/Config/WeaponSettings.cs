@@ -98,7 +98,8 @@ namespace Sculpt.Game.Config
         public int maxHealth = 150;
         public int respawnDelayTicks = 180;
         public bool friendlyFire = false;
-        public float headHeight = 0.36f;
+        public float headHeight = 0.33f;
+        public float headWidth = 0.6f;
         public int maxRewindTicks = 18;
 
         [Tooltip("Pump, SMG, AR, Pistol (hotbar 1-4).")]
@@ -118,6 +119,7 @@ namespace Sculpt.Game.Config
             respawnDelayTicks = d.RespawnDelayTicks / SimTime.Per60;
             friendlyFire = d.FriendlyFire;
             headHeight = (float)d.HeadHeight;
+            headWidth = (float)d.HeadWidth;
             maxRewindTicks = d.MaxRewindTicks / SimTime.Per60;
             guns = new Gun[4];
             for (int i = 0; i < 4; i++) guns[i] = Gun.From(d.Stats[i]);
@@ -129,6 +131,7 @@ namespace Sculpt.Game.Config
             c.RespawnDelayTicks = Math.Max(0, respawnDelayTicks) * SimTime.Per60;
             c.FriendlyFire = friendlyFire;
             c.HeadHeight = headHeight;
+            c.HeadWidth = Math.Max(0.1, headWidth);
             c.MaxRewindTicks = Math.Max(0, maxRewindTicks) * SimTime.Per60;
             if (guns == null) return;
             for (int i = 0; i < 4 && i < guns.Length; i++) guns[i]?.ApplyTo(c.Stats[i]);

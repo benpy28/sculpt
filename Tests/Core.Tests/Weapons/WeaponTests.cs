@@ -74,10 +74,10 @@ namespace Sculpt.Core.Tests.Weapons
             Assert.That(pistol.DamageFactorAt(37.5), Is.EqualTo(0.85).Within(1e-9));
             Assert.That(pistol.DamageFactorAt(50), Is.EqualTo(0.7).Within(1e-9));
             Assert.That(pistol.DamageFactorAt(80), Is.EqualTo(0.7).Within(1e-9));
-            Assert.That(pump.BodyDamage * pump.Pellets, Is.EqualTo(99));
+            Assert.That(pump.BodyDamage * pump.Pellets, Is.EqualTo(84.6).Within(1e-9), "Ben 2026-11-25: ~15% less than 99");
             Assert.That(pump.HeadDamage / pump.BodyDamage, Is.EqualTo(1.5));
-            Assert.That((ar.BodyDamage, ar.HeadDamage), Is.EqualTo((25.0, 40.0)));
-            Assert.That((pistol.BodyDamage, pistol.HeadDamage), Is.EqualTo((30.0, 50.0)));
+            Assert.That((ar.BodyDamage, ar.HeadDamage), Is.EqualTo((21.5, 34.0)));
+            Assert.That((pistol.BodyDamage, pistol.HeadDamage), Is.EqualTo((25.5, 42.5)));
             Assert.That(c.MaxHealth, Is.EqualTo(150));
         }
 

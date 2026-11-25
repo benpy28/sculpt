@@ -170,7 +170,7 @@ namespace Sculpt.Game.UI
             GUILayout.Label("Practice", _sub);
             if (GUILayout.Button("Offline on the 1v1 map", _button, GUILayout.Height(40)))
                 GameBootstrap.Relaunch(GameBootstrap.Launch.Offline, GameBootstrap.MapChoice.Duel);
-            if (GUILayout.Button("Breach test map (practice dummy, movement course, F6 showcase)", _button, GUILayout.Height(40)))
+            if (GUILayout.Button("Breach test map (practice dummy, movement course: F6 race the TAS)", _button, GUILayout.Height(40)))
                 GameBootstrap.Relaunch(GameBootstrap.Launch.Offline, GameBootstrap.MapChoice.Breach);
 
             GUILayout.FlexibleSpace();

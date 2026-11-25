@@ -68,16 +68,16 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
-        public void PistolKillsInFiveBodyShotsAndEveryoneHears()
+        public void PistolKillsInSixBodyShotsAndEveryoneHears()
         {
             var h = Arena();
             var a = h.AddClient(SculptNetHarness.FeetIn(10, 5), team: 1);
             var b = h.AddClient(SculptNetHarness.FeetIn(10, 12), team: 2);
             a.Script = Shooter(Weapon.Pistol, () => b, k => k % 20 == 0);
-            h.RunSeconds(0.7 + 5 * 20 / 60.0 + 0.3);
+            h.RunSeconds(0.7 + 6 * 20.0 / SimTime.TicksPerSecond + 0.3);
 
-            Assert.That(b.ServerSide.State.Dead, Is.True, "5 x 30 = 150");
-            Assert.That(CountHits(a, b.ServerSide.Id), Is.EqualTo(5), "the shooter gets a hit marker per shot");
+            Assert.That(b.ServerSide.State.Dead, Is.True, "6 x 25.5 = 153 (5 x 25.5 = 127.5 is not enough)");
+            Assert.That(CountHits(a, b.ServerSide.Id), Is.EqualTo(6), "the shooter gets a hit marker per shot");
             Assert.That(a.ServerSide.Kills, Is.EqualTo(1));
             Assert.That(b.Client.Predicted.Dead, Is.True, "the victim's client learns it died");
             bool killSeen = false, shotSeen = false;
@@ -96,7 +96,7 @@ namespace Sculpt.Core.Tests.Weapons
             var h = Arena();
             var a = h.AddClient(SculptNetHarness.FeetIn(10, 5), team: 1);
             var b = h.AddClient(SculptNetHarness.FeetIn(10, 12), team: 2);
-            a.Script = Shooter(Weapon.Pistol, () => b, k => k % 20 == 0 && k <= 140);
+            a.Script = Shooter(Weapon.Pistol, () => b, k => k % 20 == 0 && k <= 160);
             h.RunSeconds(3.0);
             Assert.That(b.ServerSide.State.Dead, Is.True);
             h.RunSeconds(h.Movement.Weapons.RespawnDelayTicks / (double)SimTime.TicksPerSecond);

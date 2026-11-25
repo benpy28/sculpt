@@ -100,7 +100,12 @@ namespace Sculpt.Game.Player
         // ---- Movement showcase (F6, dev builds): warp to the course and play the tool-assisted run ----
         private CourseInfo _course;
         private ShowcaseRun _showcase;
-        private bool _showcaseLatch, _warping;
+        private bool _showcaseLatch, _watchLatch, _warping, _warpForRace;
+        private CourseRace _race;
+        private int _raceOverTicks;
+        /// <summary>The course race in progress (F6: 3-2-1, then race the TAS ghost), or the last one for a few seconds
+        /// after you finish. Null when none.</summary>
+        public CourseRace Race => _race;
         private float _showcaseYaw;
         /// <summary>The showcase run in progress (null when none). Its inputs replace yours until it ends or you move.</summary>
         public ShowcaseRun Showcase => _showcase;
@@ -108,7 +113,16 @@ namespace Sculpt.Game.Player
         public ShowcaseRun LastShowcase { get; private set; }
 
         /// <summary>Gives the player the movement course (breach map only), which enables F6.</summary>
-        public void SetCourse(CourseInfo course) => _course = course;
+        public void SetCourse(CourseInfo course)
+        {
+            _course = course;
+            // Dev builds: -race starts the F6 race (and -watchtas the F7 run) as soon as you are in.
+            if (!GameInput.DevBuild) return;
+            string[] args = System.Environment.GetCommandLineArgs();
+            _autoRace = System.Array.IndexOf(args, "-race") >= 0;
+            _autoWatch = System.Array.IndexOf(args, "-watchtas") >= 0;
+        }
+        private bool _autoRace, _autoWatch;
 
         private byte _weaponLatch;
         private bool _confirmLatch;
@@ -185,6 +199,7 @@ namespace Sculpt.Game.Player
             if (_input.Crouch.WasPressedThisFrame()) _crouchLatch = true;
             if (GameInput.DevBuild && _input.DevRespawn.WasPressedThisFrame()) _respawnLatch = true;
             if (GameInput.DevBuild && _course != null && _input.DevShowcase.WasPressedThisFrame()) _showcaseLatch = true;
+            if (GameInput.DevBuild && _course != null && _input.DevShowcaseWatch.WasPressedThisFrame()) _watchLatch = true;
             if (_input.SculptToggle.WasPressedThisFrame())
             {
                 if (QuickHeal) PressHeal(); // Q heals (Alt + Q reinforces); there is no heal mode
@@ -406,17 +421,31 @@ namespace Sculpt.Game.Player
             _weaponLatch = 0;
             _confirmLatch = false;
 
-            // F6: warp to the course start (a real command the server applies), then let the showcase drive. Pressing
-            // F6 again, or any move key, hands control back.
-            if (_showcaseLatch)
+            if ((_autoRace || _autoWatch) && Net.Joined && !State.Dead)
             {
-                _showcaseLatch = false;
-                if (_showcase != null) StopShowcase();
+                _showcaseLatch = _autoRace;
+                _watchLatch = _autoWatch && !_autoRace;
+                _autoRace = _autoWatch = false;
+            }
+            // F6: warp to the course start (a real command the server applies), count down 3-2-1 and race the TAS ghost.
+            // F7: warp there and let the TAS drive you. Either key again stops what is running; a move key stops F7.
+            if (_showcaseLatch || _watchLatch)
+            {
+                bool race = _showcaseLatch;
+                _showcaseLatch = _watchLatch = false;
+                if (_showcase != null || _race != null) { StopShowcase(); StopRace(); }
                 else
                 {
                     Net.WarpNext = true;
                     _warping = true;
+                    _warpForRace = race;
                 }
+            }
+            if (_race != null && !_race.Started)
+            {
+                // The countdown: look around, but stay on the start line.
+                mi = new MoveInput { Yaw = mi.Yaw };
+                hand = default;
             }
             if (_showcase != null && active && move.sqrMagnitude > 0.01f) StopShowcase();
             if (_showcase != null)
@@ -432,6 +461,13 @@ namespace Sculpt.Game.Player
             // Toggle crouch: one press is a whole slide. When the slide runs out on the ground you stand back up instead
             // of being left crouch-walking (jumping out of a slide keeps it on, so the landing slides again).
             if (_client.CrouchToggle && _crouchOn && modeBefore == MoveMode.Slide && State.Mode == MoveMode.Ground) _crouchOn = false;
+            if (_race != null)
+            {
+                _race.Step(State);
+                if (_race.PlayerFinished && ++_raceOverTicks == 1)
+                    Debug.Log($"[SCULPT] Course race: you {_race.PlayerFinishTicks / (float)SimTime.TicksPerSecond:0.00} s, TAS {_race.GhostFinishTicks / (float)SimTime.TicksPerSecond:0.00} s.");
+                if (_raceOverTicks > SimTime.TicksPerSecond * 8) StopRace(); // the result stays up for 8 s
+            }
             for (int i = before; i < Events.Count; i++)
             {
                 if (Events[i].Type != MoveEventType.Respawned) continue;
@@ -440,16 +476,37 @@ namespace Sculpt.Game.Player
                 {
                     _warping = false;
                     Yaw = _showcaseYaw = (float)(_course.StartYaw * Mathf.Rad2Deg);
-                    Pitch = 12f;
-                    _showcase = new ShowcaseRun(_course, _cfg);
-                    Debug.Log("[SCULPT] Movement showcase: started.");
+                    Pitch = _warpForRace ? 0f : 12f;
+                    if (_warpForRace)
+                    {
+                        // Record the TAS ghost from the same start through the same movement code (~25 s of ticks, a
+                        // few milliseconds, once).
+                        _race = CourseRace.Begin(Net.Grid, _course, _cfg);
+                        _raceOverTicks = 0;
+                        Debug.Log($"[SCULPT] Course race: 3-2-1 (TAS {_race.GhostFinishTicks / (float)SimTime.TicksPerSecond:0.00} s).");
+                    }
+                    else
+                    {
+                        _showcase = new ShowcaseRun(_course, _cfg);
+                        Debug.Log("[SCULPT] Movement showcase: started.");
+                    }
                 }
-                else FaceSpawn();
+                else
+                {
+                    if (_race != null) StopRace(); // died or respawned mid-race
+                    FaceSpawn();
+                }
             }
         }
 
         /// <summary>Turn to face the way your spawn faces (a new match moved you back there).</summary>
         public void FaceSpawnNow() => FaceSpawn();
+
+        private void StopRace()
+        {
+            _race = null;
+            _raceOverTicks = 0;
+        }
 
         private void StopShowcase()
         {
@@ -462,8 +519,12 @@ namespace Sculpt.Game.Player
         }
 
         /// <summary>Interpolates between the last two predicted ticks. alpha in [0, 1].</summary>
+        /// <summary>The alpha of the last Render call (where the drawn player sits between the last two ticks).</summary>
+        public float RenderAlpha { get; private set; }
+
         public void Render(float alpha)
         {
+            RenderAlpha = alpha;
             MotorState prev = Net.PreviousPredicted, cur = Net.Predicted;
             // A warp or respawn jumps metres in one tick: draw the new spot, never a one-frame streak across the map.
             Vector3 from = prev.Position.ToUnity(), to = cur.Position.ToUnity();

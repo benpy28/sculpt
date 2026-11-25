@@ -75,6 +75,8 @@ namespace Sculpt.Core
         public Vec3d LastWallKickNormal;
         /// <summary>The counter-strafe brake acted last tick (so its sound plays once per brake).</summary>
         public bool Braking;
+        /// <summary>Sliding and turning faster than the free slide steer (a carve that costs speed).</summary>
+        public bool Carving;
         /// <summary>Tick of the last slide-jump (chained slide-hops lose a little speed each).</summary>
         public int LastSlideJumpTick;
 
@@ -155,6 +157,8 @@ namespace Sculpt.Core
         Braked,
         /// <summary>Charged through one or more wall tiles. Value = tiles broken this tick.</summary>
         ChargedThrough,
+        /// <summary>A slide carve started this tick (first tick of turning past the free steer). Amount = speed.</summary>
+        SlideCarve,
     }
 
     public struct MoveEvent

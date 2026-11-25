@@ -96,6 +96,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void VaultsAOneTileWallButMantlesTwoTiles()
         {
+            _c.AutoVault = true; // parked: off in the game since vault and mantle merged
             _w.AddBox(new Vec3d(10, 0, -5), new Vec3d(10.3, 1.5, 5), BrushKind.Wall);
             At(4, 0, 0);
             Settle();
@@ -127,6 +128,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void PerfectWallKickTurnsAndKeepsTheSpeedYouHitWith()
         {
+            _c.WallKicksEnabled = true; // parked: wall kicks are off in the game (Ben 2026-11-25)
             FlyAtNorthWall(10, 0.3);
             int k = 0;
             while (_s.Tick - _s.WallHitTick > 0 && k++ < 20 * SimTime.Per60) Tick(new MoveInput { Yaw = North });
@@ -143,6 +145,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void LateWallKickKeepsLess()
         {
+            _c.WallKicksEnabled = true; // parked: wall kicks are off in the game (Ben 2026-11-25)
             FlyAtNorthWall(10, 0.3);
             int k = 0;
             while (_s.Tick - _s.WallHitTick > 0 && k++ < 20 * SimTime.Per60) Tick(new MoveInput { Yaw = North });
@@ -156,6 +159,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void WallKicksAreLimitedAndNeverTheSameWallTwiceInARow()
         {
+            _c.WallKicksEnabled = true; // parked: wall kicks are off in the game (Ben 2026-11-25)
             FlyAtNorthWall(8, 0.0);
             int k = 0;
             while (_s.Tick - _s.WallHitTick > 0 && k++ < 20 * SimTime.Per60) Tick(new MoveInput { Yaw = North });
@@ -171,6 +175,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void NoWallKickOffASmallStep()
         {
+            _c.WallKicksEnabled = true; // parked: wall kicks are off in the game (Ben 2026-11-25)
             _w.AddBox(new Vec3d(-20, 0, 10), new Vec3d(40, 0.2, 11), BrushKind.Wall); // a 20 cm kerb
             At(0, 0.05, 9.6, vz: 6);
             _s.Mode = MoveMode.Air;
@@ -255,10 +260,149 @@ namespace Sculpt.Core.Tests
         [Test]
         public void AirSpeedAboveTheSoftCapBleeds()
         {
-            At(0, 60, 0, vx: 20);
+            double v0 = _c.AirSoftCapSpeed + 5;
+            At(0, 60, 0, vx: v0);
             _s.Mode = MoveMode.Air;
-            Run(60 * SimTime.Per60, new MoveInput { Yaw = East });
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(20 - _c.AirSoftCapDecel).Within(0.05));
+            Run(SimTime.TicksPerSecond, new MoveInput { Yaw = East });
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(v0 - _c.AirSoftCapDecel).Within(0.05));
+        }
+
+        // ---------------- one ledge climb, no wall kicks (Ben 2026-11-25: "fortnite style movement, not parkour") ----------------
+
+        [Test]
+        public void NoWallKicksByDefault()
+        {
+            _w.AddBox(new Vec3d(-20, 0, 10), new Vec3d(40, 12, 11), BrushKind.Wall);
+            At(0, 4, 10 - _c.HalfWidth, vx: 3, vz: 8);
+            _s.Mode = MoveMode.Air;
+            _s.Velocity = new Vec3d(3, 2, 8);
+            Tick(new MoveInput { Yaw = North, MoveZ = 1 }); // hits the wall
+            Tick(new MoveInput { Yaw = East, MoveZ = 1, JumpPressed = true, JumpHeld = true });
+            Assert.That(Had(MoveEventType.WallKick), Is.False);
+            Assert.That(_s.Velocity.Y, Is.LessThan(2), "no kick upward either");
+        }
+
+        [Test]
+        public void JumpingAtAOneTileLedgeClimbsItQuicklyAndKeepsSpeed()
+        {
+            // The old sprint vault is now the same move as the mantle: jump at the ledge. A one-tile climb is short.
+            _w.AddBox(new Vec3d(10, 0, -5), new Vec3d(10.3, 1.5, 5), BrushKind.Wall);
+            At(4, 0, 0);
+            Settle();
+            int k = 0;
+            for (; k < 120 * SimTime.Per60 && _s.Position.X < 10 - _c.HalfWidth - 1e-6; k++) Tick(new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true });
+            Assert.That(Had(MoveEventType.Vaulted), Is.False, "no automatic vault");
+            Tick(new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true, JumpPressed = true, JumpHeld = true });
+            Assert.That(_s.Mode, Is.EqualTo(MoveMode.Mantle));
+            int ticks = 0;
+            while (_s.Mode == MoveMode.Mantle && ticks < 60 * SimTime.Per60) { Tick(new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true }); ticks++; }
+            Assert.That(ticks, Is.LessThanOrEqualTo(SimTime.TicksPerSecond / 5), "about 0.2 s for one tile (a full 3 m climb is 0.4 s)");
+            Assert.That(_s.HorizontalSpeed, Is.GreaterThan(_c.SprintSpeed - 0.5), "left with the sprint speed it hit the ledge at");
+        }
+
+        [Test]
+        public void HoldingJumpInTheAirClimbsALedgeYouTouch()
+        {
+            _w.AddBox(new Vec3d(10, 0, -5), new Vec3d(14, 3, 5), BrushKind.Frame); // 3 m: too high to jump onto
+            At(7.5, 0, 0);
+            Settle();
+            Run(10 * SimTime.Per60, new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true });
+            Tick(new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true, JumpPressed = true, JumpHeld = true });
+            for (int k = 0; k < 40 * SimTime.Per60 && _s.Mode == MoveMode.Air; k++) Tick(new MoveInput { Yaw = East, MoveZ = 1, JumpHeld = true });
+            Assert.That(_s.Mode, Is.EqualTo(MoveMode.Mantle), "one press, held: the touch climbs");
+            // Not holding: a touch in the air does nothing until you press again.
+            At(7.5, 0, 0);
+            Settle();
+            Run(10 * SimTime.Per60, new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true });
+            Tick(new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true, JumpPressed = true, JumpHeld = true });
+            for (int k = 0; k < 40 * SimTime.Per60 && _s.Mode == MoveMode.Air; k++) Tick(new MoveInput { Yaw = East, MoveZ = 1 });
+            Assert.That(Had(MoveEventType.MantleStarted), Is.False);
+        }
+
+        // ---------------- slide carving (Ben 2026-11-25: "no sliding around rooms") ----------------
+
+        /// <summary>A slide at <paramref name="speed"/> heading east, then n ticks steering with this yaw and keys.</summary>
+        private (double turned, double speed) SlideSteer(double speed, double yaw, double moveX, double moveZ, int ticks)
+        {
+            At(0, 0, 0, vx: speed);
+            _s.Mode = MoveMode.Slide;
+            _s.Crouched = true;
+            _s.Grounded = true;
+            Vec3d before = _s.Velocity;
+            Run(ticks, new MoveInput { Yaw = yaw, MoveX = moveX, MoveZ = moveZ, CrouchHeld = true });
+            Vec3d after = new Vec3d(_s.Velocity.X, 0, _s.Velocity.Z);
+            double turned = Math.Acos(Math.Max(-1, Math.Min(1, after.Normalized.Dot(new Vec3d(before.X, 0, before.Z).Normalized))));
+            return (turned, _s.HorizontalSpeed);
+        }
+
+        [Test]
+        public void GentleSlideSteeringIsFree()
+        {
+            // A beginner holding W and turning the mouse a little: up to the free turn rate, only friction is paid.
+            int n = SimTime.TicksPerSecond / 4;
+            At(0, 0, 0, vx: 12); _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            for (int k = 0; k < n; k++) // the mouse turns 0.3 rad over the quarter second (1.2 rad/s)
+                Tick(new MoveInput { Yaw = East - 0.3 * (k + 1) / n, MoveZ = 1, CrouchHeld = true });
+            double turned = Math.Abs(Math.Atan2(_s.Velocity.Z, _s.Velocity.X)), speed = _s.HorizontalSpeed;
+            Assert.That(turned, Is.EqualTo(0.3).Within(0.02), "followed the aim all the way");
+            Assert.That(speed, Is.EqualTo(12 - _c.SlideFriction * n * _c.Dt).Within(1e-6), "nothing but friction");
+            Assert.That(_s.Carving, Is.False);
+            Assert.That(Had(MoveEventType.SlideCarve), Is.False);
+        }
+
+        [Test]
+        public void HardSlideCarveTurnsFastAndCostsSpeed()
+        {
+            // Aiming 90 degrees left of the slide: a carve turns up to SlideCarveTurnRate, paying SlideCarveLoss per
+            // radian above the free rate. A quarter turn takes ~0.35 s and keeps most of the speed.
+            int n = (int)Math.Ceiling(Math.PI / 2 / _c.SlideCarveTurnRate * SimTime.TicksPerSecond) + 1;
+            var (turned, speed) = SlideSteer(13, North, 0, 1, n);
+            Assert.That(turned, Is.EqualTo(Math.PI / 2).Within(0.01), "came round a full corner");
+            Assert.That(Had(MoveEventType.SlideCarve), Is.True);
+            double friction = _c.SlideFriction * n * _c.Dt;
+            double extra = Math.PI / 2 - _c.SlideTurnRate * n * _c.Dt;
+            Assert.That(speed, Is.LessThan(13 - friction - 0.05), "a carve costs speed");
+            Assert.That(speed, Is.GreaterThan((13 - friction) * (1 - _c.SlideCarveLoss * extra) - 0.2), "but not much");
+            Assert.That(speed, Is.GreaterThan(_c.SprintSpeed), "still faster than a sprint after a corner");
+            Assert.That(Had(MoveEventType.Braked), Is.False, "holding W steers, it never brakes");
+            // The old slide (1.6 rad/s only) needed ~1 s for the same corner: a 90 degree turn is at least 2.5x faster.
+            Assert.That(n, Is.LessThan(SimTime.TicksPerSecond * 0.4));
+        }
+
+        [Test]
+        public void SmoothCarvingKeepsMoreSpeedThanASnapTurn()
+        {
+            // The skill: start the turn early and spread it (free steering) instead of snapping at the last moment.
+            int n = SimTime.TicksPerSecond;
+            At(0, 0, 0, vx: 13); _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            for (int k = 0; k < n; k++) Tick(new MoveInput { Yaw = East - Math.PI / 2 * Math.Min(1, (k + 1) / (double)n), MoveZ = 1, CrouchHeld = true });
+            double smooth = _s.HorizontalSpeed;
+            At(0, 0, 0, vx: 13); _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            for (int k = 0; k < n; k++) Tick(new MoveInput { Yaw = k < n * 2 / 3 ? East : North, MoveZ = 1, CrouchHeld = true });
+            double snap = _s.HorizontalSpeed;
+            Assert.That(smooth, Is.GreaterThan(snap + 0.3));
+        }
+
+        [Test]
+        public void SidewaysOrBackKeysStillBrakeASlide()
+        {
+            At(0, 0, 0, vx: 13); _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            Run(SimTime.TicksPerSecond / 10, new MoveInput { Yaw = East, MoveZ = -1, CrouchHeld = true });
+            Assert.That(Had(MoveEventType.Braked), Is.True);
+            At(0, 0, 0, vx: 13); _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            Run(SimTime.TicksPerSecond / 10, new MoveInput { Yaw = East, MoveX = 1, CrouchHeld = true });
+            Assert.That(Had(MoveEventType.Braked), Is.True, "D alone (strafe) brakes");
+        }
+
+        [Test]
+        public void SlidingIntoALedgeAndJumpingMantlesIt()
+        {
+            _w.AddBox(new Vec3d(10, 0, -5), new Vec3d(14, 3, 5), BrushKind.Frame); // a 3 m ledge
+            At(8, 0, 0, vx: 11);
+            _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            for (int k = 0; k < 30 * SimTime.Per60 && _s.Position.X < 10 - _c.HalfWidth - 1e-6; k++) Tick(new MoveInput { Yaw = East, MoveZ = 1, CrouchHeld = true });
+            Tick(new MoveInput { Yaw = East, MoveZ = 1, CrouchHeld = true, JumpPressed = true, JumpHeld = true });
+            Assert.That(_s.Mode, Is.EqualTo(MoveMode.Mantle));
         }
 
         // ---------------- slide-hops ----------------

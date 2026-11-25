@@ -92,11 +92,11 @@ namespace Sculpt.Game.Player
             if (walking && speed > 0.8f)
             {
                 _stride += moved;
-                float strideLen = s.Crouched ? 0.9f : Mathf.Lerp(1.5f, 2.1f, Mathf.InverseLerp(3f, 8.5f, speed));
+                float strideLen = s.Crouched ? 0.9f : Mathf.Lerp(1.5f, 2.3f, Mathf.InverseLerp(3f, 10f, speed));
                 if (_stride >= strideLen)
                 {
                     _stride -= strideLen;
-                    float vol = s.Crouched ? 0.18f : Mathf.Lerp(0.35f, 0.6f, Mathf.InverseLerp(3f, 8.5f, speed));
+                    float vol = s.Crouched ? 0.18f : Mathf.Lerp(0.35f, 0.6f, Mathf.InverseLerp(3f, 10f, speed));
                     _stepIndex = (_stepIndex + 1 + Random.Range(0, 3)) % Steps.Length;
                     Synth.Play(Steps[_stepIndex], feet, vol, Random.Range(0.93f, 1.07f), false);
                 }
@@ -105,9 +105,12 @@ namespace Sculpt.Game.Player
 
             // Slide scrape.
             bool sliding = s.Mode == MoveMode.Slide;
-            float target = sliding ? Mathf.Clamp01(speed / 12f) * 0.55f : 0f;
+            // A carve (turning harder than the free steer, which costs speed) digs in: louder and brighter, so you can
+            // hear when a turn is costing you.
+            bool carving = sliding && s.Carving;
+            float target = sliding ? Mathf.Clamp01(speed / 14f) * (carving ? 0.75f : 0.55f) : 0f;
             _slide.volume = Mathf.MoveTowards(_slide.volume, target, Time.unscaledDeltaTime * (sliding ? 8f : 5f));
-            _slide.pitch = 0.75f + 0.5f * Mathf.Clamp01(speed / 14f);
+            _slide.pitch = Mathf.MoveTowards(_slide.pitch, 0.75f + 0.5f * Mathf.Clamp01(speed / 18f) + (carving ? 0.18f : 0f), Time.unscaledDeltaTime * 3f);
         }
 
         // ---------------------------------------------------------------- Clips

@@ -81,8 +81,8 @@ namespace Sculpt.Core.Tests
         {
             // A jump up the flight lands on the slope once its climb slows to the slope's own climb, not only after
             // the apex (it would otherwise glide up the steps in the air).
-            double z = _flight.Bounds.Min.Z + (_flight.Bounds.Max.Z - _flight.Bounds.Min.Z) * 0.45;
-            MotorState s = Settle(new Vec3d(_x, 0.45 * 4.8 + 0.3, z));
+            double z = _flight.Bounds.Min.Z + (_flight.Bounds.Max.Z - _flight.Bounds.Min.Z) * 0.3;
+            MotorState s = Settle(new Vec3d(_x, 0.3 * 4.8 + 0.3, z));
             // Running, not sprinting, so the whole jump stays over the flight.
             void Run(ref MotorState m, bool jump) =>
                 PlayerMovement.Step(_t, _c, ref m, new MoveInput { Yaw = _yaw, MoveZ = 1, JumpPressed = jump, JumpHeld = jump });

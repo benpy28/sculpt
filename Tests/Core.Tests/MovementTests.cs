@@ -78,7 +78,7 @@ namespace Sculpt.Core.Tests
             Assert.That(_s.Sprinting, Is.True);
             Place(3, 0, 10);
             Run(20 * SimTime.Per60, Fwd(crouch: true));
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(3.0).Within(1e-6));
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.CrouchSpeed).Within(1e-6));
             Assert.That(_s.Crouched, Is.True);
         }
 
@@ -396,6 +396,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void SprintVaultsOneLevelWithoutLosingSpeed()
         {
+            _c.AutoVault = true; // parked: off in the game since vault and mantle merged
             _g.Fill(new Int3(7, 0, 0), new Int3(7, 0, 31), Block.Solid);
             for (int i = 0; i < 90 * SimTime.Per60; i++) Tick(Fwd(sprint: true));
             Assert.That(_events.Any(e => e.Type == MoveEventType.Vaulted), Is.True);
@@ -406,6 +407,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void SlideVaultsOneLevel()
         {
+            _c.AutoVault = true;
             _g.Fill(new Int3(7, 0, 0), new Int3(7, 0, 31), Block.Solid);
             Place(1, 0, 5);
             StartSlideFromSprint();
@@ -425,7 +427,7 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
-        public void MantleTwoLevelLedgeTakesPointFourSeconds()
+        public void MantleTwoLevelLedgeTakesAboutAThirdOfASecond()
         {
             _g.Fill(new Int3(5, 0, 0), new Int3(5, 1, 31), Block.Solid);
             Run(30 * SimTime.Per60, Fwd()); // pressed against the wall
@@ -438,7 +440,9 @@ namespace Sculpt.Core.Tests
                 Tick(Fwd());
                 ticks++;
             }
-            Assert.That(ticks, Is.EqualTo(24 * SimTime.Per60));
+            // A climb's time scales with its height (vault and mantle merged): 2.4 m of a full 3 m climb's 16 + 8 ticks.
+            double f = (2 * B + 0.01) / _c.MantleScaleHeight;
+            Assert.That(ticks, Is.EqualTo((int)Math.Round(_c.MantleRiseTicks * f) + (int)Math.Round(_c.MantleForwardTicks * f)));
             Run(10 * SimTime.Per60, Fwd());
             Assert.That(_s.Position.Y, Is.EqualTo(2 * B).Within(1e-3));
             Assert.That(_s.Mode, Is.EqualTo(MoveMode.Ground));
@@ -500,6 +504,11 @@ namespace Sculpt.Core.Tests
         public void RampLaunchKeepsVerticalVelocity()
         {
             _g.Fill(new Int3(5, 0, 0), new Int3(5, 0, 31), Block.Ramp(Dir.West)); // rises toward east, drops after
+            // A one-tile sub-cell ramp is a 4-step staircase: whether the crest comes while you are still climbing
+            // depends on the tick phase. At 9.2 m/s it does; at 10 m/s you reach its 0.3 m top lip first and run off
+            // the drop instead. Pinned to 9.2 so this test stays about the launch rule, not the sprint number (the
+            // greybox maps use exact wedges, where the climb never pauses).
+            _c.SprintSpeed = 9.2;
             double peak = 0, launchVy = 0;
             for (int i = 0; i < 120 * SimTime.Per60; i++)
             {

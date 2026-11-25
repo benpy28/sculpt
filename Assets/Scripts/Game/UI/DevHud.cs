@@ -130,8 +130,8 @@ namespace Sculpt.Game.UI
                 _style = new GUIStyle(GUI.skin.label) { fontSize = 15 };
                 _style.normal.textColor = Color.white;
             }
-            // The speedometer shows with the dev HUD, and always while the F6 showcase runs.
-            if (_show || _player.Showcase != null) DrawSpeedometer();
+            // The speedometer shows with the dev HUD, and always while the TAS runs (F7) or you race it (F6).
+            if (_show || _player.Showcase != null || _player.Race != null) DrawSpeedometer();
             if (!_show) return; // the crosshair lives in CombatHud now (it shows the real spread)
 
 
@@ -144,7 +144,7 @@ namespace Sculpt.Game.UI
                 (Time.time - _lastEventTime < 1.5f ? $">> {_lastEvent}\n" : "\n") +
                 (_lastDamage > 0 ? $"Last fall damage {_lastDamage}\n" : "") +
                 ShowcaseText() +
-                "\nF1 respawn   F2 hide this   F6 movement showcase   Esc settings (FOV, sensitivity, binds, volume)\n\n" + NetText();
+                "\nF1 respawn   F2 hide this   F6 race the TAS   F7 watch the TAS   Esc settings (FOV, sensitivity, binds, volume)\n\n" + NetText();
             var r = new Rect(12, 10, 640, 480);
             var shadow = new GUIStyle(_style);
             shadow.normal.textColor = new Color(0, 0, 0, 0.8f);
