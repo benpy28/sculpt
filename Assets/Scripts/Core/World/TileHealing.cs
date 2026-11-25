@@ -16,24 +16,25 @@ namespace Sculpt.Core
         Ok = 0,
         /// <summary>No tile there (or a bad tile id).</summary>
         NoTile = 1,
-        /// <summary>Heal on a tile that has nothing to heal (Intact, full Patched, Reinforced).</summary>
+        /// <summary>Heal where there is nothing to heal (no hole, no bad cracks; reinforced wall is never healed).</summary>
         NothingToHeal = 2,
-        /// <summary>Reinforce on a tile that is already Reinforced at full health.</summary>
+        /// <summary>Reinforce where everything is already reinforced at full health.</summary>
         AlreadyReinforced = 3,
         OutOfRange = 4,
         NoLineOfSight = 5,
         NotEnoughBar = 6,
         /// <summary>Someone else is already healing or reinforcing this tile.</summary>
         TileBusy = 7,
+        /// <summary>Healing is not possible right now (sculpt mode when block moves are on; disarmed).</summary>
         NotInSculptMode = 8,
         // ---- reasons a running heal stopped (cancelled and refunded) ----
-        /// <summary>A player was inside the tile's space when it would have finished.</summary>
+        /// <summary>A player was inside the space it would fill when it would have finished.</summary>
         PlayerInside = 9,
         /// <summary>The healer walked out of range.</summary>
         LeftRange = 10,
-        /// <summary>The healer left sculpt mode, died, or left the game.</summary>
+        /// <summary>The healer died, was disarmed, left sculpt mode, or left the game.</summary>
         Stopped = 11,
-        /// <summary>The healer started another heal (one tile at a time).</summary>
+        /// <summary>The healer started another heal (one at a time).</summary>
         Replaced = 12,
     }
 
@@ -41,7 +42,7 @@ namespace Sculpt.Core
     {
         /// <summary>A heal started (bar spent). EndTick says when it finishes.</summary>
         Began = 0,
-        /// <summary>It finished: the tile is now Patched or Reinforced.</summary>
+        /// <summary>It finished: what it covered is now Patched or Reinforced.</summary>
         Completed = 1,
         /// <summary>It stopped before finishing (Result says why); the bar was refunded.</summary>
         Cancelled = 2,
@@ -49,11 +50,13 @@ namespace Sculpt.Core
         Rejected = 3,
     }
 
-    /// <summary>One heal or reinforce in progress.</summary>
+    /// <summary>One heal or reinforce in progress, aimed at one cell of one tile.</summary>
     public struct HealJob
     {
         public int Player;
         public int Tile;
+        /// <summary>The cell aimed at (walls and floors; 0 on other tiles).</summary>
+        public int Cell;
         public HealKind Kind;
         public int StartTick;
         public int EndTick;
@@ -66,6 +69,7 @@ namespace Sculpt.Core
         public HealEventType Type;
         public int Player;
         public int Tile;
+        public int Cell;
         public HealKind Kind;
         public int Tick;
         public int EndTick;
@@ -77,22 +81,23 @@ namespace Sculpt.Core
     {
         public int Id;
         public bool Alive;
-        /// <summary>In sculpt mode (entering counts) - healing needs it.</summary>
+        /// <summary>Able to heal right now (sculpt mode when block moves are on; otherwise not disarmed).</summary>
         public bool InSculptMode;
         public Vec3d Eye;
-        /// <summary>The player's collision box (anyone inside a tile's space stops it finishing).</summary>
+        /// <summary>The player's collision box (anyone inside the space a heal fills stops it finishing).</summary>
         public Aabb Box;
     }
 
     /// <summary>
-    /// Healing and reinforcing wall tiles (Ben 2026-11-21): the sculpt key now mainly heals. Aim at a Damaged or Broken
-    /// tile in range and press: it takes <see cref="BreachConfig.HealTicks"/>, costs bar, and the tile comes back
-    /// Patched. The hole stays open until the heal finishes (that window is the point). A heal can't finish while a
-    /// player is inside the tile's space: it is cancelled and refunded. Reinforce costs more and makes it Reinforced.
-    /// Anyone can heal or reinforce any tile, one tile at a time each, and one healer per tile.
+    /// Healing and reinforcing (Ben 2026-11-21, by area since 2026-11-25). Aim at a hole or badly cracked wall in range
+    /// and press heal: it takes <see cref="BreachConfig.HealTicks"/> (0.2 s), costs bar, and everything it covers comes
+    /// back Patched: the cells within <see cref="BreachConfig.HealRadius"/> of where you aimed, plus the whole hole you
+    /// aimed into if it is no bigger than about a person (see <see cref="TileWalls.HealPlan"/>). What it covers is worked
+    /// out again when it finishes (the wall may have changed). A heal can't finish while a player is inside the space it
+    /// would fill: it is cancelled and refunded. Reinforce costs more and makes it Reinforced. Stairs and ramps heal whole.
+    /// Anyone can heal anything, one heal at a time each, and one healer per tile aimed at.
     /// Server-authoritative: the server runs this; clients copy the events (and check presses with the same rules first
-    /// so a press that can't work goes red at once, for free). Every tile change still goes through
-    /// <see cref="TileWalls.Set"/>.
+    /// so a press that can't work goes red at once, for free). Every change still goes through the tiles' one writer.
     /// </summary>
     public sealed class TileHealing
     {
@@ -101,6 +106,9 @@ namespace Sculpt.Core
         private readonly Dictionary<int, HealJob> _byPlayer = new Dictionary<int, HealJob>();
         private readonly Dictionary<int, int> _healerOfTile = new Dictionary<int, int>();
         private readonly List<int> _scratch = new List<int>();
+        private readonly Dictionary<int, ulong> _plan = new Dictionary<int, ulong>();
+        private readonly List<Aabb> _space = new List<Aabb>();
+        private readonly List<int> _frame = new List<int>();
         /// <summary>Events since the owner last cleared them.</summary>
         public readonly List<HealEvent> Events = new List<HealEvent>();
 
@@ -117,13 +125,13 @@ namespace Sculpt.Core
 
         // ------------------------------------------------------------------ pure rules
 
-        /// <summary>Can this kind of heal be done on a tile in this state (ignoring range, bar and other healers)?</summary>
+        /// <summary>Can this kind of heal be done on a plain tile (stair, ramp) in this state?</summary>
         public static HealResult StateCheck(in WallTile t, HealKind kind, BreachConfig c)
         {
             if (t.Links != null) return HealResult.NothingToHeal; // frame followers come back with the tiles around them
+            if (t.State == TileState.DoorOpen) return HealResult.NothingToHeal; // an open door: shut it first
             if (kind == HealKind.Reinforce)
                 return t.State == TileState.Reinforced && t.Health >= c.ReinforcedHealth ? HealResult.AlreadyReinforced : HealResult.Ok;
-            if (t.Open != 0 && t.State != TileState.Reinforced) return HealResult.Ok; // a hole blown in it
             switch (t.State)
             {
                 case TileState.Damaged:
@@ -133,24 +141,41 @@ namespace Sculpt.Core
             }
         }
 
+        /// <summary>Is there anything for this heal to do at that cell of that tile (walls and floors by area)?</summary>
+        public HealResult WhatCheck(int tile, int cell, HealKind kind)
+        {
+            if (tile < 0 || tile >= Walls.Count) return HealResult.NoTile;
+            WallTile t = Walls[tile];
+            if (!Walls.HasCells(tile)) return StateCheck(t, kind, Config);
+            if (Walls.HasHealWork(tile, cell, kind)) return HealResult.Ok;
+            return kind == HealKind.Reinforce ? HealResult.AlreadyReinforced : HealResult.NothingToHeal;
+        }
+
         public static int CostOf(HealKind kind, BreachConfig c) => kind == HealKind.Reinforce ? c.ReinforceCost : c.HealCost;
         public static int TicksOf(HealKind kind, BreachConfig c) => Math.Max(1, kind == HealKind.Reinforce ? c.ReinforceTicks : c.HealTicks);
 
-        /// <summary>Distance from the eye to the nearest point of the tile.</summary>
-        public double DistanceTo(int tile, Vec3d eye) => (Walls.BoundsOf(tile).ClosestPoint(eye) - eye).Length;
+        /// <summary>The spot a heal aims at: the aimed cell (walls and floors) or the whole tile.</summary>
+        public Aabb SpotOf(int tile, int cell) => Walls.HasCells(tile) ? Walls.CellBox(tile, Math.Max(0, Math.Min(63, cell))) : Walls.BoundsOf(tile);
+
+        /// <summary>Distance from the eye to the nearest point of the spot aimed at.</summary>
+        public double DistanceTo(int tile, int cell, Vec3d eye) => (SpotOf(tile, cell).ClosestPoint(eye) - eye).Length;
+
+        public double DistanceTo(int tile, Vec3d eye) => DistanceTo(tile, TileWalls.MiddleCell, eye);
 
         /// <summary>
-        /// Can the eye see the tile? True if a ray to its centre, or to any of four points halfway to its edges, reaches
-        /// the tile (or passes through it when it is broken) before anything else solid. Other tiles in front block.
+        /// Can the eye see the spot? True if a ray to its centre, or to any of four points 0.3 m round it on the face,
+        /// reaches it (or passes through it when it is open), or stops on the same face nearby. Anything else in front blocks.
         /// </summary>
-        public bool CanSee(ITerrain terrain, int tile, Vec3d eye)
+        public bool CanSee(ITerrain terrain, int tile, int cell, Vec3d eye)
         {
-            Aabb b = Walls.BoundsOf(tile);
+            Aabb b = SpotOf(tile, cell);
             Vec3d c = (b.Min + b.Max) * 0.5;
             Dir facing = Walls[tile].Facing;
             bool thinX = facing == Dir.East; // the tile is thin in X: its face spans Y and Z
             bool flat = facing == Dir.Up;    // floors, stair and ramp segments: the face spans X and Z
-            double h = Config.TileSize * 0.25;
+            bool celled = Walls.HasCells(tile);
+            double h = celled ? 0.3 : Config.TileSize * 0.25;
+            int plane = celled ? Walls.PlaneOf(tile) : -1;
             for (int k = 0; k < 5; k++)
             {
                 Vec3d off = k == 0 ? Vec3d.Zero
@@ -163,32 +188,39 @@ namespace Sculpt.Core
                 if (len < 1e-6) return true;
                 TerrainHit hit = terrain.Raycast(eye, d / len, len);
                 if (!hit.Hit) return true;
-                if (Walls.TileOfHit(hit) == tile) return true;
+                int ht = Walls.TileOfHit(hit);
+                if (ht == tile) return true;
+                if (celled && ht >= 0 && Walls.HasCells(ht) && Walls.PlaneOf(ht) == plane && (hit.Point - c).Length <= Config.HealRadius + 0.3) return true;
                 if (hit.Distance >= len - 0.02) return true;
             }
             return false;
         }
 
+        public bool CanSee(ITerrain terrain, int tile, Vec3d eye) => CanSee(terrain, tile, TileWalls.MiddleCell, eye);
+
         /// <summary>
-        /// Anyone's box inside the tile's space (its exact shape: over a stair segment's slope is not inside it), or inside
-        /// any broken frame piece that would come back with it?
+        /// Anyone's box inside the space this heal would fill now (every cell that comes back and any frame piece that
+        /// would come back with it; a stair or ramp segment's exact shape)?
         /// </summary>
-        public bool Occupied(int tile, IReadOnlyList<HealerStatus> players)
+        public bool Occupied(int tile, int cell, HealKind kind, IReadOnlyList<HealerStatus> players)
         {
-            if (Inside(tile, players)) return true;
-            Walls.RestoredWith(tile, _restored);
-            foreach (int f in _restored)
-                if (Inside(f, players)) return true;
-            // Blast holes: thin or small openings next to it fill in when it comes back.
-            Walls.CellsFilledByRestoring(tile, _filled);
-            foreach (Aabb cell in _filled)
+            if (!Walls.HasCells(tile))
+            {
+                if (Inside(tile, players)) return true;
+                Walls.RestoredWith(tile, _frame);
+                foreach (int f in _frame) if (Inside(f, players)) return true;
+                return false;
+            }
+            Walls.HealPlan(tile, cell, kind, _plan);
+            Walls.HealSpace(_plan, _space, _frame);
+            foreach (Aabb box in _space)
                 for (int i = 0; i < players.Count; i++)
-                    if (players[i].Alive && cell.Overlaps(players[i].Box)) return true;
+                    if (players[i].Alive && box.Overlaps(players[i].Box)) return true;
+            foreach (int f in _frame) if (Inside(f, players)) return true;
             return false;
         }
 
-        private readonly List<int> _restored = new List<int>();
-        private readonly List<Aabb> _filled = new List<Aabb>();
+        public bool Occupied(int tile, IReadOnlyList<HealerStatus> players) => Occupied(tile, TileWalls.MiddleCell, HealKind.Heal, players);
 
         private bool Inside(int tile, IReadOnlyList<HealerStatus> players)
         {
@@ -202,45 +234,52 @@ namespace Sculpt.Core
         /// Every check a press has to pass, without changing anything (the client runs it first; the server again with
         /// <paramref name="reachSlack"/> for the client's view being a little behind).
         /// </summary>
-        public HealResult Check(ITerrain terrain, int player, Vec3d eye, bool inSculptMode, int tile, HealKind kind, int bar, double reachSlack = 0)
+        public HealResult Check(ITerrain terrain, int player, Vec3d eye, bool canHeal, int tile, int cell, HealKind kind, int bar, double reachSlack = 0)
         {
-            if (!inSculptMode) return HealResult.NotInSculptMode;
+            if (!canHeal) return HealResult.NotInSculptMode;
             if (tile < 0 || tile >= Walls.Count) return HealResult.NoTile;
-            HealResult r = StateCheck(Walls[tile], kind, Config);
+            HealResult r = WhatCheck(tile, cell, kind);
             if (r != HealResult.Ok) return r;
             int healer = HealerOf(tile);
             if (healer != 0 && healer != player) return HealResult.TileBusy;
-            if (DistanceTo(tile, eye) > Config.HealRange + reachSlack) return HealResult.OutOfRange;
+            if (DistanceTo(tile, cell, eye) > Config.HealRange + reachSlack) return HealResult.OutOfRange;
             int refund = _byPlayer.TryGetValue(player, out HealJob mine) ? mine.Cost : 0; // replacing your own heal refunds it first
             if (bar + refund < CostOf(kind, Config)) return HealResult.NotEnoughBar;
-            if (terrain != null && !CanSee(terrain, tile, eye)) return HealResult.NoLineOfSight;
+            if (terrain != null && !CanSee(terrain, tile, cell, eye)) return HealResult.NoLineOfSight;
             return HealResult.Ok;
         }
+
+        public HealResult Check(ITerrain terrain, int player, Vec3d eye, bool canHeal, int tile, HealKind kind, int bar, double reachSlack = 0) =>
+            Check(terrain, player, eye, canHeal, tile, TileWalls.MiddleCell, kind, bar, reachSlack);
 
         // ------------------------------------------------------------------ server
 
         /// <summary>
-        /// A heal press. Pressing the tile you are already healing (same kind) does nothing. A press on another tile
-        /// replaces your heal (the old one is refunded). Logs Began or Rejected.
+        /// A heal press. Pressing the tile you are already healing (same kind) does nothing. A press elsewhere replaces
+        /// your heal (the old one is refunded). Logs Began or Rejected.
         /// </summary>
-        public HealResult TryBegin(ITerrain terrain, in HealerStatus who, int tile, HealKind kind, SculptBar bar, int tick, double reachSlack = 0)
+        public HealResult TryBegin(ITerrain terrain, in HealerStatus who, int tile, int cell, HealKind kind, SculptBar bar, int tick, double reachSlack = 0)
         {
+            cell = Walls.HasCells(Math.Max(0, Math.Min(Walls.Count - 1, tile))) ? Math.Max(0, Math.Min(63, cell)) : 0;
             if (_byPlayer.TryGetValue(who.Id, out HealJob cur) && cur.Tile == tile && cur.Kind == kind) return HealResult.Ok;
-            HealResult r = who.Alive ? Check(terrain, who.Id, who.Eye, who.InSculptMode, tile, kind, bar.Value, reachSlack) : HealResult.Stopped;
+            HealResult r = who.Alive ? Check(terrain, who.Id, who.Eye, who.InSculptMode, tile, cell, kind, bar.Value, reachSlack) : HealResult.Stopped;
             if (r != HealResult.Ok)
             {
-                Events.Add(new HealEvent { Type = HealEventType.Rejected, Player = who.Id, Tile = Math.Max(0, tile), Kind = kind, Tick = tick, Result = r });
+                Events.Add(new HealEvent { Type = HealEventType.Rejected, Player = who.Id, Tile = Math.Max(0, tile), Cell = cell, Kind = kind, Tick = tick, Result = r });
                 return r;
             }
             if (_byPlayer.ContainsKey(who.Id)) Cancel(who.Id, HealResult.Replaced, bar, tick);
             int cost = CostOf(kind, Config);
             bar.Spend(cost, tick);
-            var job = new HealJob { Player = who.Id, Tile = tile, Kind = kind, StartTick = tick, EndTick = tick + TicksOf(kind, Config), Cost = cost };
+            var job = new HealJob { Player = who.Id, Tile = tile, Cell = cell, Kind = kind, StartTick = tick, EndTick = tick + TicksOf(kind, Config), Cost = cost };
             _byPlayer[who.Id] = job;
             _healerOfTile[tile] = who.Id;
-            Events.Add(new HealEvent { Type = HealEventType.Began, Player = who.Id, Tile = tile, Kind = kind, Tick = tick, EndTick = job.EndTick });
+            Events.Add(new HealEvent { Type = HealEventType.Began, Player = who.Id, Tile = tile, Cell = cell, Kind = kind, Tick = tick, EndTick = job.EndTick });
             return HealResult.Ok;
         }
+
+        public HealResult TryBegin(ITerrain terrain, in HealerStatus who, int tile, HealKind kind, SculptBar bar, int tick, double reachSlack = 0) =>
+            TryBegin(terrain, who, tile, TileWalls.MiddleCell, kind, bar, tick, reachSlack);
 
         /// <summary>Stops a player's heal and refunds it (no-op if they have none). <paramref name="bar"/> may be null (they left).</summary>
         public void Cancel(int player, HealResult reason, SculptBar bar, int tick)
@@ -249,14 +288,14 @@ namespace Sculpt.Core
             _byPlayer.Remove(player);
             _healerOfTile.Remove(j.Tile);
             bar?.Refund(j.Cost);
-            Events.Add(new HealEvent { Type = HealEventType.Cancelled, Player = player, Tile = j.Tile, Kind = j.Kind, Tick = tick, EndTick = j.EndTick, Result = reason });
+            Events.Add(new HealEvent { Type = HealEventType.Cancelled, Player = player, Tile = j.Tile, Cell = j.Cell, Kind = j.Kind, Tick = tick, EndTick = j.EndTick, Result = reason });
         }
 
         /// <summary>
-        /// One server tick: a heal whose healer died, left sculpt mode or the game, or walked out of range (range plus
-        /// <see cref="BreachConfig.HealLeash"/>) is cancelled and refunded. One that reaches its end tick finishes
-        /// (Patched at full patched health, or Reinforced at full) unless someone is inside the tile: then it is
-        /// cancelled and refunded.
+        /// One server tick: a heal whose healer died, can't heal any more or left the game, or walked out of range (range
+        /// plus <see cref="BreachConfig.HealLeash"/>) is cancelled and refunded. One that reaches its end tick finishes
+        /// unless someone is inside the space it fills (then it is cancelled and refunded) or there is nothing left to do
+        /// (it just ends).
         /// </summary>
         public void Step(int tick, IReadOnlyList<HealerStatus> players, Func<int, SculptBar> barOf)
         {
@@ -270,15 +309,26 @@ namespace Sculpt.Core
                 int idx = IndexOf(players, id);
                 SculptBar bar = idx >= 0 ? barOf(id) : null;
                 if (idx < 0 || !players[idx].Alive || !players[idx].InSculptMode) { Cancel(id, HealResult.Stopped, bar, tick); continue; }
-                if (DistanceTo(j.Tile, players[idx].Eye) > Config.HealRange + Config.HealLeash) { Cancel(id, HealResult.LeftRange, bar, tick); continue; }
+                if (DistanceTo(j.Tile, j.Cell, players[idx].Eye) > Config.HealRange + Config.HealLeash) { Cancel(id, HealResult.LeftRange, bar, tick); continue; }
                 if (tick < j.EndTick) continue;
-                if (Occupied(j.Tile, players)) { Cancel(id, HealResult.PlayerInside, bar, tick); continue; }
+                if (Occupied(j.Tile, j.Cell, j.Kind, players)) { Cancel(id, HealResult.PlayerInside, bar, tick); continue; }
                 _byPlayer.Remove(id);
                 _healerOfTile.Remove(j.Tile);
-                if (j.Kind == HealKind.Reinforce) Walls.Set(j.Tile, TileState.Reinforced, Config.ReinforcedHealth, TileCause.Reinforce, id);
-                else Walls.Set(j.Tile, TileState.Patched, Config.PatchedHealth, TileCause.Heal, id);
-                Events.Add(new HealEvent { Type = HealEventType.Completed, Player = id, Tile = j.Tile, Kind = j.Kind, Tick = tick, EndTick = j.EndTick });
+                Finish(j, id);
+                Events.Add(new HealEvent { Type = HealEventType.Completed, Player = id, Tile = j.Tile, Cell = j.Cell, Kind = j.Kind, Tick = tick, EndTick = j.EndTick });
             }
+        }
+
+        private void Finish(in HealJob j, int by)
+        {
+            if (!Walls.HasCells(j.Tile))
+            {
+                if (j.Kind == HealKind.Reinforce) Walls.Set(j.Tile, TileState.Reinforced, Config.ReinforcedHealth, TileCause.Reinforce, by);
+                else Walls.Set(j.Tile, TileState.Patched, Config.PatchedHealth, TileCause.Heal, by);
+                return;
+            }
+            Walls.HealPlan(j.Tile, j.Cell, j.Kind, _plan);
+            Walls.ApplyHeal(_plan, j.Kind, by);
         }
 
         private static int IndexOf(IReadOnlyList<HealerStatus> players, int id)
@@ -296,7 +346,7 @@ namespace Sculpt.Core
             {
                 case HealEventType.Began:
                     if (_byPlayer.TryGetValue(e.Player, out HealJob old)) _healerOfTile.Remove(old.Tile);
-                    _byPlayer[e.Player] = new HealJob { Player = e.Player, Tile = e.Tile, Kind = e.Kind, StartTick = e.Tick, EndTick = e.EndTick, Cost = CostOf(e.Kind, Config) };
+                    _byPlayer[e.Player] = new HealJob { Player = e.Player, Tile = e.Tile, Cell = e.Cell, Kind = e.Kind, StartTick = e.Tick, EndTick = e.EndTick, Cost = CostOf(e.Kind, Config) };
                     _healerOfTile[e.Tile] = e.Player;
                     break;
                 case HealEventType.Completed:

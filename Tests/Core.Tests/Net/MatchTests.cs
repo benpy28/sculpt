@@ -19,9 +19,9 @@ namespace Sculpt.Core.Tests.Weapons
         private static void Short(NetServer s)
         {
             s.MatchConfig.Enabled = true;
-            s.MatchConfig.CountdownTicks = 30;
-            s.MatchConfig.DurationTicks = 600;
-            s.MatchConfig.ResultsTicks = 60;
+            s.MatchConfig.CountdownTicks = 30 * SimTime.Per60;
+            s.MatchConfig.DurationTicks = 600 * SimTime.Per60;
+            s.MatchConfig.ResultsTicks = 60 * SimTime.Per60;
         }
 
         private static void AimAt(NetClient c, Vec3d point, out double yaw, out float pitch)
@@ -47,7 +47,7 @@ namespace Sculpt.Core.Tests.Weapons
                     AimAt(p.Client, v.Position + new Vec3d(0, 1.0, 0), out double yaw, out i.Pitch);
                     i.Move.Yaw = yaw;
                 }
-                bool f = t > start + 40 && (t - start) % 15 == 0 && fire();
+                bool f = t > start + 40 * SimTime.Per60 && (t - start) % (15 * SimTime.Per60) == 0 && fire();
                 i.Move.FireHeld = i.Move.FirePressed = i.Move.WantsToShoot = f;
                 return i;
             };
@@ -70,13 +70,13 @@ namespace Sculpt.Core.Tests.Weapons
             Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Playing));
             Assert.That(b.Client.Match.Phase, Is.EqualTo(MatchPhase.Playing));
             int end = h.Server.Match.PhaseEndTick;
-            Assert.That(end - h.Server.Match.PhaseStartTick, Is.EqualTo(600));
+            Assert.That(end - h.Server.Match.PhaseStartTick, Is.EqualTo(600 * SimTime.Per60));
             Assert.That(a.Client.Match.PhaseEndTick, Is.EqualTo(end), "clients count down to the same tick");
             h.RunSeconds(10.2);
             Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Ended));
             h.RunSeconds(1.1);
             Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Countdown).Or.EqualTo(MatchPhase.Playing), "and again");
-            Assert.That(h.Server.Match.PhaseStartTick, Is.GreaterThan(end + 60 - 1), "a new match after the results");
+            Assert.That(h.Server.Match.PhaseStartTick, Is.GreaterThan(end + 60 * SimTime.Per60 - 1), "a new match after the results");
 
             h.Remove(b);
             h.RunSeconds(0.1);
@@ -88,7 +88,7 @@ namespace Sculpt.Core.Tests.Weapons
         {
             var h = Arena();
             Short(h.Server);
-            h.Server.MatchConfig.CountdownTicks = 240; // long enough to shoot at someone during it
+            h.Server.MatchConfig.CountdownTicks = 240 * SimTime.Per60; // long enough to shoot at someone during it
             var a = h.AddClient(SculptNetHarness.FeetIn(10, 5), team: 1);
             var b = h.AddClient(SculptNetHarness.FeetIn(10, 12), team: 2);
             a.Script = Shooter(() => b, () => true);
@@ -96,7 +96,7 @@ namespace Sculpt.Core.Tests.Weapons
             Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Countdown));
             Assert.That(b.ServerSide.State.Health(h.Server.Movement.Weapons), Is.EqualTo(h.Server.Movement.Weapons.MaxHealth), "protected in the countdown");
 
-            h.RunSeconds(1.5 + 5 * 15 / 60.0 + 0.5);
+            h.RunSeconds(1.5 + 5 * 15 / 60.0 + 0.5); // 15 sixtieths apart
             Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Playing));
             Assert.That(b.ServerSide.MatchDeaths, Is.GreaterThanOrEqualTo(1));
             Assert.That(a.ServerSide.MatchKills, Is.EqualTo(b.ServerSide.MatchDeaths));
@@ -111,9 +111,9 @@ namespace Sculpt.Core.Tests.Weapons
             var brushes = DuelMap.BuildBrushes(out BreachMapInfo info);
             var h = new NetHarness(() => DuelMap.Terrain(DuelMap.BuildGround(), DuelMap.BuildBrushes(out _)), info.TeamSpawns[0][0]);
             h.Server.MatchConfig.Enabled = true;
-            h.Server.MatchConfig.CountdownTicks = 30;
-            h.Server.MatchConfig.DurationTicks = 120;
-            h.Server.MatchConfig.ResultsTicks = 30;
+            h.Server.MatchConfig.CountdownTicks = 30 * SimTime.Per60;
+            h.Server.MatchConfig.DurationTicks = 120 * SimTime.Per60;
+            h.Server.MatchConfig.ResultsTicks = 30 * SimTime.Per60;
             var a = h.AddClient(spawn: info.TeamSpawns[0][0]);
             var b = h.AddClient(spawn: info.TeamSpawns[1][0], team: 2, seed: 2);
             a.Script = t => new MoveInput { MoveZ = 1, SprintHeld = true }; // runs north, away from spawn
@@ -136,7 +136,7 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
-        public void AFallSoonAfterBeingHurt_CountsAsTheEnemysKill_ALateFallIsJustADeath()
+        public void InA1v1_EveryFallIsTheOpponentsKill_HoweverLongAgoTheyHurtYou()
         {
             foreach (bool recent in new[] { true, false })
             {
@@ -145,7 +145,7 @@ namespace Sculpt.Core.Tests.Weapons
                 var roofEdge = new Vec3d(hall.Min.X + 1.0, hall.Max.Y, hall.Min.Z + 2.5); // over a roofed corner, clear of the stairwell and the bridge
                 var h = new NetHarness(() => DuelMap.Terrain(DuelMap.BuildGround(), DuelMap.BuildBrushes(out _)), info.TeamSpawns[0][0]);
                 h.Server.MatchConfig.Enabled = true;
-                h.Server.MatchConfig.CountdownTicks = 30;
+                h.Server.MatchConfig.CountdownTicks = 30 * SimTime.Per60;
                 var a = h.AddClient(spawn: info.TeamSpawns[0][0]);
                 var b = h.AddClient(spawn: roofEdge, team: 2, seed: 2);
                 h.RunSeconds(1.0);
@@ -155,11 +155,35 @@ namespace Sculpt.Core.Tests.Weapons
                 b.ServerSide.Body.Position = roofEdge;
                 b.ServerSide.State.Damage = h.Server.Movement.Weapons.MaxHealth - 2; // a roof fall does a few points
                 b.ServerSide.LastHurtBy = a.ServerSide.Id;
-                b.ServerSide.LastHurtTick = recent ? h.Server.Tick : h.Server.Tick - NetServer.KillCreditTicks - 60;
+                b.ServerSide.LastHurtTick = recent ? h.Server.Tick : h.Server.Tick - NetServer.KillCreditTicks - 60 * SimTime.Per60;
                 b.Script = t => new MoveInput { Yaw = -Math.PI / 2, MoveZ = 1 }; // west, off the edge
                 h.RunSeconds(2.0);
                 Assert.That(b.ServerSide.MatchDeaths, Is.EqualTo(1), $"the fall killed it (at {b.ServerSide.State.Position}, damage {b.ServerSide.State.Damage}, dead {b.ServerSide.State.Dead})");
-                Assert.That(a.ServerSide.MatchKills, Is.EqualTo(recent ? 1 : 0), recent ? "credited to the enemy who hurt it" : "too long ago: just a death");
+                // Ben 2026-11-25: "in a 1v1 if someone dies from fall damage or basically anything ... credit the other
+                // player" (the 8 s last-hurt window only applies outside a 1v1 match).
+                Assert.That(a.ServerSide.MatchKills, Is.EqualTo(1), recent ? "credited to the enemy who hurt it" : "long ago, still the opponent's kill");
+            }
+        }
+
+        [Test]
+        public void OutsideA1v1Match_AFallCountsAsTheEnemysKillOnlyWithin8Seconds()
+        {
+            foreach (bool recent in new[] { true, false })
+            {
+                DuelMap.BuildBrushes(out BreachMapInfo info);
+                Aabb hall = info.Block.Buildings[0];
+                var roofEdge = new Vec3d(hall.Min.X + 1.0, hall.Max.Y, hall.Min.Z + 2.5);
+                var h = new NetHarness(() => DuelMap.Terrain(DuelMap.BuildGround(), DuelMap.BuildBrushes(out _)), info.TeamSpawns[0][0]);
+                var a = h.AddClient(spawn: info.TeamSpawns[0][0]);
+                var b = h.AddClient(spawn: roofEdge, team: 2, seed: 2);
+                h.RunSeconds(0.5);
+                b.ServerSide.State.Damage = h.Server.Movement.Weapons.MaxHealth - 2;
+                b.ServerSide.LastHurtBy = a.ServerSide.Id;
+                b.ServerSide.LastHurtTick = recent ? h.Server.Tick : h.Server.Tick - NetServer.KillCreditTicks - 60 * SimTime.Per60;
+                b.Script = t => new MoveInput { Yaw = -Math.PI / 2, MoveZ = 1 };
+                h.RunSeconds(2.0);
+                Assert.That(b.ServerSide.Deaths, Is.EqualTo(1), "the fall killed it");
+                Assert.That(a.ServerSide.Kills, Is.EqualTo(recent ? 1 : 0), recent ? "credited to the enemy who hurt it" : "too long ago: just a death");
             }
         }
 

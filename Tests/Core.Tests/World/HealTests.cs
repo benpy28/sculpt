@@ -66,7 +66,8 @@ namespace Sculpt.Core.Tests
         [Test]
         public void StartingNumbers_MatchBensSpec()
         {
-            Assert.That(C.HealTicks, Is.EqualTo(48), "0.8 s");
+            Assert.That(C.HealTicks, Is.EqualTo(SimTime.SecondsToTicks(0.2)), "Ben 2026-11-25: almost instantly (was 0.8 s)");
+            Assert.That(C.ReinforceTicks, Is.EqualTo(SimTime.SecondsToTicks(0.8)), "0.8 s");
             Assert.That(C.HealCost, Is.EqualTo(1000), "10%");
             Assert.That(C.PatchedHealth, Is.EqualTo(50));
             Assert.That(C.ReinforceCost, Is.EqualTo(2500), "25%");
@@ -90,11 +91,11 @@ namespace Sculpt.Core.Tests
             Assert.That(h.TryBegin(w, me, t[1], HealKind.Heal, bar, 100), Is.EqualTo(HealResult.Ok));
             Assert.That(bar.Value, Is.EqualTo(SculptConfig.BarMax - 1000), "10% at the start");
             Assert.That(h.Events[0].Type, Is.EqualTo(HealEventType.Began));
-            Assert.That(h.Events[0].EndTick, Is.EqualTo(148));
-            Run(h, 101, 147, who, bar);
+            Assert.That(h.Events[0].EndTick, Is.EqualTo(100 + C.HealTicks));
+            Run(h, 101, 100 + C.HealTicks - 1, who, bar);
             Assert.That(w.Tiles[t[1]].State, Is.EqualTo(TileState.Broken), "the hole stays open during the heal");
             Assert.That(w.BoxOverlapsSolid(hole.Expand(-0.05)), Is.False, "and you can still go through it");
-            h.Step(148, who, _ => bar);
+            h.Step(100 + C.HealTicks, who, _ => bar);
             Assert.That(w.Tiles[t[1]].State, Is.EqualTo(TileState.Patched));
             Assert.That(w.Tiles[t[1]].Health, Is.EqualTo(50));
             Assert.That(w.BoxOverlapsSolid(hole.Expand(-0.05)), Is.True, "solid again");
@@ -112,7 +113,7 @@ namespace Sculpt.Core.Tests
             SculptBar bar = Bar();
             h.TryBegin(w, me, t[0], HealKind.Heal, bar, 10);
             w.Tiles.Damage(t[0], 100, TileCause.Bullet); // shot out mid-heal
-            Run(h, 11, 58, new List<HealerStatus> { me }, bar);
+            Run(h, 11, 10 + C.HealTicks, new List<HealerStatus> { me }, bar);
             Assert.That(w.Tiles[t[0]].State, Is.EqualTo(TileState.Patched));
             Assert.That(w.Tiles[t[0]].Health, Is.EqualTo(50));
         }
@@ -127,7 +128,7 @@ namespace Sculpt.Core.Tests
             h.TryBegin(w, me, t[2], HealKind.Heal, bar, 0);
             Aabb tile = w.Tiles.BoundsOf(t[2]);
             var runner = Healer(2, new Vec3d((tile.Min.X + tile.Max.X) / 2, 0, tile.Min.Z - 0.2)); // half in the hole
-            Run(h, 1, 48, new List<HealerStatus> { me, runner }, bar);
+            Run(h, 1, C.HealTicks, new List<HealerStatus> { me, runner }, bar);
             Assert.That(w.Tiles[t[2]].State, Is.EqualTo(TileState.Broken), "never closes on a player");
             Assert.That(bar.Value, Is.EqualTo(SculptConfig.BarMax), "refunded");
             HealEvent e = h.Events[h.Events.Count - 1];
@@ -146,9 +147,9 @@ namespace Sculpt.Core.Tests
             Aabb tile = w.Tiles.BoundsOf(t[2]);
             var runner = Healer(2, new Vec3d((tile.Min.X + tile.Max.X) / 2, 0, tile.Min.Z - 0.2));
             var who = new List<HealerStatus> { me, runner };
-            Run(h, 1, 30, who, bar);
+            Run(h, 1, C.HealTicks / 2, who, bar);
             who[1] = Healer(2, new Vec3d((tile.Min.X + tile.Max.X) / 2, 0, tile.Max.Z + 0.45)); // through, just clear of the wall
-            Run(h, 31, 48, who, bar);
+            Run(h, C.HealTicks / 2 + 1, C.HealTicks, who, bar);
             Assert.That(w.Tiles[t[2]].State, Is.EqualTo(TileState.Patched));
         }
 
@@ -186,7 +187,7 @@ namespace Sculpt.Core.Tests
             TileHealing h = Setup(out BrushWorld w, out int[] t);
             w.Tiles.Damage(t[0], 60, TileCause.Bullet);
             SculptBar bar = Bar();
-            Assert.That(h.TryBegin(w, Healer(1, Front(1)), t[1], HealKind.Heal, bar, 0), Is.EqualTo(HealResult.NothingToHeal));
+            Assert.That(h.TryBegin(w, Healer(1, Front(3)), t[3], HealKind.Heal, bar, 0), Is.EqualTo(HealResult.NothingToHeal), "nothing cracked within reach of the aim");
             Assert.That(h.TryBegin(w, Healer(1, Front(0), sculpt: false), t[0], HealKind.Heal, bar, 0), Is.EqualTo(HealResult.NotInSculptMode));
             Assert.That(h.TryBegin(w, Healer(1, Front(0, 7.5)), t[0], HealKind.Heal, bar, 0), Is.EqualTo(HealResult.OutOfRange));
             Assert.That(h.TryBegin(w, Healer(1, Front(0)), -1, HealKind.Heal, bar, 0), Is.EqualTo(HealResult.NoTile));
@@ -337,8 +338,10 @@ namespace Sculpt.Core.Tests
             w.Tiles.Set(t[1], TileState.Broken, 0, TileCause.Bullet); // x 1.5..3
             var eye = new Vec3d(1.4, 0.75, 7); // crosshair on tile 0, just left of the hole
             TileTarget a = TileAim.Find(w, w.Tiles, eye, new Vec3d(0, 0, 1), 6, HealKind.Heal);
-            Assert.That(a.Tile, Is.EqualTo(t[1]));
-            Assert.That(a.Magnetised, Is.True);
+            // By area: aiming at the wall right beside a hole heals the hole (it is within reach of the aim).
+            var plan = new Dictionary<int, ulong>();
+            w.Tiles.HealPlan(a.Tile, a.Cell, HealKind.Heal, plan);
+            Assert.That(plan.ContainsKey(t[1]), Is.True, "the hole beside the crosshair is covered");
             TileTarget b = TileAim.Find(w, w.Tiles, new Vec3d(0.5, 0.75, 7), new Vec3d(0, 0, 1), 6, HealKind.Heal);
             Assert.That(b.Tile, Is.EqualTo(t[0]), "nothing healable near: the intact tile under the crosshair");
             TileTarget c = TileAim.Find(w, w.Tiles, new Vec3d(0.5, 0.75, 7), new Vec3d(0, 0, 1), 6, HealKind.Reinforce);
@@ -353,13 +356,13 @@ namespace Sculpt.Core.Tests
         {
             var s = new SculptConfig();
             C.ApplyBarTo(s);
-            Assert.That(s.RegenFullTicks, Is.EqualTo(3000), "empty to full in 50 s");
+            Assert.That(s.RegenFullTicks, Is.EqualTo(50 * SimTime.TicksPerSecond), "empty to full in 50 s");
             Assert.That(s.RegenDelayTicks, Is.Zero);
             var bar = new SculptBar();
             bar.Spend(SculptConfig.BarMax, 0);
-            for (int k = 1; k <= 60; k++) bar.Tick(k, s);
+            for (int k = 1; k <= SimTime.TicksPerSecond; k++) bar.Tick(k, s);
             Assert.That(bar.Value, Is.EqualTo(200), "2% after one second");
-            for (int k = 61; k <= 3000; k++) bar.Tick(k, s);
+            for (int k = SimTime.TicksPerSecond + 1; k <= 50 * SimTime.TicksPerSecond; k++) bar.Tick(k, s);
             Assert.That(bar.Value, Is.EqualTo(SculptConfig.BarMax), "full after 50 s, no drift");
         }
 
@@ -389,7 +392,7 @@ namespace Sculpt.Core.Tests
             C.ApplyBarTo(s);
             var bar = new SculptBar();
             int heals = 0;
-            for (int k = 0; k < 60 * 60; k++)
+            for (int k = 0; k < SimTime.TicksPerSecond * 60; k++)
             {
                 if (k % 60 == 0 && bar.CanAfford(C.HealCost)) { bar.Spend(C.HealCost, k); heals++; }
                 bar.Tick(k, s);
@@ -440,7 +443,7 @@ namespace Sculpt.Core.Tests
             Assert.That(back[0].Tile, Is.EqualTo(77));
             Assert.That(back[0].EndTick, Is.EqualTo(548));
             Assert.That(back[1].Result, Is.EqualTo(HealResult.PlayerInside));
-            d[d.Length - 8] = 0x0F; // bad event type
+            d[d.Length - 9] = 0x0F; // bad event type
             var bad = new ByteReader(d, 0, d.Length);
             Assert.Throws<NetFormatException>(() => TileProtocol.Read(ref bad, new List<TileChange>(), back));
         }
@@ -506,6 +509,45 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
+        public void Networked_QuickHeal_OnePress_NoSculptMode_GunWaitsAMoment()
+        {
+            // Ben 2026-11-25: no heal menu. One press heals what you aim at; the gun is out of action only briefly.
+            var h = Arena();
+            var a = h.AddClient(new Vec3d(9.75, 0, 9), up: SculptNetHarness.Lag(40), down: SculptNetHarness.Lag(40));
+            int start = -1, pressTick = -1, readyAtPress = -1, motorAtPress = -1;
+            a.Script = (p, t) =>
+            {
+                if (start < 0) start = t;
+                var i = new SculptTickInput();
+                if (t == start + 30) { i.Hand.Heal = true; i.Hand.HealTile = 2; i.Hand.HealCell = 9; pressTick = t; }
+                if (t == start + 31) { readyAtPress = p.Client.Predicted.ShootReadyTick; motorAtPress = p.Client.Predicted.Tick; }
+                return i;
+            };
+            h.RunSeconds(1.5);
+            Assert.That(a.ServerSide.State.Hand.InSculptMode, Is.False, "never in sculpt mode");
+            Assert.That(h.Server.Walls[2].State, Is.EqualTo(TileState.Patched), "the broken tile (a hole smaller than a person) heals whole");
+            Assert.That(a.Client.Walls[2].State, Is.EqualTo(TileState.Patched));
+            Assert.That(pressTick, Is.GreaterThan(0));
+            // On the motor's own clock (it restarts at a respawn; the command tick is the server's): 0.2 s from the press tick.
+            Assert.That(readyAtPress - motorAtPress, Is.EqualTo(new MovementConfig().Hand.HealLockTicks), "the gun waits 0.2 s after the press (predicted)");
+        }
+
+        [Test]
+        public void QuickHeal_Off_NeedsSculptMode()
+        {
+            var hc = new HandConfig { QuickHeal = false };
+            HandState weapon = HandState.Initial;
+            Assert.That(hc.CanHeal(weapon), Is.False);
+            HandState sculpt = weapon;
+            sculpt.Mode = HandMode.Sculpt;
+            Assert.That(hc.CanHeal(sculpt), Is.True);
+            Assert.That(new HandConfig().CanHeal(weapon), Is.True, "quick heal: any time you are not disarmed");
+            HandState disarmed = weapon;
+            disarmed.Mode = HandMode.Disarmed;
+            Assert.That(new HandConfig().CanHeal(disarmed), Is.False);
+        }
+
+        [Test]
         public void Networked_AnotherPlayerSeesTheHealAsItRuns()
         {
             var h = Arena();
@@ -532,9 +574,9 @@ namespace Sculpt.Core.Tests
             var h = Arena();
             var a = h.AddClient(new Vec3d(9.75, 0, 9));
             int start = -1;
-            var script = HealScript(() => start);
+            var script = HealScript(() => start, reinforce: true);
             a.Script = (p, t) => { if (start < 0) start = t; return script(p, t); };
-            for (int k = 0; k < 60 && h.Server.Healing.Count == 0; k++) h.RunMs(20); // pressed half a second in, runs 0.8 s
+            for (int k = 0; k < 60 && h.Server.Healing.Count == 0; k++) h.RunMs(20); // pressed half a second in, a reinforce runs 0.8 s
             Assert.That(h.Server.Healing.Count, Is.EqualTo(1));
             var late = h.AddClient(new Vec3d(14, 0, 16), team: 2, seed: 2);
             h.RunSeconds(0.2);

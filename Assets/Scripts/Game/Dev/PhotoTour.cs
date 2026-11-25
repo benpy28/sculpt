@@ -35,8 +35,13 @@ namespace Sculpt.Game.Dev
             return null;
         }
 
-        public void Init(string folder, Camera cam, BreachMapInfo info, bool duel)
+        private System.Func<TileWalls> _walls;
+        private BreachMapInfo _info;
+
+        public void Init(string folder, Camera cam, BreachMapInfo info, bool duel, System.Func<TileWalls> serverWalls = null)
         {
+            _walls = serverWalls;
+            _info = info;
             _folder = folder;
             _cam = cam;
             Directory.CreateDirectory(folder);
@@ -123,6 +128,11 @@ namespace Sculpt.Game.Dev
         {
             // Let the world mesh and the first frames settle.
             for (int f = 0; f < 30; f++) yield return null;
+            if (HasArg("-photodamage") && _walls != null && _walls() != null && _info != null && _info.TestWallA != null)
+            {
+                DamageScene(_walls(), _info.TestWallA);
+                yield return new WaitForSeconds(4f); // the client copies the server's tiles; the dust settles
+            }
             for (_index = 0; _index < _shots.Count; _index++)
             {
                 for (int f = 0; f < 6; f++) yield return null;
@@ -134,6 +144,66 @@ namespace Sculpt.Game.Dev
             }
             Debug.Log($"[SCULPT] Photo tour: {_shots.Count} shots in {_folder}");
             Application.Quit();
+        }
+
+        private static bool HasArg(string a)
+        {
+            foreach (string s in System.Environment.GetCommandLineArgs()) if (s.ToLowerInvariant() == a) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// "-photodamage": a fixed fight on the first test wall (on the server, so the client copies it like any fight):
+        /// one AR crack, an AR two-tap, a point-blank pump, a single punch, a pump hole healed back by one heal, and a
+        /// reinforced chunk with three AR bullets in it. Views of it go first.
+        /// </summary>
+        private void DamageScene(TileWalls w, int[] wall)
+        {
+            Aabb box = w.BoundsOf(wall[0]);
+            foreach (int t in wall) { Aabb b = w.BoundsOf(t); box = new Aabb(new Vec3d(System.Math.Min(box.Min.X, b.Min.X), System.Math.Min(box.Min.Y, b.Min.Y), System.Math.Min(box.Min.Z, b.Min.Z)), new Vec3d(System.Math.Max(box.Max.X, b.Max.X), System.Math.Max(box.Max.Y, b.Max.Y), System.Math.Max(box.Max.Z, b.Max.Z))); }
+            foreach (int t in wall) w.Set(t, TileState.Intact, w.Config.IntactHealth, TileCause.Built);
+            bool alongX = box.Max.X - box.Min.X > box.Max.Z - box.Min.Z;
+            double face = alongX ? box.Min.Z : box.Min.X;
+            Vec3d At(double u, double v) => alongX ? new Vec3d(box.Min.X + u, box.Min.Y + v, face) : new Vec3d(face, box.Min.Y + v, box.Min.Z + u);
+            int TileAt(Vec3d p)
+            {
+                foreach (int t in wall) { Aabb b = w.BoundsOf(t).Expand(0.02); if (b.Contains(p, 0)) return t; }
+                return wall[0];
+            }
+            void Hit(double u, double v, int dmg, double r) { Vec3d p = At(u, v); w.Damage(TileAt(p), dmg, p, TileCause.Bullet, 0, r); }
+            BreachConfig c = w.Config;
+            Hit(1.0, 1.6, c.ArTileDamage, c.ArHitRadius);
+            Hit(2.7, 1.4, c.ArTileDamage, c.ArHitRadius); Hit(2.72, 1.42, c.ArTileDamage, c.ArHitRadius);
+            Hit(4.8, 1.3, c.PumpPelletTileDamage * 9, c.PumpHitRadius + 0.1);
+            Hit(6.9, 1.6, c.PunchTileDamage, c.PunchHitRadius);
+            Hit(8.8, 1.3, c.PumpPelletTileDamage * 9, c.PumpHitRadius + 0.1);
+            var plan = new Dictionary<int, ulong>();
+            Vec3d hp = At(8.8, 1.3);
+            w.HealPlan(TileAt(hp), w.CellAt(TileAt(hp), hp), HealKind.Heal, plan);
+            w.ApplyHeal(plan, HealKind.Heal, 0);
+            Vec3d rp = At(10.8, 1.5);
+            w.HealPlan(TileAt(rp), w.CellAt(TileAt(rp), rp), HealKind.Reinforce, plan);
+            w.ApplyHeal(plan, HealKind.Reinforce, 0);
+            for (int k = 0; k < 3; k++) Hit(10.8 + k * 0.05, 1.5, c.ArTileDamage, c.ArHitRadius);
+            // Views: from the side the spawn is on.
+            Vector3 spawn = V(_info.TeamSpawns[0][0]);
+            float side = alongX ? Mathf.Sign(spawn.z - (float)face) : Mathf.Sign(spawn.x - (float)face);
+            Vector3 n = alongX ? new Vector3(0, 0, side) : new Vector3(side, 0, 0);
+            Vector3 W(double u, double v, double back) => V(At(u, v)) + n * (float)back;
+            var shots = new List<Shot>();
+            void Look(string name, Vector3 from, Vector3 at)
+            {
+                Vector3 d = at - from;
+                shots.Add(new Shot { Name = name, Position = from, Yaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg, Pitch = -Mathf.Asin(d.normalized.y) * Mathf.Rad2Deg });
+            }
+            Look("damage_00_wall", W(6, 1.62, 7.5), W(6, 1.4, 0));
+            Look("damage_01_left", W(2.2, 1.62, 3.2), W(2.2, 1.45, 0));
+            Look("damage_02_right", W(9.5, 1.62, 3.2), W(9.5, 1.45, 0));
+            Look("damage_03_angle", W(1, 1.62, 3) + (alongX ? Vector3.right : Vector3.forward) * -2f, W(5, 1.4, 0));
+            Look("damage_04_pump_close", W(4.8, 1.5, 1.6), W(4.8, 1.3, 0));
+            Look("damage_05_far", W(6, 1.62, 16), W(6, 1.6, 0));
+            for (int i = 0; i < shots.Count; i++) { Shot s = shots[i]; s.Name = $"{i:00}_{s.Name}"; shots[i] = s; }
+            _shots.InsertRange(0, shots);
         }
 
         private void LateUpdate()

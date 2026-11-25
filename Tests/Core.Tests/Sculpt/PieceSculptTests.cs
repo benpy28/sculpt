@@ -100,16 +100,17 @@ namespace Sculpt.Core.Tests.Pieces
             Assert.That(c.ScaledCost(500, 64), Is.EqualTo(250), "clamped at half");
             Assert.That(c.ScaledCost(500, 1000), Is.EqualTo(1000), "clamped at double");
             Assert.That(c.ScaledCost(1000, 384), Is.EqualTo(1500));
-            Assert.That(c.ScaledWindup(100), Is.EqualTo(9), "0.15 s");
-            Assert.That(c.ScaledWindup(257), Is.EqualTo(10));
-            Assert.That(c.ScaledWindup(320), Is.EqualTo(11));
-            Assert.That(c.ScaledWindup(576), Is.EqualTo(15), "capped");
+            const int P = SimTime.Per60; // the approved timings are in sixtieths of a second
+            Assert.That(c.ScaledWindup(100), Is.EqualTo(9 * P), "0.15 s");
+            Assert.That(c.ScaledWindup(257), Is.EqualTo(10 * P));
+            Assert.That(c.ScaledWindup(320), Is.EqualTo(11 * P));
+            Assert.That(c.ScaledWindup(576), Is.EqualTo(15 * P), "capped");
             Assert.That(c.DeltaFor(SculptActionType.Move, Dir.East), Is.EqualTo(new Int3(5, 0, 0)), "push travels 1.5 m");
             Assert.That(c.DeltaFor(SculptActionType.Raise, Dir.East), Is.EqualTo(new Int3(0, 4, 0)), "raise is one level");
             // Throw numbers from the balance sim: 1 tile, 2x2, 3x3.
-            Assert.That(c.ThrowWindup(64), Is.EqualTo(27));
-            Assert.That(c.ThrowWindup(256), Is.EqualTo(36));
-            Assert.That(c.ThrowWindup(576), Is.EqualTo(51));
+            Assert.That(c.ThrowWindup(64), Is.EqualTo(27 * P));
+            Assert.That(c.ThrowWindup(256), Is.EqualTo(36 * P));
+            Assert.That(c.ThrowWindup(576), Is.EqualTo(51 * P));
             Assert.That(c.ThrowCost(64), Is.EqualTo(1525));
             Assert.That(c.ThrowCost(256), Is.EqualTo(2500));
             Assert.That(c.ThrowCost(576), Is.EqualTo(4125));
@@ -118,9 +119,9 @@ namespace Sculpt.Core.Tests.Pieces
             Assert.That(c.ThrowDamage(256, 1), Is.EqualTo(70).Within(1e-9));
             Assert.That(c.ThrowDamage(576, 1.2), Is.EqualTo(120).Within(1e-9), "capped");
             Assert.That(c.DisarmTicks(30), Is.EqualTo(0));
-            Assert.That(c.DisarmTicks(60), Is.EqualTo(15));
-            Assert.That(c.DisarmTicks(90), Is.EqualTo(30));
-            Assert.That(c.DisarmTicks(119), Is.EqualTo(30));
+            Assert.That(c.DisarmTicks(60), Is.EqualTo(15 * P));
+            Assert.That(c.DisarmTicks(90), Is.EqualTo(30 * P));
+            Assert.That(c.DisarmTicks(119), Is.EqualTo(30 * P));
         }
 
         [Test]
@@ -135,7 +136,7 @@ namespace Sculpt.Core.Tests.Pieces
                 Assert.That(w.Sculpt.Evaluate(p, a).Result, Is.EqualTo(SculptResult.NotSculptable), a.Type.ToString());
                 Assert.That(w.Sculpt.TryBegin(p, a).Result, Is.EqualTo(SculptResult.NotSculptable), a.Type.ToString());
             }
-            w.Step(30);
+            w.Step(30 * SimTime.Per60);
             Assert.That(w.Sculpt.BarOf(1).Value, Is.EqualTo(bar), "nothing charged");
             w.Config.BlockMovesEnabled = true;
             Assert.That(w.Sculpt.TryBegin(p, w.Move(p, point, Dir.East)).Result, Is.EqualTo(SculptResult.Valid), "switching it back on restores it");
@@ -149,16 +150,16 @@ namespace Sculpt.Core.Tests.Pieces
             SculptCheck c = w.Sculpt.TryBegin(p, a);
             Assert.That(c.Result, Is.EqualTo(SculptResult.Valid));
             Assert.That(c.Size, Is.InRange(64, 128));
-            Assert.That(c.WindupTicks, Is.EqualTo(9));
+            Assert.That(c.WindupTicks, Is.EqualTo(9 * SimTime.Per60));
             Assert.That(c.Cost, Is.EqualTo(w.Config.ScaledCost(500, c.Size)));
             Assert.That(w.Sculpt.BarOf(1).Value, Is.EqualTo(SculptConfig.BarMax - c.Cost), "charged on confirm");
             ushort id = w.Grid.Get(a.Target);
             Assert.That(SubId.IsPiece(id), Is.True, "carved on confirm");
 
             var before = w.Sculpt.Pieces.Get(id).Cells.ToArray();
-            w.Step(8);
+            w.Step(8 * SimTime.Per60);
             Assert.That(w.Grid.Get(before[0]), Is.EqualTo(id), "not moved during windup");
-            w.Step(1);
+            w.Step(1 * SimTime.Per60);
             foreach (var x in before)
             {
                 Assert.That(w.Grid.Get(x + new Int3(5, 0, 0)), Is.EqualTo(id));
@@ -252,11 +253,11 @@ namespace Sculpt.Core.Tests.Pieces
         {
             var (w, p) = WallWorld();
             Assert.That(w.Sculpt.TryBegin(p, w.Raise(p, new Vec3d(4.5 * B, 0, 7.5 * B))).Result, Is.EqualTo(SculptResult.Valid));
-            w.Step(7);
+            w.Step(7 * SimTime.Per60);
             var second = w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East);
             Assert.That(w.Sculpt.TryBegin(p, second).Result, Is.EqualTo(SculptResult.Busy));
             Assert.That(w.Sculpt.HasBufferedConfirm(1), Is.True);
-            w.Step(2); // the raise lands at tick 9; the buffered push starts on that same tick
+            w.Step(2 * SimTime.Per60); // the raise lands at tick 9; the buffered push starts on that same tick
             Assert.That(w.Sculpt.PendingOf(1), Is.Not.Null);
             Assert.That(w.Sculpt.PendingOf(1).Action.Type, Is.EqualTo(SculptActionType.Move));
         }
@@ -266,11 +267,11 @@ namespace Sculpt.Core.Tests.Pieces
         {
             var (w, p) = WallWorld();
             Assert.That(w.Sculpt.TryBegin(p, w.Raise(p, new Vec3d(4.5 * B, 0, 7.5 * B))).Result, Is.EqualTo(SculptResult.Valid));
-            w.Step(1); // far more than the 3-tick click buffer before the windup ends
+            w.Step(1 * SimTime.Per60); // far more than the 3-tick click buffer before the windup ends
             Assert.That(w.Sculpt.TryBegin(p, w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East)).Result, Is.EqualTo(SculptResult.Busy));
-            w.Step(7);
+            w.Step(7 * SimTime.Per60);
             Assert.That(w.Sculpt.HasBufferedConfirm(1), Is.True, "still queued");
-            w.Step(1);
+            w.Step(1 * SimTime.Per60);
             Assert.That(w.Sculpt.PendingOf(1)?.Action.Type, Is.EqualTo(SculptActionType.Move), "fires the tick the raise lands");
         }
 
@@ -281,7 +282,7 @@ namespace Sculpt.Core.Tests.Pieces
             Assert.That(w.Sculpt.TryBegin(p, w.Raise(p, new Vec3d(4.5 * B, 0, 7.5 * B))).Result, Is.EqualTo(SculptResult.Valid));
             w.Sculpt.TryBegin(p, w.Sink(p, new Vec3d(3.5 * B, 0, 3.5 * B)));
             w.Sculpt.TryBegin(p, w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East));
-            w.Step(9);
+            w.Step(9 * SimTime.Per60);
             Assert.That(w.Sculpt.PendingOf(1)?.Action.Type, Is.EqualTo(SculptActionType.Move));
         }
 
@@ -293,7 +294,7 @@ namespace Sculpt.Core.Tests.Pieces
             Vec3d spot = new Vec3d(8.5 * B, 0, 5.5 * B);
             SculptCheck first = w.Sculpt.TryBegin(p, w.Raise(p, spot));
             Assert.That(first.Result, Is.EqualTo(SculptResult.Valid));
-            w.Step(2);
+            w.Step(2 * SimTime.Per60);
             Assert.That(w.Sculpt.TryBegin(p, w.Raise(p, spot)).Result, Is.EqualTo(SculptResult.Busy), "second notch queues on the moving piece");
             w.Step(first.WindupTicks - 2);
             Assert.That(w.TopAt(spot.X, spot.Z), Is.EqualTo(B).Within(1e-9));
@@ -325,13 +326,13 @@ namespace Sculpt.Core.Tests.Pieces
             var q = w.AddPlayer(2, 2, 5, 0, 7);
             var a = w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East);
             Assert.That(w.Sculpt.TryBegin(p, a).Result, Is.EqualTo(SculptResult.Valid));
-            w.Step(7);
+            w.Step(7 * SimTime.Per60);
             var b = w.Move(q, new Vec3d(8.4, 0.6, 7.2), Dir.East);
             SculptCheck locked = w.Sculpt.TryBegin(q, b);
             Assert.That(locked.Result, Is.EqualTo(SculptResult.Locked));
             Assert.That(w.Sculpt.BarOf(2).Value, Is.EqualTo(SculptConfig.BarMax), "locked rejection is free");
             Assert.That(w.Sculpt.HasBufferedConfirm(2), Is.True);
-            w.Step(5);
+            w.Step(5 * SimTime.Per60);
             Assert.That(w.Sculpt.HasBufferedConfirm(2), Is.False, "dropped when the target is gone");
         }
 
@@ -341,11 +342,11 @@ namespace Sculpt.Core.Tests.Pieces
             var (w, p) = WallWorld();
             var q = w.AddPlayer(2, 2, 5, 0, 7);
             Assert.That(w.Sculpt.TryBegin(p, w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East)).Result, Is.EqualTo(SculptResult.Valid));
-            w.Step(2);
+            w.Step(2 * SimTime.Per60);
             w.Sculpt.TryBegin(q, w.Move(q, new Vec3d(8.4, 0.6, 7.2), Dir.East));
-            w.Step(4);
+            w.Step(4 * SimTime.Per60);
             Assert.That(w.Sculpt.HasBufferedConfirm(2), Is.False);
-            w.Step(10);
+            w.Step(10 * SimTime.Per60);
             Assert.That(w.Sculpt.PendingOf(2), Is.Null, "too early: the click was dropped");
         }
 
@@ -411,8 +412,8 @@ namespace Sculpt.Core.Tests.Pieces
             SculptCheck c = w.Sculpt.TryBegin(p, a);
             Assert.That(c.Result, Is.EqualTo(SculptResult.Valid));
             w.Step(c.WindupTicks);
-            w.Step(30);
-            Assert.That(w.Sculpt.Events.Count(e => e.Type == SculptEventType.PieceFell), Is.EqualTo(4), "one level, one sub-cell per tick");
+            w.Step(30 * SimTime.Per60);
+            Assert.That(w.Sculpt.Events.Count(e => e.Type == SculptEventType.PieceFell), Is.EqualTo(4), "one level, one sub-cell per 1/60 s");
             Assert.That(w.TopAt(12.6, 12.6), Is.EqualTo(B).Within(1e-9), "the upper level came down to the floor");
             Assert.That(w.Sculpt.HasFallingPieces, Is.False);
         }
@@ -445,11 +446,11 @@ namespace Sculpt.Core.Tests.Pieces
             victim.Height = 1.1; // crouched in the gap that opens
             w.Step(c.WindupTicks);
             Assert.That(w.Inside(victim), Is.False, "the pushed-out level left room");
-            w.Step(40);
+            w.Step(40 * SimTime.Per60);
             Assert.That(w.Inside(victim), Is.False, "never crushed");
             Assert.That(w.Sculpt.HasFallingPieces, Is.True, "still waiting above");
             w.Sculpt.RemovePlayer(2);
-            w.Step(40);
+            w.Step(40 * SimTime.Per60);
             Assert.That(w.Sculpt.HasFallingPieces, Is.False);
         }
 
@@ -461,7 +462,7 @@ namespace Sculpt.Core.Tests.Pieces
             var a = w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East, reinforce: true);
             SculptCheck c = w.Sculpt.TryBegin(p, a);
             Assert.That(c.Result, Is.EqualTo(SculptResult.Valid));
-            Assert.That(c.WindupTicks, Is.EqualTo(21));
+            Assert.That(c.WindupTicks, Is.EqualTo(21 * SimTime.Per60));
             Assert.That(c.Cost, Is.EqualTo(w.Config.ScaledCost(500, c.Size) + 1500));
             w.Step(c.WindupTicks);
             PieceInfo info = w.Sculpt.Pieces.Get(c.PieceId);
@@ -474,7 +475,7 @@ namespace Sculpt.Core.Tests.Pieces
             Assert.That(e.Result, Is.EqualTo(SculptResult.Valid));
             Assert.That(e.EnemyReinforced, Is.True);
             Assert.That(e.Cost, Is.EqualTo(w.Config.ScaledCost(500, e.Size) * 2));
-            Assert.That(e.WindupTicks, Is.EqualTo(24));
+            Assert.That(e.WindupTicks, Is.EqualTo(24 * SimTime.Per60));
             Assert.That(e.LocksGun, Is.True, "attacking an enemy piece locks the gun");
             w.Step(e.WindupTicks);
             Assert.That(info.IsReinforced(w.Sculpt.Tick), Is.False);
@@ -524,7 +525,7 @@ namespace Sculpt.Core.Tests.Pieces
                 var q = w.AddPlayer(2, 2, 9, 0, 9);
                 w.Sculpt.TryBegin(p, w.Move(p, new Vec3d(8.4, 0.6, 6.6), Dir.East));
                 w.Sculpt.TryBegin(q, w.Sink(q, new Vec3d(11.5 * B, 0, 9.5 * B)));
-                w.Step(60);
+                w.Step(60 * SimTime.Per60);
                 return w.Grid.Hash();
             }
             Assert.That(Run(), Is.EqualTo(Run()));
@@ -557,7 +558,7 @@ namespace Sculpt.Core.Tests.Pieces
             w.Step(c.WindupTicks);
             Assert.That(w.Sculpt.Thrown.Count, Is.EqualTo(1));
             Assert.That(w.Grid.Get(a.Target), Is.EqualTo(SubId.Empty), "gap left at launch");
-            w.Step(120);
+            w.Step(120 * SimTime.Per60);
             Assert.That(w.Sculpt.Thrown.Count, Is.Zero);
             var impact = w.Sculpt.Events.Single(e => e.Type == SculptEventType.ThrowImpact);
             Assert.That(impact.Point.X, Is.InRange(14 * B - 2.0, 14 * B), "broke on the far wall");
@@ -606,7 +607,7 @@ namespace Sculpt.Core.Tests.Pieces
             Assert.That(c.Result, Is.EqualTo(SculptResult.Valid));
             w.Step(c.WindupTicks);
             Assert.That(rider.Kick.X, Is.GreaterThan(1.0), "pushed along the throw");
-            w.Step(5);
+            w.Step(5 * SimTime.Per60);
             Assert.That(w.Sculpt.Events.Any(e => e.Type == SculptEventType.ThrowHit && e.PlayerId == 2), Is.False, "never hits its own rider at launch");
         }
 

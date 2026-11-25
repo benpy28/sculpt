@@ -43,6 +43,9 @@ namespace Sculpt.Game.World
         public static readonly Color Clay = new Color(0.78f, 0.56f, 0.42f);
         public static readonly Color ClayDamaged = new Color(0.71f, 0.51f, 0.38f);
         public static readonly Color ClayRamp = new Color(0.84f, 0.64f, 0.50f);
+        /// <summary>Door leaves: dark timber, so a weak way in reads at a glance against brick.</summary>
+        public static readonly Color Wood = new Color(0.42f, 0.29f, 0.17f);
+        public static readonly Color WoodDamaged = new Color(0.33f, 0.22f, 0.13f);
 
         /// <summary>The colour debris from a tile in this state takes.</summary>
         public static Color DebrisColour(TileState s) => s == TileState.Patched ? PatchCement : s == TileState.Reinforced ? SteelBand : Brick;
@@ -56,6 +59,7 @@ namespace Sculpt.Game.World
                 case TileKind.Floor:
                 case TileKind.Stair: return Clay;
                 case TileKind.Ramp: return ClayRamp;
+                case TileKind.Door: return Wood;
                 default: return Brick;
             }
         }
@@ -130,16 +134,23 @@ namespace Sculpt.Game.World
                 ulong after = c.To == TileState.Broken ? Brush.AllCells : c.Open;
                 _openFx[c.Tile] = after;
                 // Bullet marks go when the tile breaks, loses cells or is healed (a join snapshot counts too).
-                if ((c.From != c.To && c.To != TileState.Damaged) || (after & ~before) != 0 || c.Cause == TileCause.Heal || c.Cause == TileCause.Reinforce)
+                if (c.To == TileState.Broken || (after & ~before) != 0 || c.Cause == TileCause.Heal || c.Cause == TileCause.Reinforce)
                     _marks?.ClearTile(c.Tile);
+                // Cells drawn round this tile changed (cracks spread by area, so its neighbours redraw too).
+                if (_tiles.HasCells(c.Tile)) { _dirty.Add(BlockOf(_tiles.World[_tiles[c.Tile].Brush])); DirtyNeighbours(c.Tile); }
                 if (c.Cause == TileCause.Server || c.Cause == TileCause.Built) continue;
                 WallTile ct = _tiles[c.Tile];
+                if (c.Cause == TileCause.Door)
+                {
+                    // One sound per door (the two leaves change together).
+                    int partner = _tiles.DoorPartner(c.Tile);
+                    if (partner < 0 || c.Tile < partner) PlayDoor(_tiles.BoundsOf(c.Tile), c.To == TileState.DoorOpen);
+                    continue;
+                }
                 if (_tiles.HasCells(c.Tile))
                 {
                     // Blast holes: chunks and dust from exactly the cells that went.
                     CellDebris(c.Tile, before, after, c.From);
-                    if (c.To == TileState.Damaged && c.From == TileState.Intact && after == before)
-                        _debris.Burst(_tiles.BoundsOf(c.Tile), ct.Facing, ct.Kind == TileKind.Wall ? BrickDamaged : ClayDamaged, 5, false);
                     continue;
                 }
                 Aabb b = _tiles.BoundsOf(c.Tile);
@@ -147,13 +158,14 @@ namespace Sculpt.Game.World
                 bool thin = ct.Kind == TileKind.Frame; // frame pieces are small: fewer chunks
                 if (c.To == TileState.Broken) _debris.Burst(b, facing, DebrisColour(ct.Kind, c.From), thin ? 4 : 16, !thin);
                 else if (c.To == TileState.Damaged && c.From == TileState.Intact)
-                    _debris.Burst(b, facing, ct.Kind == TileKind.Wall ? BrickDamaged : ClayDamaged, 5, false);
+                    _debris.Burst(b, facing, ct.Kind == TileKind.Wall ? BrickDamaged : ct.Kind == TileKind.Door ? WoodDamaged : ClayDamaged, 5, false);
             }
             _tiles.Changes.Clear();
-            if (_tiles.Revision == _tilesRev) return;
+            if (_tiles.Revision == _tilesRev && _dirty.Count == 0) return;
             _tilesRev = _tiles.Revision;
             for (int i = 0; i < _tiles.Count; i++)
             {
+                if (_tiles.HasCells(i) && _look[i] != -1) continue; // walls and floors redraw from their changes (above)
                 int look = LookOf(_tiles[i]);
                 ulong open = _tiles[i].Open;
                 if (look == _look[i] && open == _openSeen[i]) continue;
@@ -182,22 +194,69 @@ namespace Sculpt.Game.World
                 _tileMeshes[key] = mesh;
                 _blocks.Add(go);
             }
-            var m = new MeshBits();
+            var m = new MeshBits { Cells = true };
             if (_tilesByBlock.TryGetValue(key, out var ids))
                 foreach (int id in ids) AddTile(m, id, _tiles[id]);
             mesh.Clear();
             mesh.SetVertices(m.V);
             mesh.SetNormals(m.N);
             mesh.SetColors(m.C);
+            mesh.SetUVs(1, m.U1);
+            mesh.SetUVs(2, m.U2);
             mesh.SetTriangles(m.T, 0);
             mesh.RecalculateBounds();
         }
 
+        /// <summary>
+        /// An open door leaf has slid into the frame on its hinge side: drawn as a 12 cm strip of timber there, inside
+        /// the leaf's own box (it has no collision, so it must never be wide enough to hide anyone).
+        /// </summary>
+        private void AddOpenLeaf(MeshBits m, int id, Aabb b)
+        {
+            const double strip = 0.12;
+            bool alongX = b.Max.X - b.Min.X > b.Max.Z - b.Min.Z;
+            int partner = _tiles.DoorPartner(id);
+            Vec3d c = (b.Min + b.Max) * 0.5;
+            bool hingeLow = true; // the side away from the other leaf
+            if (partner >= 0)
+            {
+                Vec3d pc = (_tiles.BoundsOf(partner).Min + _tiles.BoundsOf(partner).Max) * 0.5;
+                hingeLow = alongX ? pc.X > c.X : pc.Z > c.Z;
+            }
+            Vec3d lo = b.Min, hi = b.Max;
+            if (alongX) { if (hingeLow) hi = new Vec3d(lo.X + strip, hi.Y, hi.Z); else lo = new Vec3d(hi.X - strip, lo.Y, lo.Z); }
+            else { if (hingeLow) hi = new Vec3d(hi.X, hi.Y, lo.Z + strip); else lo = new Vec3d(lo.X, lo.Y, hi.Z - strip); }
+            _surface = Rough;
+            AddBox(m, lo.ToUnity(), hi.ToUnity(), Wood);
+        }
+
+        private static AudioClip _doorOpen, _doorShut;
+
+        /// <summary>A wooden slide and a clack (open), or a slide and a heavier knock (shut). Generated, nothing licensed.</summary>
+        private static void PlayDoor(Aabb b, bool open)
+        {
+            if (_doorOpen == null)
+            {
+                AudioClip Make(string name, float knockAt, float knockGain, float pitch) => Audio.Synth.Make(name, 0.32f, false, (t, i) =>
+                {
+                    float slide = t < knockAt ? Audio.Synth.Noise(i, 0x51u) * 0.18f * Mathf.Sin(Mathf.PI * t / knockAt) : 0f;
+                    float k = t - knockAt;
+                    float knock = k >= 0 ? Mathf.Exp(-k * 38f) * (Mathf.Sin(2 * Mathf.PI * 140f * pitch * k) * 0.8f + Audio.Synth.Noise(i, 0x77u) * 0.35f) * knockGain : 0f;
+                    return slide + knock;
+                });
+                _doorOpen = Make("Door Open", 0.16f, 0.5f, 1.25f);
+                _doorShut = Make("Door Shut", 0.13f, 0.9f, 0.9f);
+            }
+            Vec3d c = (b.Min + b.Max) * 0.5;
+            Audio.Synth.Play(open ? _doorOpen : _doorShut, c.ToUnity(), 0.8f, 1f, true, 2f, 35f);
+        }
+
         private void AddTile(MeshBits m, int id, in WallTile t)
         {
-            if (t.State == TileState.Broken) { AddRims(m, id); return; }
-            bool holed = t.Holed;
+            if (_tiles.HasCells(id)) { AddCelledTile(m, id, t); return; } // walls and floors: by cell (BrushView.Cells)
+            if (t.State == TileState.Broken) return;
             Brush shape = _tiles.World[t.Brush];
+            if (t.State == TileState.DoorOpen) { AddOpenLeaf(m, id, shape.Bounds); return; }
             bool damaged = t.State == TileState.Damaged;
             _surface = Rough;
             switch (t.Kind)
@@ -214,94 +273,12 @@ namespace Sculpt.Game.World
                         : t.Kind == TileKind.Ramp ? ClayRamp : Clay;
                     if (t.Kind == TileKind.Stair) AddStairs(m, shape, c); else AddWedge(m, shape, c);
                     return;
-            }
-            Aabb b = shape.Bounds;
-            Vector3 lo = b.Min.ToUnity(), hi = b.Max.ToUnity();
-            bool floor = t.Kind == TileKind.Floor;
-            Color baseCol = floor ? (damaged ? ClayDamaged : Clay) : (damaged ? BrickDamaged : Brick);
-            _surface = floor ? Rough : BrickSurface;
-            if (holed)
-            {
-                // Blast holes: only the standing cells, as runs along each row (inner faces between runs never show).
-                foreach (Aabb run in shape.Solids) AddBox(m, run.Min.ToUnity(), run.Max.ToUnity(), baseCol);
-            }
-            else AddBox(m, lo, hi, baseCol);
-            _surface = Rough;
-            if (holed) AddRims(m, id);
-            Vector3 centre = (lo + hi) * 0.5f, size = hi - lo;
-            // The two big faces: across the thin axis. Walls face North (thin in z) or East (thin in x); floors face Up.
-            Vector3 n, up;
-            float half, w, h;
-            if (floor) { n = Vector3.up; up = Vector3.forward; half = size.y * 0.5f; w = size.x * 0.5f; h = size.z * 0.5f; }
-            else
-            {
-                bool thinZ = t.Facing == Dir.North;
-                n = thinZ ? Vector3.forward : Vector3.right;
-                up = Vector3.up;
-                half = (thinZ ? size.z : size.x) * 0.5f;
-                w = (thinZ ? size.x : size.z) * 0.5f;
-                h = size.y * 0.5f;
-            }
-            half += 0.004f; // just proud of each face
-            int crack = _look[id] & 3;
-            for (int side = -1; side <= 1; side += 2)
-            {
-                Vector3 fn = n * side, fc = centre + fn * half;
-                if (t.State == TileState.Patched)
-                    PatchBlob(m, id, fc, fn, up, w, h, baseCol);
-                else if (t.State == TileState.Reinforced)
-                {
-                    Panel(m, fc + up * (h * 0.55f), fn, up, 0.09f, w, SteelBand);
-                    Panel(m, fc - up * (h * 0.55f), fn, up, 0.09f, w, SteelBand);
-                    Panel(m, fc, fn, up, h, 0.09f, SteelBand);
-                }
-                if (crack > 0) AddCracks(m, id, fc + fn * 0.002f, fn, up, w, h, crack == 2 ? 6 : 3, baseCol, crack, holed);
-            }
-        }
-
-        /// <summary>A flat rectangle facing <paramref name="n"/>: half sizes along up and right.</summary>
-        private void Panel(MeshBits m, Vector3 c, Vector3 n, Vector3 up, float hu, float hr, Color col)
-        {
-            // Quad's normal is Cross(b - a, d - a): with b - a along up and d - a along right that is Cross(up, right) = n.
-            Vector3 r = Vector3.Cross(n, up).normalized * hr, u = up * hu;
-            Quad(m, c - r - u, c - r + u, c + r + u, c + r - u, col);
-        }
-
-        /// <summary>Jagged dark crack lines out from near the middle, the same for a tile every time (hashed from its id).</summary>
-        private void AddCracks(MeshBits m, int id, Vector3 c, Vector3 n, Vector3 up, float w, float h, int count, Color baseCol, int level, bool holed = false)
-        {
-            uint seed = (uint)(id * 2654435761u + 0x9E3779B9u);
-            float Rand()
-            {
-                seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
-                return (seed & 0xFFFFFF) / (float)0x1000000;
-            }
-            Vector3 r = Vector3.Cross(n, up).normalized;
-            Vector3 start = c + r * ((Rand() - 0.5f) * w * 0.5f) + up * ((Rand() - 0.5f) * h * 0.5f);
-            // A spalled crater where the cracks start (bigger when badly damaged), so damage reads from range.
-            if (!holed) // the spall would hang over the hole; a holed tile shows its damage at the hole's edge already
-            {
-                Blob(m, start - n * 0.0015f, n, 0.13f + 0.07f * level, 0.35f, 9, seed, baseCol * 0.62f);
-                Blob(m, start - n * 0.0008f, n, 0.05f + 0.03f * level, 0.4f, 7, seed + 7, baseCol * 0.38f);
-            }
-            for (int k = 0; k < count; k++)
-            {
-                float a = (k + Rand() * 0.6f) * Mathf.PI * 2f / count;
-                Vector3 p = start;
-                float len = Mathf.Min(w, h) * (0.55f + Rand() * 0.4f);
-                for (int seg = 0; seg < 3; seg++)
-                {
-                    a += (Rand() - 0.5f) * 0.9f;
-                    Vector3 dir = r * Mathf.Cos(a) + up * Mathf.Sin(a);
-                    Vector3 q = p + dir * (len / 3f);
-                    // Keep inside the face.
-                    q = c + r * Mathf.Clamp(Vector3.Dot(q - c, r), -w + 0.03f, w - 0.03f) + up * Mathf.Clamp(Vector3.Dot(q - c, up), -h + 0.03f, h - 0.03f);
-                    Vector3 across = Vector3.Cross(n, (q - p).normalized) * (0.022f - seg * 0.005f);
-                    // Holed tiles: no crack drawn across open cells (it would float in the hole).
-                    if (!holed || (!OpenAt(id, p) && !OpenAt(id, q) && !OpenAt(id, (p + q) * 0.5f)))
-                        Quad(m, p - across, q - across, q + across, p + across, Crack);
-                    p = q;
-                }
+                case TileKind.Door:
+                    AddBox(m, shape.Bounds.Min.ToUnity(), shape.Bounds.Max.ToUnity(), damaged ? WoodDamaged : Wood);
+                    return;
+                default:
+                    AddBox(m, shape.Bounds.Min.ToUnity(), shape.Bounds.Max.ToUnity(), Brick);
+                    return;
             }
         }
 
@@ -395,6 +372,9 @@ namespace Sculpt.Game.World
             public readonly List<Color> C = new List<Color>();
             public readonly List<int> T = new List<int>();
             public readonly List<Vector2> U1 = new List<Vector2>();
+            public readonly List<Vector2> U2 = new List<Vector2>();
+            /// <summary>A tile mesh: every vertex carries the cell fields (uv1, uv2; zero unless set, see BrushView.Cells).</summary>
+            public bool Cells;
             /// <summary>Colours are shade only, not linearised (the voxel shader's nature palette does the colour).</summary>
             public bool Raw;
         }
@@ -451,6 +431,7 @@ namespace Sculpt.Game.World
             int i = m.V.Count;
             m.V.Add(a); m.V.Add(b); m.V.Add(c); m.V.Add(d);
             for (int k = 0; k < 4; k++) { m.N.Add(n); m.C.Add(s); }
+            if (m.Cells) for (int k = 0; k < 4; k++) { m.U1.Add(_uv1); m.U2.Add(_uv2); }
             m.T.Add(i); m.T.Add(i + 1); m.T.Add(i + 2);
             m.T.Add(i); m.T.Add(i + 2); m.T.Add(i + 3);
         }
@@ -464,6 +445,7 @@ namespace Sculpt.Game.World
             int i = m.V.Count;
             m.V.Add(a); m.V.Add(b); m.V.Add(c);
             for (int k = 0; k < 3; k++) { m.N.Add(n); m.C.Add(s); }
+            if (m.Cells) for (int k = 0; k < 3; k++) { m.U1.Add(_uv1); m.U2.Add(_uv2); }
             m.T.Add(i); m.T.Add(i + 1); m.T.Add(i + 2);
         }
 

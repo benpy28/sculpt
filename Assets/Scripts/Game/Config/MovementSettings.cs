@@ -11,13 +11,13 @@ namespace Sculpt.Game.Config
     public sealed class MovementSettings : ScriptableObject
     {
         [Header("Speeds (m/s)")]
-        public float runSpeed = 6.4f;
-        public float sprintSpeed = 9.2f;
-        public float crouchSpeed = 3f;
+        public float runSpeed = 7f;
+        public float sprintSpeed = 10f;
+        public float crouchSpeed = 3.5f;
 
         [Header("Acceleration (m/s^2)")]
         public float groundAccel = 60f;
-        public float groundDecel = 50f;
+        public float groundDecel = 60f;
         public float overspeedDecel = 20f;
         [Range(0, 1)] public float airAccelFraction = 0.15f;
 
@@ -25,21 +25,28 @@ namespace Sculpt.Game.Config
         public float gravity = 30f;
         public float jumpApex = 1.3f;
         public float maxFallSpeed = 40f;
+        [Tooltip("Every tick count on this asset is in sixtieths of a second (the unit the design spec uses), whatever the simulation's tick rate.")]
         public int coyoteTicks = 5;
         public int jumpBufferTicks = 6;
 
         [Header("Slide")]
-        public float slideBoostSpeed = 11f;
-        public float slideFriction = 6f;
-        public float slideMaxSpeed = 15f;
-        public float slideEndSpeed = 3f;
+        [Tooltip("Off: a slide carries on at your speed (Ben). On: starting a slide kicks you up to Slide Boost Speed.")]
+        public bool slideEntryBoost = false;
+        public float slideBoostSpeed = 13f;
+        public float slideFriction = 4.5f;
+        public float slideMaxSpeed = 18f;
+        public float slideEndSpeed = 4f;
         public float slideMinStartSpeed = 5f;
         public float slideTurnRate = 1.6f;
-        public int slideBoostCooldownTicks = 72;
+        public float slideCarveTurnRate = 4.5f;
+        [Range(0, 1)] public float slideCarveLoss = 0.08f;
+        public int slideBoostCooldownTicks = 48;
         public int slideLandWindowTicks = 9;
         public float slideLandMinSpeed = 5f;
 
         [Header("Vault and mantle")]
+        public bool autoVault = false;
+        public bool holdJumpClimbs = true;
         public int vaultTicks = 8;
         public float vaultMinSpeed = 5f;
         public int mantleRiseTicks = 16;
@@ -53,6 +60,7 @@ namespace Sculpt.Game.Config
         public float mantleCancelHopSpeed = 3f;
 
         [Header("Momentum: wall kick")]
+        public bool wallKicksEnabled = false;
         public float wallKickUpSpeed = 6.5f;
         public float wallKickPush = 2.5f;
         public float wallKickMinSpeed = 6f;
@@ -62,14 +70,14 @@ namespace Sculpt.Game.Config
         public int wallKickCooldownTicks = 12;
 
         [Header("Momentum: counter-strafe brake")]
-        public float counterBrakeMinSpeed = 6.5f;
+        public float counterBrakeMinSpeed = 7f;
         public float counterBrakeDecel = 120f;
         [Range(-1, 1)] public float counterBrakeMaxDot = 0.25f;
 
         [Header("Momentum: air and hops")]
         public float airNudgeTurnRate = 0.6f;
         public float airBrakeDecel = 3f;
-        public float airSoftCapSpeed = 15f;
+        public float airSoftCapSpeed = 18f;
         public float airSoftCapDecel = 4f;
         [Range(0, 1)] public float slideHopKeep = 0.95f;
         public int slideHopChainTicks = 60;
@@ -91,35 +99,41 @@ namespace Sculpt.Game.Config
             c.Gravity = gravity;
             c.JumpApex = jumpApex;
             c.MaxFallSpeed = maxFallSpeed;
-            c.CoyoteTicks = coyoteTicks;
-            c.JumpBufferTicks = jumpBufferTicks;
+            c.CoyoteTicks = coyoteTicks * SimTime.Per60;
+            c.JumpBufferTicks = jumpBufferTicks * SimTime.Per60;
+            c.SlideEntryBoost = slideEntryBoost;
             c.SlideBoostSpeed = slideBoostSpeed;
             c.SlideFriction = slideFriction;
             c.SlideMaxSpeed = slideMaxSpeed;
             c.SlideEndSpeed = slideEndSpeed;
             c.SlideMinStartSpeed = slideMinStartSpeed;
             c.SlideTurnRate = slideTurnRate;
-            c.SlideBoostCooldownTicks = slideBoostCooldownTicks;
-            c.SlideLandWindowTicks = slideLandWindowTicks;
+            c.SlideCarveTurnRate = slideCarveTurnRate;
+            c.SlideCarveLoss = slideCarveLoss;
+            c.SlideBoostCooldownTicks = slideBoostCooldownTicks * SimTime.Per60;
+            c.SlideLandWindowTicks = slideLandWindowTicks * SimTime.Per60;
             c.SlideLandMinSpeed = slideLandMinSpeed;
-            c.VaultTicks = vaultTicks;
+            c.AutoVault = autoVault;
+            c.HoldJumpClimbs = holdJumpClimbs;
+            c.VaultTicks = vaultTicks * SimTime.Per60;
             c.VaultMinSpeed = vaultMinSpeed;
-            c.MantleRiseTicks = mantleRiseTicks;
-            c.MantleForwardTicks = mantleForwardTicks;
+            c.MantleRiseTicks = mantleRiseTicks * SimTime.Per60;
+            c.MantleForwardTicks = mantleForwardTicks * SimTime.Per60;
             c.MantleExitSpeedFraction = mantleExitSpeedFraction;
             c.VaultMaxHeight = vaultMaxHeight;
             c.MantleMaxHeight = mantleMaxHeight;
             c.MantleKeepSpeedFraction = mantleKeepSpeedFraction;
-            c.MantleCancelFromTick = mantleCancelFromTick;
+            c.MantleCancelFromTick = mantleCancelFromTick * SimTime.Per60;
             c.MantleCancelMaxRemaining = mantleCancelMaxRemaining;
             c.MantleCancelHopSpeed = mantleCancelHopSpeed;
+            c.WallKicksEnabled = wallKicksEnabled;
             c.WallKickUpSpeed = wallKickUpSpeed;
             c.WallKickPush = wallKickPush;
             c.WallKickMinSpeed = wallKickMinSpeed;
-            c.WallKickPerfectTicks = wallKickPerfectTicks;
+            c.WallKickPerfectTicks = wallKickPerfectTicks * SimTime.Per60;
             c.WallKickLateKeep = wallKickLateKeep;
             c.WallKickMaxPerAir = wallKickMaxPerAir;
-            c.WallKickCooldownTicks = wallKickCooldownTicks;
+            c.WallKickCooldownTicks = wallKickCooldownTicks * SimTime.Per60;
             c.CounterBrakeMinSpeed = counterBrakeMinSpeed;
             c.CounterBrakeDecel = counterBrakeDecel;
             c.CounterBrakeMaxDot = counterBrakeMaxDot;
@@ -128,8 +142,8 @@ namespace Sculpt.Game.Config
             c.AirSoftCapSpeed = airSoftCapSpeed;
             c.AirSoftCapDecel = airSoftCapDecel;
             c.SlideHopKeep = slideHopKeep;
-            c.SlideHopChainTicks = slideHopChainTicks;
-            c.SprintToAimTicks = sprintToAimTicks;
+            c.SlideHopChainTicks = slideHopChainTicks * SimTime.Per60;
+            c.SprintToAimTicks = sprintToAimTicks * SimTime.Per60;
             c.FallDamageFreeLevels = fallDamageFreeLevels;
             c.FallDamagePerLevel = fallDamagePerLevel;
         }

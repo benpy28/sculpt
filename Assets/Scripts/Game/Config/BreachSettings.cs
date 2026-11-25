@@ -25,16 +25,13 @@ namespace Sculpt.Game.Config
         [Tooltip("Healed tiles come back Patched with this max health.")]
         [Min(1)] public int patchedHealth = 50;
         [Min(1)] public int reinforcedHealth = 200;
+        [Tooltip("Door leaves take this many times a wall tile's damage (4: one hit of any gun or one punch). A sprint charge always goes through a door.")]
+        [Min(1)] public int doorDamageScale = 4;
 
-        [Header("Blast holes (holes follow the hit on a 19 cm cell grid, never a pixel hole or a sliver)")]
-        [Tooltip("Off: a tile that breaks goes whole (the old rule).")]
+        [Header("Walls by area (damage lands on 19 cm cells round each hit, never by tile; never a pixel hole or a sliver)")]
+        [Tooltip("Off: damage is per tile and a tile that breaks goes whole (the old rule).")]
         public bool blastHoles = true;
-        [Tooltip("Hole radius = base + per damage x the breaking hit's damage on that tile, clamped. AR 13 ~0.6 m, punch 50 ~1.15 m, point-blank pump 54 ~1.2 m.")]
-        [Min(0.2f)] public float blastRadiusBase = 0.42f;
-        [Min(0)] public float blastRadiusPerDamage = 0.0145f;
-        [Min(0.2f)] public float blastRadiusMin = 0.55f;
-        [Min(0.2f)] public float blastRadiusMax = 1.6f;
-        [Tooltip("A grenade's hole radius around the blast (m).")]
+        [Tooltip("A grenade's blast damages every cell within this radius (m).")]
         [Min(0.5f)] public float grenadeBlastRadius = 2.2f;
         [Tooltip("C4's hole radius around the charge (m).")]
         [Min(0.5f)] public float c4BlastRadius = 2.2f;
@@ -47,11 +44,22 @@ namespace Sculpt.Game.Config
         [Tooltip("A tile with less than this share of its cells left goes entirely.")]
         [Range(0, 0.9f)] public float breakBelowFraction = 0.25f;
 
-        [Header("Tile damage per bullet (pump: per pellet). Flat, no falloff.")]
-        [Min(0)] public int pumpPelletTileDamage = 6;
-        [Min(0)] public int smgTileDamage = 7;
-        [Min(0)] public int arTileDamage = 13;
-        [Min(0)] public int pistolTileDamage = 17;
+        [Header("Wall damage per bullet (pump: per pellet) to every cell within the hit radius. Flat, no falloff.")]
+        [Tooltip("Ben: the pump one-shots a wall (9 x 14 = 126; a reinforced wall, 200, takes two).")]
+        [Min(0)] public int pumpPelletTileDamage = 14;
+        [Min(0)] public int smgTileDamage = 25;
+        [Tooltip("Ben: the AR two-taps a wall (2 x 50; four on reinforced, one on patched).")]
+        [Min(0)] public int arTileDamage = 50;
+        [Min(0)] public int pistolTileDamage = 34;
+        [Header("How far round each hit the damage (cracks, and the hole the finishing hit opens) reaches, metres")]
+        [Tooltip("Pump: the hole is at least this radius round the middle of the pellets, even where none landed (Ben: no hole smaller than a chest up close). Metres.")]
+        [Range(0.2f, 1.5f)] public float pumpHitRadius = 0.65f;
+        [Tooltip("A pump shot reaches round its whole pattern, at most this far, metres (Ben: no hole much bigger than a body from range). Keep at or below 0.72.")]
+        [Range(0.3f, 1.8f)] public float pumpMaxRadius = 0.7f;
+        [Range(0.2f, 1.2f)] public float smgHitRadius = 0.35f;
+        [Range(0.2f, 1.2f)] public float arHitRadius = 0.45f;
+        [Range(0.2f, 1.2f)] public float pistolHitRadius = 0.4f;
+        [Range(0.2f, 1.2f)] public float punchHitRadius = 0.5f;
 
         [Header("Items (pick up: interact on an item; drop: hold interact)")]
         [Min(0)] public int grenadeCarry = 2;
@@ -107,7 +115,7 @@ namespace Sculpt.Game.Config
 
         [Header("Grenade launcher (slow and clunky up close, strong at range)")]
         [Tooltip("Rounds carried (a launcher pickup comes with this many).")]
-        [Min(1)] public int launcherRounds = 4;
+        [Min(1)] public int launcherRounds = 6;
         [Min(1f)] public float launcherRoundSpeed = 32f;
         [Min(0f)] public float launcherGravity = 9f;
         [Tooltip("A round that hits something before flying this far is a dud, metres.")]
@@ -129,25 +137,34 @@ namespace Sculpt.Game.Config
         [Tooltip("Reach from the eye along the crosshair, metres.")]
         [Range(1f, 3.5f)] public float punchReach = 2f;
         [Tooltip("The hit lands this long after the press, seconds.")]
-        [Range(0f, 0.4f)] public float punchHitSeconds = 0.1f;
-        [Tooltip("The whole punch, seconds: the gun can't fire and you can't punch again until it ends.")]
-        [Range(0.15f, 1.5f)] public float punchSeconds = 0.45f;
+        [Range(0f, 0.5f)] public float punchHitSeconds = 0.2f;
+        [Tooltip("The whole punch, seconds: you can't punch again until it ends.")]
+        [Range(0.15f, 1.5f)] public float punchSeconds = 0.8f;
+        [Tooltip("The gun can't fire and nothing can be thrown for this long after a punch press, seconds (at most the whole punch).")]
+        [Range(0.05f, 1.5f)] public float punchGunLockSeconds = 0.35f;
         [Min(0)] public int punchPlayerDamage = 30;
-        [Tooltip("Ben: half an unreinforced wall tile.")]
+        [Tooltip("Ben: half an unreinforced wall (two punches on a spot open it; four on reinforced).")]
         [Min(0)] public int punchTileDamage = 50;
-        [Min(0)] public int punchReinforcedTileDamage = 25;
 
-        [Header("Charge (run through Damaged or Patched tiles)")]
+        [Header("Charge (sprint through wall that has been hit; reinforced always stops you)")]
         [Tooltip("Share of top sprint speed you need to break a cracked tile by running into it.")]
         [Range(0.3f, 1.5f)] public float chargeSpeedFraction = 0.8f;
         [Tooltip("Share of your horizontal speed kept when you charge through.")]
         [Range(0.3f, 1f)] public float chargeKeep = 0.85f;
+        [Tooltip("Share of the wall in your way that must have been hit (0.4: one AR bullet at chest height lets a sprint through).")]
+        [Range(0.05f, 1f)] public float chargeHitShare = 0.4f;
+        [Tooltip("Off (balance pass): a freshly healed spot stops a sprint until it is hit again. On: every patched cell counts as hit (the old rule).")]
+        public bool chargePatchedCounts = false;
         [Tooltip("You must hit the wall within this many degrees of head-on.")]
         [Range(10f, 89f)] public float chargeMaxAngleDegrees = 60f;
 
-        [Header("Healing (the sculpt key: aim at a Damaged or Broken tile, click; hold Reinforce to reinforce)")]
-        [Tooltip("How long a heal takes, seconds. The hole stays open until it finishes.")]
-        [Range(0.1f, 3f)] public float healSeconds = 0.8f;
+        [Header("Healing (Q heals what you aim at, Alt + Q reinforces; by area: a chunk round the aim, or a whole person-sized hole)")]
+        [Tooltip("How long a heal takes, seconds (Ben: almost instantly). The hole stays open until it finishes.")]
+        [Range(0.05f, 3f)] public float healSeconds = 0.2f;
+        [Tooltip("A heal covers everything within this distance of where you aim, metres.")]
+        [Range(0.4f, 2f)] public float healRadius = 0.95f;
+        [Tooltip("A hole up to this size (m^2) is healed whole in one go (a broken tile is 2.25).")]
+        [Range(0.5f, 6f)] public float smallHoleArea = 2.3f;
         [Tooltip("How long reinforcing takes, seconds.")]
         [Range(0.1f, 3f)] public float reinforceSeconds = 0.8f;
         [Tooltip("Bar a heal costs, percent.")]
@@ -171,6 +188,17 @@ namespace Sculpt.Game.Config
         [Range(0.5f, 20f)] public float dummyHealDelaySeconds = 3f;
         [Tooltip("Also heal cracked tiles (off: leaves them so you can practise charging through).")]
         public bool dummyHealsCracks = false;
+
+        [Header("Ping (1v1 anti-hiding: no contact for a while shows both players to each other through walls)")]
+        public bool pingEnabled = true;
+        [Tooltip("No damage between you, no clear line between you and not within the contact range for this long fires the ping, seconds.")]
+        [Range(3f, 60f)] public float pingQuietSeconds = 10f;
+        [Tooltip("How long both stay revealed through walls, seconds.")]
+        [Range(0.5f, 10f)] public float pingRevealSeconds = 3f;
+        [Tooltip("Being this close counts as contact (you can hear each other), metres. 0: only damage and sight count.")]
+        [Range(0f, 40f)] public float pingContactRange = 10f;
+        [Tooltip("Once it fires, the ping repeats every reveal until you are within this distance of each other or one hurts the other, metres. 0: one reveal, no repeats.")]
+        [Range(0f, 100f)] public float pingStopRange = 30f;
 
         public void ApplyTo(DummyConfig d)
         {
@@ -225,11 +253,15 @@ namespace Sculpt.Game.Config
             l.MoveSpeedScale = launcherMoveSpeedScale;
         }
 
+        /// <summary>Quick heal (one press, no sculpt mode) unless the parked block moves are on.</summary>
+        public void ApplyTo(HandConfig h) => h.QuickHeal = !blockMovesEnabled;
+
         public void ApplyTo(PunchConfig p)
         {
             p.Reach = punchReach;
-            p.TotalTicks = Mathf.Max(1, Mathf.RoundToInt(punchSeconds * SimTime.TicksPerSecond));
-            p.HitTicks = Mathf.Clamp(Mathf.RoundToInt(punchHitSeconds * SimTime.TicksPerSecond), 0, p.TotalTicks - 1);
+            p.TotalSeconds = punchSeconds;
+            p.GunLockSeconds = punchGunLockSeconds;
+            p.HitSeconds = Mathf.Min(punchHitSeconds, punchSeconds - 1f / SimTime.TicksPerSecond);
             p.PlayerDamage = punchPlayerDamage;
         }
 
@@ -251,15 +283,18 @@ namespace Sculpt.Game.Config
             b.DamagedBelowFraction = damagedBelowFraction;
             b.PatchedHealth = patchedHealth;
             b.ReinforcedHealth = reinforcedHealth;
+            b.DoorDamageScale = doorDamageScale;
             b.PumpPelletTileDamage = pumpPelletTileDamage;
             b.SmgTileDamage = smgTileDamage;
             b.ArTileDamage = arTileDamage;
             b.PistolTileDamage = pistolTileDamage;
             b.BlastHoles = blastHoles;
-            b.BlastRadiusBase = blastRadiusBase;
-            b.BlastRadiusPerDamage = blastRadiusPerDamage;
-            b.BlastRadiusMin = blastRadiusMin;
-            b.BlastRadiusMax = Mathf.Max(blastRadiusMin, blastRadiusMax);
+            b.PumpHitRadius = pumpHitRadius;
+            b.PumpMaxRadius = Mathf.Max(pumpHitRadius, pumpMaxRadius);
+            b.SmgHitRadius = smgHitRadius;
+            b.ArHitRadius = arHitRadius;
+            b.PistolHitRadius = pistolHitRadius;
+            b.PunchHitRadius = punchHitRadius;
             b.GrenadeBlastRadius = grenadeBlastRadius;
             b.C4BlastRadius = c4BlastRadius;
             b.LauncherBlastRadius = launcherBlastRadius;
@@ -270,18 +305,26 @@ namespace Sculpt.Game.Config
             b.C4TileDamage = c4TileDamage;
             b.LauncherTileDamage = launcherTileDamage;
             b.PunchTileDamage = punchTileDamage;
-            b.PunchReinforcedTileDamage = punchReinforcedTileDamage;
             b.ChargeSpeedFraction = chargeSpeedFraction;
             b.ChargeKeep = chargeKeep;
+            b.ChargeHitShare = chargeHitShare;
+            b.ChargePatchedCounts = chargePatchedCounts;
             b.ChargeMaxAngleDegrees = chargeMaxAngleDegrees;
-            b.HealTicks = Ticks(healSeconds);
-            b.ReinforceTicks = Ticks(reinforceSeconds);
+            b.HealSeconds = healSeconds;
+            b.ReinforceSeconds = reinforceSeconds;
+            b.HealRadius = healRadius;
+            b.SmallHoleArea = smallHoleArea;
             b.HealCost = Pct(healCostPercent);
             b.ReinforceCost = Pct(reinforceCostPercent);
             b.HealRange = sculptRange;
             b.HealLeash = healLeash;
             b.BarRefillPerSecond = Pct(barRefillPercentPerSecond);
             b.BarPer10Damage = Pct(barPercentPer10Damage);
+            b.Ping.Enabled = pingEnabled;
+            b.Ping.QuietSeconds = pingQuietSeconds;
+            b.Ping.RevealSeconds = pingRevealSeconds;
+            b.Ping.ContactRange = pingContactRange;
+            b.Ping.StopRange = pingStopRange;
         }
     }
 }

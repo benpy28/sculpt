@@ -45,7 +45,7 @@ namespace Sculpt.Core
                 SizeX = ChunksAcross * SubGrid.ChunkSize * SubGrid.SubSize,
                 SizeZ = ChunksAcross * SubGrid.ChunkSize * SubGrid.SubSize,
             };
-            info.Course = MovementCourse.Build(w, 6, 6);
+            info.Course = MovementCourse.Build(w, 4, 4);
             double mid = info.SizeX / 2;
             info.TestWallA = TestWall(w.Tiles, mid - 6, 50);
             info.TestWallB = TestWall(w.Tiles, mid - 6, info.SizeZ - 50 - w.Tiles.Config.TileThickness);
@@ -70,7 +70,7 @@ namespace Sculpt.Core
             foreach (double z in new[] { 22.0, info.SizeZ - 22 })
             {
                 info.ItemSpawns.Add(new GroundItem { Kind = Item.C4, Count = 2, Position = new Vec3d(spawnX - 9, 0, z) });
-                info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 4, Position = new Vec3d(spawnX + 9, 0, z) });
+                info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 6, Position = new Vec3d(spawnX + 9, 0, z) });
             }
             return w;
         }

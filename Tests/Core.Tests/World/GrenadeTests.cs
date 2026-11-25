@@ -30,7 +30,7 @@ namespace Sculpt.Core.Tests.World
         private static MotorState Settled(ITerrain t, Vec3d feet)
         {
             var s = MotorState.At(feet);
-            for (int k = 1; k <= 30; k++)
+            for (int k = 1; k <= 30 * SimTime.Per60; k++)
             {
                 s.Tick = k - 1;
                 PlayerMovement.Step(t, Mc, ref s, default, null);
@@ -66,8 +66,8 @@ namespace Sculpt.Core.Tests.World
             MotorState s = Settled(t, new Vec3d(20, 0, 4));
             int t0 = s.Tick + 1;
             int ready = t0 + Mc.Hand.GrenadeDrawTicks;
-            var ev = Run(t, ref s, 120, k =>
-                Throw(k, k == ready || k == ready + 2 || k == ready + Gc.ThrowRecoveryTicks + 1, 0, -20, (byte)(k == t0 ? 5 : 0)));
+            var ev = Run(t, ref s, 120 * SimTime.Per60, k =>
+                Throw(k, k == ready || k == ready + 2 * SimTime.Per60 || k == ready + Gc.ThrowRecoveryTicks + 1, 0, -20, (byte)(k == t0 ? 5 : 0)));
             var thrown = ev.FindAll(e => e.Type == GrenadeEventType.Thrown);
             Assert.That(thrown.Count, Is.EqualTo(2), "the press 2 ticks after the first is inside the recovery and is dropped");
             Assert.That(thrown[1].Tick - thrown[0].Tick, Is.EqualTo(Gc.ThrowRecoveryTicks + 1));
@@ -83,7 +83,7 @@ namespace Sculpt.Core.Tests.World
             MotorState s = Settled(t, new Vec3d(20, 0, 4));
             int t0 = s.Tick + 1;
             int ready = t0 + Mc.Hand.GrenadeDrawTicks;
-            var ev = Run(t, ref s, 40, k => Throw(k, k == ready - 3, 0, 0, (byte)(k == t0 ? 5 : 0)));
+            var ev = Run(t, ref s, 40 * SimTime.Per60, k => Throw(k, k == ready - 3 * SimTime.Per60, 0, 0, (byte)(k == t0 ? 5 : 0)));
             var thrown = ev.FindAll(e => e.Type == GrenadeEventType.Thrown);
             Assert.That(thrown.Count, Is.EqualTo(1));
             Assert.That(thrown[0].Tick, Is.EqualTo(ready));
@@ -94,7 +94,7 @@ namespace Sculpt.Core.Tests.World
         {
             CompositeTerrain t = Arena(out _, out _);
             MotorState s = Settled(t, new Vec3d(20, 0, 4));
-            var ev = Run(t, ref s, 60, k => Throw(k, k % 10 == 0, 0, 0));
+            var ev = Run(t, ref s, 60 * SimTime.Per60, k => Throw(k, k % 10 == 0, 0, 0));
             Assert.That(ev, Is.Empty, "the pump is out");
             Assert.That(s.Hand.Bag.Grenades, Is.EqualTo(2));
         }
@@ -105,7 +105,7 @@ namespace Sculpt.Core.Tests.World
             CompositeTerrain t = Arena(out _, out _);
             MotorState s = Settled(t, new Vec3d(9, 0, 7));
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.GrenadeDrawTicks;
-            var ev = Run(t, ref s, 80, k => Throw(k, k == ready, 0, 0, (byte)(k == t0 ? 5 : 0)));
+            var ev = Run(t, ref s, 80 * SimTime.Per60, k => Throw(k, k == ready, 0, 0, (byte)(k == t0 ? 5 : 0)));
             GrenadeEvent boom = ev.Find(e => e.Type == GrenadeEventType.Exploded);
             Assert.That(boom.Tick, Is.GreaterThan(0));
             Assert.That(boom.Position.Z, Is.EqualTo(12 - 0.05).Within(1e-6), "just in front of the wall face");
@@ -132,7 +132,7 @@ namespace Sculpt.Core.Tests.World
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.GrenadeDrawTicks;
             double peak = 0, topVy = 0;
             var ev = new List<GrenadeEvent>();
-            for (int k = t0; k < t0 + 120; k++)
+            for (int k = t0; k < t0 + 120 * SimTime.Per60; k++)
             {
                 InputCmd c = InputCmd.Quantize(Throw(k, k == ready, 0, 89, (byte)(k == t0 ? 5 : 0)));
                 c.Tick = k;

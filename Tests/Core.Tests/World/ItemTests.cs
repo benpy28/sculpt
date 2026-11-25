@@ -385,9 +385,9 @@ namespace Sculpt.Core.Tests.World
             {
                 if (start < 0) start = t;
                 var i = new SculptTickInput();
-                if (t == start + 30) i.Hand.WeaponKey = 3;           // AR out
-                if (t == start + 80) i.Hand.Drop = true;              // drop it in front
-                if (t == start + 160 && p.Client.Items.Count > 0)     // look down at it and pick it back up
+                if (t == start + 30 * SimTime.Per60) i.Hand.WeaponKey = 3;           // AR out
+                if (t == start + 80 * SimTime.Per60) i.Hand.Drop = true;              // drop it in front
+                if (t == start + 160 * SimTime.Per60 && p.Client.Items.Count > 0)     // look down at it and pick it back up
                 {
                     i.Hand.Pickup = true;
                     i.Hand.PickId = pickId = p.Client.Items[0].Id;

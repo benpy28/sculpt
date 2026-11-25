@@ -19,6 +19,7 @@ namespace Sculpt.Core.Net
         Tiles = 8,     // server -> client, reliable: wall tile changes of one tick, or every changed tile for a late joiner
         Items = 9,     // server -> client, reliable: the whole list of items on the ground, whenever it changes (and on join)
         Match = 10,    // server -> client, reliable: match phase, timer and scores, whenever they change (and on join)
+        Reveal = 11,   // server -> client, reliable: an enemy shown through walls by the anti-hiding ping (only to those two players, only when it starts or is cancelled)
     }
 
     public struct WelcomeMsg
@@ -78,7 +79,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 20; // 16 latency (snapshot hold time), 18 blast holes, 19 C4/launcher/per-slot counts/four flights, 20 all of them merged for the friend demo
+        public const byte Version = 29; // 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
@@ -233,6 +234,7 @@ namespace Sculpt.Core.Net
             if (s.Grounded) f |= 4;
             if (s.LandSlideUsed) f |= 8;
             if (s.Braking) f |= 16;
+            if (s.Carving) f |= 32;
             w.U8(f);
             w.Vec(s.GroundNormal);
             w.I32(s.Tick);
@@ -329,6 +331,7 @@ namespace Sculpt.Core.Net
             s.Grounded = (f & 4) != 0;
             s.LandSlideUsed = (f & 8) != 0;
             s.Braking = (f & 16) != 0;
+            s.Carving = (f & 32) != 0;
             s.GroundNormal = r.Vec();
             s.Tick = r.I32();
             s.LastGroundedTick = r.I32();
@@ -409,7 +412,7 @@ namespace Sculpt.Core.Net
                    a.LandVelocity.Equals(b.LandVelocity) && a.AirPeakY.Equals(b.AirPeakY) && a.UphillTicks == b.UphillTicks && a.ActionTick == b.ActionTick &&
                    a.ActionStartY.Equals(b.ActionStartY) && a.ActionTargetY.Equals(b.ActionTargetY) &&
                    a.ActionForward.Equals(b.ActionForward) && a.ActionKeepVelocity.Equals(b.ActionKeepVelocity) &&
-                   a.ShootReadyTick == b.ShootReadyTick && a.Braking == b.Braking &&
+                   a.ShootReadyTick == b.ShootReadyTick && a.Braking == b.Braking && a.Carving == b.Carving &&
                    a.WallHitTick == b.WallHitTick && a.WallHitSpeed.Equals(b.WallHitSpeed) && a.WallHitNormal.Equals(b.WallHitNormal) &&
                    a.WallKicks == b.WallKicks && a.LastWallKickTick == b.LastWallKickTick && a.LastWallKickNormal.Equals(b.LastWallKickNormal) && a.LastSlideJumpTick == b.LastSlideJumpTick &&
                    a.Hand.Equals(b.Hand) && a.Weapon.Equals(b.Weapon) &&

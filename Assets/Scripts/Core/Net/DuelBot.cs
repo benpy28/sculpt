@@ -9,7 +9,7 @@ namespace Sculpt.Core.Net
     public sealed class DuelBotConfig
     {
         /// <summary>The bot acts on what it saw or heard this many ticks ago (12 = 200 ms).</summary>
-        public int ReactionTicks = 12;
+        public int ReactionTicks = 12 * SimTime.Per60;
         /// <summary>Fastest turn, degrees per second.</summary>
         public double TurnDegPerSec = 360;
         /// <summary>Share of the remaining aim error closed each tick (smooth, so tracking a strafing target lags a little).</summary>
@@ -22,7 +22,7 @@ namespace Sculpt.Core.Net
         /// <summary>Share of the recoil it pulls down against.</summary>
         public double RecoilComp = 0.6;
         /// <summary>Extra random wait before the first shot at a newly seen target (on top of the reaction time).</summary>
-        public int FirstShotDelayMaxTicks = 9;
+        public int FirstShotDelayMaxTicks = 9 * SimTime.Per60;
         /// <summary>It only sees inside this horizontal cone around its view (like a screen plus a little side vision).</summary>
         public double ViewConeDeg = 110;
         /// <summary>Hears gunshots this far away, and running or sprinting footsteps this far.</summary>
@@ -39,9 +39,9 @@ namespace Sculpt.Core.Net
             switch (level)
             {
                 case BotLevel.Easy:
-                    return new DuelBotConfig { ReactionTicks = 18, TurnDegPerSec = 220, AimGain = 0.13, WobbleDeg = 2.4, Lead = 0.55, RecoilComp = 0.3, FirstShotDelayMaxTicks = 18, ViewConeDeg = 95, HeadChance = 0, StrafeMin = 0.6, StrafeMax = 1.4, FightHopChance = 0 };
+                    return new DuelBotConfig { ReactionTicks = 18 * SimTime.Per60, TurnDegPerSec = 220, AimGain = 0.13, WobbleDeg = 2.4, Lead = 0.55, RecoilComp = 0.3, FirstShotDelayMaxTicks = 18 * SimTime.Per60, ViewConeDeg = 95, HeadChance = 0, StrafeMin = 0.6, StrafeMax = 1.4, FightHopChance = 0 };
                 case BotLevel.Hard:
-                    return new DuelBotConfig { ReactionTicks = 10, TurnDegPerSec = 540, AimGain = 0.28, WobbleDeg = 0.7, Lead = 0.95, RecoilComp = 0.85, FirstShotDelayMaxTicks = 5, ViewConeDeg = 120, HeadChance = 0.25, StrafeMin = 0.25, StrafeMax = 0.7, FightHopChance = 0.01 };
+                    return new DuelBotConfig { ReactionTicks = 10 * SimTime.Per60, TurnDegPerSec = 540, AimGain = 0.28, WobbleDeg = 0.7, Lead = 0.95, RecoilComp = 0.85, FirstShotDelayMaxTicks = 5 * SimTime.Per60, ViewConeDeg = 120, HeadChance = 0.25, StrafeMin = 0.25, StrafeMax = 0.7, FightHopChance = 0.01 };
                 default:
                     return new DuelBotConfig();
             }
@@ -62,15 +62,15 @@ namespace Sculpt.Core.Net
         private struct Obs
         {
             public int Tick;
-            public bool Seen, Heard;
-            public Vec3d Pos, Vel, HeardPos;
+            public bool Seen, Heard, Pinged;
+            public Vec3d Pos, Vel, HeardPos, PingPos;
             public double Height;
         }
 
         public readonly DuelBotConfig Config;
         public readonly BotNav Nav;
         private readonly Random _rng;
-        private readonly Obs[] _ring = new Obs[64];
+        private readonly Obs[] _ring = new Obs[64 * SimTime.Per60];
 
         // Aim (what the bot is trying to look at, before recoil compensation and wobble).
         private double _yaw;
@@ -86,6 +86,9 @@ namespace Sculpt.Core.Net
         private int _lastSeenTick = int.MinValue / 2;
         private Vec3d _lastHeardPos;
         private int _lastHeardTick = int.MinValue / 2;
+        // The anti-hiding ping: where the server showed the enemy through walls (a person sees the same marker).
+        private Vec3d _pingPos;
+        private int _pingTick = int.MinValue / 2;
         private int _lastDamage;
 
         // Movement.
@@ -114,6 +117,8 @@ namespace Sculpt.Core.Net
         public bool Engaged => _engaged;
         public bool Firing => _firedLast;
         public int LastSeenTick => _lastSeenTick;
+        /// <summary>The tick of the newest ping it acted on (where the server showed the enemy through walls).</summary>
+        public int LastPingTick => _pingTick;
         public IReadOnlyList<int> Path => _path;
 
         public DuelBot(BotNav nav, DuelBotConfig config = null, int seed = 1)
@@ -154,7 +159,7 @@ namespace Sculpt.Core.Net
                 _path.Clear();
                 _hasRoam = false;
                 _lastDamage = s.Damage;
-                _lastSeenTick = _lastHeardTick = int.MinValue / 2;
+                _lastSeenTick = _lastHeardTick = _pingTick = int.MinValue / 2;
                 _stuckFrom = s.Position;
                 _stuckCheck = tick;
             }
@@ -181,8 +186,9 @@ namespace Sculpt.Core.Net
             }
             else _engaged = false;
             if (p.Heard) { _lastHeardPos = p.HeardPos; _lastHeardTick = p.Tick; }
+            if (p.Pinged) { _pingPos = p.PingPos; _pingTick = p.Tick; }
 
-            bool recentlySeen = tick - _lastSeenTick < 90;
+            bool recentlySeen = tick - _lastSeenTick < 90 * SimTime.Per60;
             double dist = recentlySeen ? (_lastSeenPos - s.Position).Length : 30;
 
             // ---- Aim.
@@ -191,11 +197,13 @@ namespace Sculpt.Core.Net
             double gain = Config.AimGain;
             Vec3d aimAt = default;
             bool aimEnemy = false;
+            double aimUp = p.Height * 0.6; // the height it aims at on the target (chest, or the head)
             if (_engaged)
             {
                 double ahead = Config.ReactionTicks / (double)SimTime.TicksPerSecond * Config.Lead;
                 double h = p.Height;
                 double up = _aimHead ? h - 0.18 : h * 0.62 + _aimHeightOffset;
+                aimUp = up;
                 aimAt = p.Pos + p.Vel.WithY(0) * ahead + new Vec3d(0, up, 0);
                 aimEnemy = true;
             }
@@ -209,25 +217,39 @@ namespace Sculpt.Core.Net
             {
                 Vec3d d = aimAt - eye;
                 wantYaw = Math.Atan2(d.X, d.Z);
+                // Its own strafing swings the target across its view; a person tracks that without thinking. The smooth
+                // aim would trail it by a steady few degrees (never firing at 9 m), so it leads its own motion as well
+                // as its tracking skill allows.
+                double r2 = d.X * d.X + d.Z * d.Z;
+                if (_engaged && r2 > 1)
+                {
+                    double rate = (d.X * s.Velocity.Z - d.Z * s.Velocity.X) / r2; // radians per second
+                    double gt = Math.Max(0.02, 1 - Math.Pow(1 - Clamp(gain, 0, 1), 1.0 / SimTime.Per60)); // the per-tick gain used below
+                    wantYaw += rate / SimTime.TicksPerSecond * (1 - gt) / gt * Config.Lead;
+                }
                 wantPitch = -Math.Asin(Math.Max(-1, Math.Min(1, d.Y / Math.Max(1e-6, d.Length)))) * 180 / Math.PI;
             }
 
             // ---- Move (and, when not fighting, look where it walks).
             Vec3d wish = Vec3d.Zero;
-            bool sprint = false, jump = false, crouch = false;
-            if (_engaged || (recentlySeen && tick - _lastSeenTick < 36))
+            bool sprint = false, jump = false, crouch = false, punch = false;
+            int openDoor = -1;
+            if (_engaged || (recentlySeen && tick - _lastSeenTick < 36 * SimTime.Per60))
                 wish = FightMove(server, s, tick, dist, ref jump);
             else
             {
                 Vec3d goal;
-                if (recentlySeen || tick - _lastSeenTick < 600) goal = _lastSeenPos;
-                else if (tick - _lastHeardTick < 600) goal = _lastHeardPos;
+                // A ping newer than its last sighting: go where it was shown (it still has to find and see them to fight).
+                if (!recentlySeen && _pingTick > _lastSeenTick && tick - _pingTick < 600 * SimTime.Per60) goal = _pingPos;
+                else if (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60) goal = _lastSeenPos;
+                else if (tick - _lastHeardTick < 600 * SimTime.Per60) goal = _lastHeardPos;
                 else goal = RoamGoal(s.Position);
                 wish = FollowPath(s, goal, tick, ref jump, out Vec3d lookAt, out bool arrived);
                 if (arrived)
                 {
                     // Nothing here: forget it and look elsewhere.
-                    if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
+                    if (goal.Equals(_pingPos)) _pingTick = int.MinValue / 2;
+                    else if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
                     else if (goal.Equals(_lastHeardPos)) _lastHeardTick = int.MinValue / 2;
                     else _hasRoam = false;
                 }
@@ -239,10 +261,32 @@ namespace Sculpt.Core.Net
                     wantPitch = 0;
                     gain = 0.12;
                 }
+                // A shut door on the way: face it and open it like a person would (interact). If it won't open (someone
+                // in the doorway, or it keeps shutting), punch it down: one punch breaks a leaf.
+                if (wish.LengthSquared > 0.01 && DoorAhead(server.Grid, s, wish, mc, out Vec3d door, out int leaf))
+                {
+                    Vec3d d = door - eye;
+                    wantYaw = Math.Atan2(d.X, d.Z);
+                    wantPitch = Math.Atan2(d.Y, d.WithY(0).Length) * 180 / Math.PI;
+                    gain = 0.25;
+                    if (Math.Abs(Wrap(wantYaw - _yaw)) < 0.2 && tick - _punchTick > 30 * SimTime.Per60)
+                    {
+                        _punchTick = tick;
+                        if (leaf == _doorLeaf && _doorTries >= 2) punch = true;
+                        else
+                        {
+                            _doorTries = leaf == _doorLeaf ? _doorTries + 1 : 1;
+                            _doorLeaf = leaf;
+                            openDoor = leaf;
+                        }
+                    }
+                }
                 Unstick(s, tick, wish, ref jump);
             }
             if (tick < _jumpUntil) jump = true;
 
+            // The aim gains are tuned as "share of the error closed per sixtieth of a second": same pull at any tick rate.
+            gain = 1 - Math.Pow(1 - Clamp(gain, 0, 1), 1.0 / SimTime.Per60);
             double dyaw = Wrap(wantYaw - _yaw);
             _yaw = Wrap(_yaw + Clamp(dyaw * gain, -turnCap, turnCap));
             _pitch += Clamp((wantPitch - _pitch) * gain, -turnCap * 180 / Math.PI, turnCap * 180 / Math.PI);
@@ -251,6 +295,8 @@ namespace Sculpt.Core.Net
             // ---- Guns.
             WeaponsConfig wc = mc.Weapons;
             Hand(ref cmd, s, tick, dist, recentlySeen);
+            if (punch) cmd.Hand.Punch = true;
+            if (openDoor >= 0) { cmd.Hand.Door = true; cmd.Hand.DoorTile = openDoor; cmd.Hand.DoorOpen = true; }
             bool fire = false;
             if (_engaged && tick >= _fireOkTick && s.Hand.HasGun && !s.Hand.InSculptMode)
             {
@@ -258,12 +304,13 @@ namespace Sculpt.Core.Net
                 double range = held == Weapon.Pump ? 16 : held == Weapon.Smg ? 35 : 90;
                 // Fires when the crosshair is on where it believes the target is now (seen late, moved on by its velocity).
                 double ahead = Config.ReactionTicks / (double)SimTime.TicksPerSecond * Config.Lead;
-                Vec3d chest = p.Pos + p.Vel.WithY(0) * ahead + new Vec3d(0, p.Height * 0.6, 0);
+                // Checked against the point it aims at: a head aim checked against the chest was always ~4 degrees off at 8 m.
+                Vec3d chest = p.Pos + p.Vel.WithY(0) * ahead + new Vec3d(0, aimUp, 0);
                 double dTrue = (chest - eye).Length;
                 Vec3d look = WeaponRules.AimDir(_yaw + WobYaw(tick), _pitch + WobPitch(tick), 0, 0);
                 double err = Math.Acos(Clamp(look.Dot((chest - eye) / Math.Max(1e-6, dTrue)), -1, 1)) * 180 / Math.PI;
                 double tol = Math.Atan2(0.4, Math.Max(0.5, dTrue)) * 180 / Math.PI + 0.5 + (held == Weapon.Pump ? 2.0 : 0);
-                bool burstPause = held == Weapon.Ar && dTrue > 20 && ((tick - _fireOkTick) % 30) >= 15;
+                bool burstPause = held == Weapon.Ar && dTrue > 20 && ((tick - _fireOkTick) % (30 * SimTime.Per60)) >= 15 * SimTime.Per60;
                 fire = err < tol && dTrue < range && !burstPause && s.Weapon.UsedOf(held) < wc.Stats[(int)held].MagSize;
             }
             cmd.Move.WantsToShoot = _engaged;
@@ -335,6 +382,13 @@ namespace Sculpt.Core.Net
                 o.Pos = e.Position;
                 o.Vel = e.Velocity;
             }
+            // The ping shows them through walls to everyone it concerns, the bot included: like a sighting of where
+            // they are, but nothing to aim at (it acts on it a reaction time late and has to go and find them).
+            if (!o.Seen && server.IsRevealed(me.Id, enemy.Id))
+            {
+                o.Pinged = true;
+                o.PingPos = e.Position;
+            }
             if (!o.Seen)
             {
                 double d = to.Length;
@@ -398,12 +452,12 @@ namespace Sculpt.Core.Net
             // Empty in a fight: swap instead of reloading (pump <-> SMG).
             if (_engaged && s.Hand.HasGun && s.Weapon.UsedOf(s.Hand.Held) >= Stats(s.Hand.Held).MagSize)
                 want = s.Hand.Held == Weapon.Pump ? Weapon.Smg : Weapon.Pump;
-            if (want != cur && tick - _switchTick >= 60) { WantGun = want; _switchTick = tick; }
+            if (want != cur && tick - _switchTick >= 60 * SimTime.Per60) { WantGun = want; _switchTick = tick; }
 
             int slot = s.Hand.Bag.SlotOf(Items.Of(WantGun));
             bool holding = s.Hand.HasGun && s.Hand.Held == WantGun;
-            if (!holding && slot >= 0 && tick % 20 == 0) cmd.Hand.WeaponKey = (byte)(slot + 1);
-            else if (holding && !_engaged && !s.Weapon.Reloading && tick - _reloadTick > 60
+            if (!holding && slot >= 0 && tick % (20 * SimTime.Per60) == 0) cmd.Hand.WeaponKey = (byte)(slot + 1);
+            else if (holding && !_engaged && !s.Weapon.Reloading && tick - _reloadTick > 60 * SimTime.Per60
                      && s.Weapon.UsedOf(WantGun) * 10 >= Stats(WantGun).MagSize * 4)
             {
                 cmd.Hand.Reload = true;
@@ -443,7 +497,7 @@ namespace Sculpt.Core.Net
                 wish = dist > pref + 5 ? fwd * 0.8 + side * 0.5 : dist < pref - 2 ? side * 0.7 - fwd * 0.7 : side;
                 if (!Walkable(server.Grid, s.Position, wish)) wish = Walkable(server.Grid, s.Position, side) ? side : Vec3d.Zero;
             }
-            if (s.Grounded && dist < 8 && _rng.NextDouble() < Config.FightHopChance) jump = true;
+            if (s.Grounded && dist < 8 && _rng.NextDouble() < Config.FightHopChance / SimTime.Per60) jump = true; // the chance is per sixtieth of a second
             return wish;
         }
 
@@ -457,6 +511,34 @@ namespace Sculpt.Core.Net
             TerrainHit h = t.Raycast(new Vec3d(p.X, feet.Y + 0.4, p.Z), new Vec3d(0, -1, 0), 1.4);
             return h.Hit;
         }
+
+        /// <summary>A shut door leaf right in front along <paramref name="wish"/> (its middle, to face).</summary>
+        private bool DoorAhead(ITerrain t, in MotorState s, Vec3d wish, MovementConfig mc, out Vec3d at, out int leaf)
+        {
+            at = default;
+            leaf = -1;
+            TileWalls walls = TileWalls.Find(t);
+            if (walls == null) return false;
+            Vec3d d = wish.WithY(0).Normalized;
+            Vec3d p = s.Position + d * 0.9;
+            var box = new Aabb(new Vec3d(p.X - 0.3, s.Position.Y + 0.5, p.Z - 0.3), new Vec3d(p.X + 0.3, s.Position.Y + 1.6, p.Z + 0.3));
+            List<int> near = _doorNear ??= new List<int>();
+            walls.TilesNear(box, near);
+            foreach (int i in near)
+            {
+                WallTile tile = walls[i];
+                if (tile.Kind != TileKind.Door || TileWalls.Gone(tile.State)) continue;
+                Aabb b = walls.BoundsOf(i);
+                leaf = i;
+                at = new Vec3d((b.Min.X + b.Max.X) / 2, s.Position.Y + PlayerMovement.EyeOf(s, mc) - 0.1, (b.Min.Z + b.Max.Z) / 2);
+                return true;
+            }
+            return false;
+        }
+
+        private List<int> _doorNear;
+        private int _punchTick = int.MinValue / 2;
+        private int _doorLeaf = -1, _doorTries;
 
         private Vec3d RoamGoal(Vec3d from)
         {
@@ -489,13 +571,13 @@ namespace Sculpt.Core.Net
             Vec3d feet = s.Position;
             if ((feet - goal).HorizontalLength < 1.2 && Math.Abs(feet.Y - goal.Y) < 1.5) { arrived = true; _path.Clear(); return Vec3d.Zero; }
 
-            bool replan = _path.Count == 0 || _pathAt >= _path.Count || (goal - _pathGoal).Length > 2.5 || tick - _pathTick > 120;
+            bool replan = _path.Count == 0 || _pathAt >= _path.Count || (goal - _pathGoal).Length > 2.5 || tick - _pathTick > 120 * SimTime.Per60;
             if (!replan)
             {
                 Vec3d next = Nav.Feet(_path[_pathAt]);
                 if ((next - feet).HorizontalLength > 4 || feet.Y < next.Y - 2.2) replan = true; // fell off or got pushed
             }
-            if (replan && tick - _pathTick >= 15)
+            if (replan && tick - _pathTick >= 15 * SimTime.Per60)
             {
                 _pathTick = tick;
                 _pathGoal = goal;
@@ -507,6 +589,7 @@ namespace Sculpt.Core.Net
                     _hasRoam = false; // unreachable: pick something else
                     if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
                     if (goal.Equals(_lastHeardPos)) _lastHeardTick = int.MinValue / 2;
+                    if (goal.Equals(_pingPos)) _pingTick = int.MinValue / 2;
                 }
             }
             if (_path.Count == 0 || _pathAt >= _path.Count) { if (_path.Count > 0) arrived = true; return Vec3d.Zero; }
@@ -533,13 +616,13 @@ namespace Sculpt.Core.Net
         private void Unstick(in MotorState s, int tick, Vec3d wish, ref bool jump)
         {
             if (wish.LengthSquared < 0.01) { _stuckFrom = s.Position; _stuckCheck = tick; return; }
-            if (tick - _stuckCheck < 45) return;
+            if (tick - _stuckCheck < 45 * SimTime.Per60) return;
             bool stuck = (s.Position - _stuckFrom).HorizontalLength < 0.6;
             _stuckFrom = s.Position;
             _stuckCheck = tick;
             if (!stuck) { _stuckCount = 0; return; }
             _stuckCount++;
-            _jumpUntil = tick + 2;
+            _jumpUntil = tick + 2 * SimTime.Per60;
             _pathTick = int.MinValue / 2; // re-plan from here
             _path.Clear();
             if (_stuckCount >= 3) { _hasRoam = false; _lastSeenTick = _lastHeardTick = int.MinValue / 2; _stuckCount = 0; }

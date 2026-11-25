@@ -58,18 +58,44 @@ namespace Sculpt.Core.Tests.World
         };
 
         [Test]
-        public void Press_HitLandsAfterTheWindup_GunLockedForTheWholePunch()
+        public void Press_HitLandsAfterTheWindup_GunLockedOnlyForTheGunLock()
         {
             CompositeTerrain t = Arena(out _);
             MotorState s = Settled(t, new Vec3d(20, 0, 4));
             s = DrawnPump(t, s);
             int t0 = s.Tick + 1;
             var shots = new List<WeaponShot>();
-            var swings = Run(t, ref s, 60, k => Cmd(k == t0, k > t0 && k < t0 + Pc.TotalTicks + 10), shots);
+            var swings = Run(t, ref s, Pc.TotalTicks + 30 * SimTime.Per60, k => Cmd(k == t0, k > t0 && k < t0 + Pc.TotalTicks + 10), shots);
             Assert.That(swings.Count, Is.EqualTo(1));
             Assert.That(swings[0].Tick, Is.EqualTo(t0 + Pc.HitTicks));
-            Assert.That(shots.Count, Is.GreaterThan(0), "fire held through the punch shoots once it ends");
-            Assert.That(shots[0].Tick, Is.EqualTo(t0 + Pc.TotalTicks), "not a tick earlier");
+            Assert.That(shots.Count, Is.GreaterThan(0), "fire held through the punch shoots once the gun lock ends");
+            Assert.That(Pc.GunLockTicks, Is.EqualTo(SimTime.SecondsToTicks(0.35)), "balance pass 2026-11-25: 0.35 s, not the whole 0.8 s swing");
+            Assert.That(shots[0].Tick, Is.EqualTo(t0 + Pc.GunLockTicks), "not a tick earlier");
+        }
+
+        [Test]
+        public void AfterARespawnLateInAMatch_APunchLocksTheGunForOnlyThePunch()
+        {
+            // Ben 2026-11-25: "can't shoot for a while". A respawn restarts the motor's own tick at 0 while commands
+            // carry the server's tick; the punch (and the quick-heal lock) used the command tick, so after dying a
+            // few minutes in, one punch locked the gun for minutes.
+            CompositeTerrain t = Arena(out _);
+            MotorState s = Settled(t, new Vec3d(20, 0, 4));
+            s = DrawnPump(t, s);
+            int serverTick = 120 * 180; // three minutes in
+            var shots = new List<WeaponShot>();
+            int t0 = -1, firstShot = -1;
+            for (int k = 0; k < Pc.TotalTicks + 60 * SimTime.Per60; k++)
+            {
+                var c = InputCmd.Quantize(Cmd(k == 0, k > 0));
+                c.Tick = serverTick + k;
+                if (k == 0) t0 = c.Tick;
+                shots.Clear();
+                NetSim.Simulate(t, Mc, Nc, ref s, c, s.Position, null, shots, null, null);
+                if (shots.Count > 0 && firstShot < 0) firstShot = c.Tick;
+            }
+            Assert.That(firstShot, Is.GreaterThan(0), "fires once the punch's gun lock is over");
+            Assert.That(firstShot - t0, Is.EqualTo(Pc.GunLockTicks));
         }
 
         private static MotorState DrawnPump(ITerrain t, MotorState s)
@@ -87,7 +113,7 @@ namespace Sculpt.Core.Tests.World
             int t0 = s.Tick + 1;
             // Mid-punch press (far from the end) is dropped; a press within the buffer of the end fires on the first free tick.
             int late = t0 + Pc.TotalTicks - Pc.BufferTicks;
-            var swings = Run(t, ref s, 90, k => Cmd(k == t0 || k == t0 + 8 || k == late));
+            var swings = Run(t, ref s, 2 * Pc.TotalTicks + 30 * SimTime.Per60, k => Cmd(k == t0 || k == t0 + 8 || k == late));
             Assert.That(swings.Count, Is.EqualTo(2));
             Assert.That(swings[1].Tick - swings[0].Tick, Is.EqualTo(Pc.TotalTicks), "second punch starts the tick the first ends");
         }
@@ -143,6 +169,16 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
+        public void Timings_ArePickaxeLike_InSeconds()
+        {
+            // Ben 2026-11-25: "too spammable", a slightly longer time to land and a longer recovery.
+            var pc = new PunchConfig();
+            Assert.That(pc.HitTicks, Is.EqualTo(SimTime.SecondsToTicks(0.2)), "lands 0.2 s after the press (was 0.1)");
+            Assert.That(pc.TotalTicks, Is.EqualTo(SimTime.SecondsToTicks(0.8)), "one swing every 0.8 s (was 0.45)");
+            Assert.That(pc.BufferTicks, Is.EqualTo(SimTime.SecondsToTicks(0.1)));
+        }
+
+        [Test]
         public void SlightlyOffAim_StillHitsThePlayer_TeammateNever()
         {
             CompositeTerrain t = Arena(out TileWalls w);
@@ -156,7 +192,7 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
-        public void TileUnderTheCrosshair_TakesHalfOrAQuarterReinforced()
+        public void TileUnderTheCrosshair_TakesHalf()
         {
             CompositeTerrain t = Arena(out TileWalls w);
             var eye = new Vec3d(9, 1.62, 10.5);
@@ -165,7 +201,7 @@ namespace Sculpt.Core.Tests.World
             Assert.That(w.BoundsOf(tile).Min.Y, Is.EqualTo(1.5).Within(1e-9), "the row at eye height");
             Assert.That(PunchRules.TileDamage(TileState.Intact, w.Config), Is.EqualTo(50));
             Assert.That(PunchRules.TileDamage(TileState.Patched, w.Config), Is.EqualTo(50));
-            Assert.That(PunchRules.TileDamage(TileState.Reinforced, w.Config), Is.EqualTo(25));
+            Assert.That(PunchRules.TileDamage(TileState.Reinforced, w.Config), Is.EqualTo(50), "reinforced wall just has more health (four punches)");
             PunchRules.Resolve(t, w, Swing(new Vec3d(9, 1.62, 9.5), new Vec3d(0, 0, 1)), Pc, null, 1, false, out int far);
             Assert.That(far, Is.EqualTo(-1), "2.5 m away is out of reach");
         }

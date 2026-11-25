@@ -25,12 +25,20 @@ namespace Sculpt.Core.Tests
         private static double YawOf(Dir d) => d == Dir.North ? 0 : d == Dir.East ? Math.PI / 2 : d == Dir.South ? Math.PI : -Math.PI / 2;
         private static Vec3d DirVec(Dir d) => d == Dir.North ? new Vec3d(0, 0, 1) : d == Dir.South ? new Vec3d(0, 0, -1) : d == Dir.East ? new Vec3d(1, 0, 0) : new Vec3d(-1, 0, 0);
 
-        private MotorState Run(Vec3d at, double yaw, int ticks)
+        /// <param name="climb">Jump when stopped by something (a ledge is climbed by jumping at it since the vault
+        /// and mantle merge, Ben 2026-11-25), holding jump so an air touch climbs too.</param>
+        private MotorState Run(Vec3d at, double yaw, int ticks, bool climb = false)
         {
             MotorState s = MotorState.At(at);
             s.Tick = 1000;
-            for (int k = 0; k < 30; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw });
-            for (int k = 0; k < ticks; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw, MoveZ = 1, SprintHeld = true });
+            for (int k = 0; k < 30 * SimTime.Per60; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw });
+            bool held = false;
+            for (int k = 0; k < ticks; k++)
+            {
+                bool jump = climb && k > 10 * SimTime.Per60 && (held || (s.Grounded && s.HorizontalSpeed < 2));
+                PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw, MoveZ = 1, SprintHeld = true, JumpPressed = jump && !held, JumpHeld = jump });
+                held = jump && s.Mode != MoveMode.Ground;
+            }
             return s;
         }
 
@@ -114,7 +122,7 @@ namespace Sculpt.Core.Tests
                 Vec3d start = Lerp(s, 0, 0.5, -0.02) - DirVec(s.Rise) * 1.0;
                 start = new Vec3d(start.X, s.Bounds.Min.Y, start.Z);
                 // Stairs arrive on a floor; the roof ramps end on a 3 m walkway, so stop a step past the top.
-                int ticks = s.Kind == BrushKind.Ramp ? (int)Math.Ceiling((len + 1.5) / _c.SprintSpeed * 60) : (int)Math.Ceiling((len + 2) / _c.SprintSpeed * 60) + 30;
+                int ticks = s.Kind == BrushKind.Ramp ? (int)Math.Ceiling((len + 1.5) / _c.SprintSpeed * SimTime.TicksPerSecond) : (int)Math.Ceiling((len + 2) / _c.SprintSpeed * SimTime.TicksPerSecond) + 30 * SimTime.Per60;
                 MotorState end = Run(start, YawOf(s.Rise), ticks);
                 Assert.That(end.Position.Y, Is.EqualTo(s.Bounds.Max.Y).Within(0.05), $"ran up the {s.Kind} at {s.Bounds.Min} (ended at {end.Position})");
             }
@@ -133,11 +141,11 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
-        public void FromSpawnYouCanSprintOverTheBermAndIntoTheHall()
+        public void FromSpawnYouCanSprintOverTheBermAndIntoTheKeep()
         {
             Aabb hall = B.Buildings[0];
-            double doorX = (hall.Min.X + hall.Max.X) / 2;
-            MotorState s = Run(new Vec3d(doorX, 0, 4), 0, 60 * 6);
+            double doorX = hall.Min.X + GreyboxBlock.Column + 1.5 * GreyboxBlock.Module; // the main door (second segment)
+            MotorState s = Run(new Vec3d(doorX, 0, 4), 0, SimTime.TicksPerSecond * 6, climb: true);
             Assert.That(s.Position.Z, Is.GreaterThan(hall.Min.Z + 3), $"inside the hall (ended at {s.Position})");
         }
 
@@ -148,9 +156,91 @@ namespace Sculpt.Core.Tests
             Aabb west = B.Buildings[1], hall = B.Buildings[0];
             Aabb br = B.Bridges[2]; // after the two ramp walkways
             double z = (br.Min.Z + br.Max.Z) / 2;
-            MotorState s = Run(new Vec3d(west.Max.X - 3, west.Max.Y, z), Math.PI / 2, 180);
+            MotorState s = Run(new Vec3d(west.Max.X - 3, west.Max.Y, z), Math.PI / 2, 180 * SimTime.Per60);
             Assert.That(s.Position.X, Is.GreaterThan(hall.Min.X + 2), "across to the hall's roof");
             Assert.That(s.Position.Y, Is.EqualTo(hall.Max.Y).Within(1e-6));
+        }
+
+        /// <summary>Walks the ground (a 0.5 m grid, standing box on flat ground) from team 1's spawn without entering any
+        /// building or climbing anything. True if it reaches team 2's spawn.</summary>
+        private bool GroundWalkReachesTheOtherSpawn(ITerrain t)
+        {
+            const double cell = 0.5;
+            int n = (int)(Size / cell);
+            var seen = new bool[n, n];
+            var q = new Queue<(int, int)>();
+            (int, int) Cell(Vec3d p) => ((int)(p.X / cell), (int)(p.Z / cell));
+            bool Open(int i, int j)
+            {
+                double x = (i + 0.5) * cell, z = (j + 0.5) * cell;
+                foreach (Aabb b in B.Buildings)
+                    if (x > b.Min.X - 0.4 && x < b.Max.X + 0.4 && z > b.Min.Z - 0.4 && z < b.Max.Z + 0.4) return false;
+                var box = new Aabb(new Vec3d(x - _c.HalfWidth, 0.05, z - _c.HalfWidth), new Vec3d(x + _c.HalfWidth, _c.StandHeight, z + _c.HalfWidth));
+                return !t.BoxOverlapsSolid(box);
+            }
+            var a = Cell(_info.TeamSpawns[0][0]);
+            var goal = Cell(_info.TeamSpawns[1][0]);
+            seen[a.Item1, a.Item2] = true;
+            q.Enqueue(a);
+            while (q.Count > 0)
+            {
+                var (i, j) = q.Dequeue();
+                if (i == goal.Item1 && j == goal.Item2) return true;
+                foreach (var (di, dj) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+                {
+                    int u = i + di, v = j + dj;
+                    if (u < 0 || v < 0 || u >= n || v >= n || seen[u, v] || !Open(u, v)) continue;
+                    seen[u, v] = true;
+                    q.Enqueue((u, v));
+                }
+            }
+            return false;
+        }
+
+        [Test]
+        public void TheDivide_NothingGoesRoundTheWallLine_ButOneBreachOpensIt()
+        {
+            Assert.That(GroundWalkReachesTheOtherSpawn(_t), Is.False, "the only ways across are through a building or over the roofs");
+
+            // Break a two-tile-tall gap in the west compound wall: now you can walk straight through.
+            Aabb west = B.Buildings[1], keep = B.Buildings[0];
+            double x = (west.Max.X + keep.Min.X) / 2;
+            int broken = 0;
+            foreach (int id in B.Tiles)
+            {
+                Aabb b = _w.Tiles.BoundsOf(id);
+                if (_w.Tiles[id].Kind != TileKind.Wall || b.Min.Y > 2 || b.Min.X > x || b.Max.X < x) continue;
+                if (b.Min.Z < keep.Min.Z || b.Max.Z > keep.Max.Z || b.Min.X < west.Max.X || b.Max.X > keep.Min.X) continue;
+                _w.Tiles.Set(id, TileState.Broken, 0, TileCause.Bullet);
+                broken++;
+            }
+            Assert.That(broken, Is.EqualTo(2), "one column of the compound wall, two tiles tall");
+            Assert.That(GroundWalkReachesTheOtherSpawn(_t), Is.True, "a breach is a way across");
+        }
+
+        [Test]
+        public void ShutDoors_AreDoorLeaves_AndTheKeepThroughRouteIsLongerThanABreach()
+        {
+            Assert.That(B.Doors.Count, Is.GreaterThanOrEqualTo(10));
+            foreach (int d in B.Doors)
+            {
+                Assert.That(_w.Tiles[d].Kind, Is.EqualTo(TileKind.Door));
+                Aabb leaf = _w.Tiles.BoundsOf(d);
+                Assert.That(leaf.Max.Y - leaf.Min.Y, Is.EqualTo(3.0).Within(1e-9), "a leaf is a standing-sized opening once broken");
+            }
+            // The keep's ground floor: through the main door, the zig-zag is much longer than straight through the walls.
+            BotNav nav = DuelMap.BuildNav();
+            Aabb keep = B.Buildings[0];
+            var path = new List<int>();
+            double frontX = keep.Min.X + GreyboxBlock.Column + 1.5 * GreyboxBlock.Module;
+            int a = nav.Nearest(new Vec3d(frontX, 0, keep.Min.Z - 2));
+            int b = nav.Nearest(new Vec3d(_info.SizeX - frontX, 0, keep.Max.Z + 2));
+            Assert.That(nav.FindPath(a, b, path), Is.True);
+            double len = 0;
+            for (int i = 1; i < path.Count; i++) len += (nav.Nodes[path[i]].Feet(nav) - nav.Nodes[path[i - 1]].Feet(nav)).HorizontalLength;
+            double straight = (nav.Nodes[b].Feet(nav) - nav.Nodes[a].Feet(nav)).HorizontalLength;
+            TestContext.WriteLine($"main door to main door: {len:0} m walking, {straight:0} m straight");
+            Assert.That(len, Is.GreaterThan(straight * 1.8), "walls are in the way: breaking one is a real shortcut");
         }
 
         [Test]

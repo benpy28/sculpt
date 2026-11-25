@@ -94,7 +94,7 @@ namespace Sculpt.Core.Net
                         if (killed) OnKilled(victim, p.Id, DamageSource.Punch, false);
                     }
                     else if (tile >= 0)
-                        Walls.Damage(tile, PunchRules.TileDamage(Walls[tile].State, Walls.Config), h.Point, TileCause.Punch, p.Id);
+                        Walls.Damage(tile, PunchRules.TileDamage(Walls[tile].State, Walls.Config), h.Point, TileCause.Punch, p.Id, Walls.Config.PunchHitRadius);
                 }
                 p.Punches.Clear();
             }
@@ -142,10 +142,7 @@ namespace Sculpt.Core.Net
                     }
                     if (Walls == null) continue;
                     GrenadeRules.TilesInBlast(Walls, e.Position, gc, _blastTiles);
-                    int tileDamage = Walls.Config.BlastTileDamage(e.Kind);
-                    double holeRadius = Walls.Config.BlastHoleRadius(e.Kind);
-                    foreach (int t in _blastTiles)
-                        Walls.Damage(t, tileDamage, e.Position, TileCause.Grenade, p.Id, holeRadius);
+                    Walls.Blast(e.Position, _blastTiles, Walls.Config.BlastTileDamage(e.Kind), Walls.Config.BlastHoleRadius(e.Kind), TileCause.Grenade, p.Id);
                 }
                 p.Nades.Clear();
             }
@@ -212,7 +209,7 @@ namespace Sculpt.Core.Net
         }
 
         /// <summary>How long after an enemy last hurt you a death with no killer still counts as their kill (8 s).</summary>
-        public const int KillCreditTicks = 8 * 60;
+        public const int KillCreditTicks = (8 * 60) * SimTime.Per60;
 
         private void OnKilled(ServerPlayer victim, int killer, DamageSource source, bool headshot)
         {
@@ -221,6 +218,9 @@ namespace Sculpt.Core.Net
             // (Ben's play-test: fell on 10 health after a fight and nobody got the kill). Otherwise it is just a death.
             if ((killer == 0 || killer == victim.Id) && victim.LastHurtBy != 0 && Tick - victim.LastHurtTick <= KillCreditTicks)
                 killer = victim.LastHurtBy;
+            // In a 1v1 match every death is the other player's kill, however it happened and however long ago they last
+            // hurt you (Ben 2026-11-25: "its a 1v1 so credit the other player"). Other modes keep the 8 s rule above.
+            if ((killer == 0 || killer == victim.Id) && Match.CountsKills) killer = TheOpponent(victim);
             victim.LastHurtBy = 0;
             ServerPlayer k = killer != 0 && killer != victim.Id ? FindById(killer) : null;
             if (k != null) k.Kills++;
@@ -255,7 +255,12 @@ namespace Sculpt.Core.Net
             for (int i = 0; i < Walls.Count; i++)
             {
                 WallTile t = Walls[i];
-                if (t.Changed) all.Add(new TileChange { Tick = Tick, Tile = i, To = t.State, Health = t.Health, Cause = TileCause.Server, Open = t.Open });
+                if (t.Changed)
+                    all.Add(new TileChange
+                    {
+                        Tick = Tick, Tile = i, To = t.State, Health = t.Health, Cause = TileCause.Server, Open = t.Open,
+                        Patch = t.Patch, Steel = t.Steel, Hp = Walls.HasCells(i) ? Walls.CellHealths(i) : null,
+                    });
             }
             List<HealEvent> running = RunningHeals();
             if (all.Count == 0 && running.Count == 0) return;

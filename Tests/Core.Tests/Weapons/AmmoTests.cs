@@ -27,7 +27,7 @@ namespace Sculpt.Core.Tests.Weapons
             _s = MotorState.At(_spawn);
             _tick = 1000;
             _shots = new List<WeaponShot>();
-            Run(30, default);
+            Run(30 * SimTime.Per60, default);
             _shots.Clear();
         }
 
@@ -61,7 +61,7 @@ namespace Sculpt.Core.Tests.Weapons
         {
             Equip(Weapon.Smg);
             WeaponStats st = Of(Weapon.Smg);
-            Run(st.MagSize * 5 + 10, Hold); // far more than a magazine's worth of ticks
+            Run((st.MagSize * 6 + 10) * SimTime.Per60, Hold); // far more than a magazine's worth of ticks
             int fired = _shots.Count;
             Assert.That(fired, Is.EqualTo(st.MagSize), "a magazine and no more");
             Assert.That(_s.Weapon.Reloading, Is.True, "an empty gun starts reloading on its own");
@@ -75,7 +75,7 @@ namespace Sculpt.Core.Tests.Weapons
             Equip(Weapon.Ar);
             WeaponStats st = Of(Weapon.Ar);
             Step(Hold);
-            Run(20, default);
+            Run(20 * SimTime.Per60, default);
             Assert.That(Ammo(Weapon.Ar), Is.EqualTo(st.MagSize - 1));
             Step(default, ReloadKey);
             Assert.That(_s.Weapon.Reloading, Is.True);
@@ -83,7 +83,7 @@ namespace Sculpt.Core.Tests.Weapons
             Run(st.ReloadTicks - 2, Hold);
             Assert.That(_shots, Is.Empty, "can't fire through a magazine reload");
             Assert.That(Ammo(Weapon.Ar), Is.EqualTo(st.MagSize - 1), "not in yet");
-            Run(3, default);
+            Run(3 * SimTime.Per60, default);
             Assert.That(Ammo(Weapon.Ar), Is.EqualTo(st.MagSize));
         }
 
@@ -100,7 +100,7 @@ namespace Sculpt.Core.Tests.Weapons
         {
             Equip(Weapon.Ar);
             Step(Hold);
-            Run(20, default);
+            Run(20 * SimTime.Per60, default);
             Step(default, ReloadKey);
             Run(Of(Weapon.Ar).ReloadTicks - 10, default);
             Equip(Weapon.Pistol);
@@ -113,7 +113,7 @@ namespace Sculpt.Core.Tests.Weapons
         {
             Equip(Weapon.Smg);
             Step(Hold);
-            Run(10, default);
+            Run(10 * SimTime.Per60, default);
             Step(default, ReloadKey);
             Step(default, new HandInput { SculptToggle = true });
             Step(default);
@@ -125,7 +125,7 @@ namespace Sculpt.Core.Tests.Weapons
         {
             WeaponStats st = Of(Weapon.Pump);
             Equip(Weapon.Pump);
-            for (int i = 0; i < 3; i++) { Step(Hold); Run(60, default); }
+            for (int i = 0; i < 3; i++) { Step(Hold); Run(60 * SimTime.Per60, default); }
             Assert.That(_shots.Count, Is.EqualTo(3));
             Assert.That(Ammo(Weapon.Pump), Is.EqualTo(st.MagSize - 3));
             Step(default, ReloadKey);
@@ -144,7 +144,7 @@ namespace Sculpt.Core.Tests.Weapons
         {
             WeaponStats st = Of(Weapon.Pump);
             Equip(Weapon.Pump);
-            for (int i = 0; i < st.MagSize; i++) { Step(Hold); Run(56, default); }
+            for (int i = 0; i < st.MagSize; i++) { Step(Hold); Run(56 * SimTime.Per60, default); }
             Assert.That(_shots.Count, Is.EqualTo(st.MagSize));
             Assert.That(_s.Weapon.Reloading, Is.True, "empty: loading by itself");
             Run(st.ShellStartTicks + st.ShellTicks * st.MagSize + 5, default);
@@ -156,7 +156,7 @@ namespace Sculpt.Core.Tests.Weapons
         public void EachGunKeepsItsOwnMagazine()
         {
             Equip(Weapon.Smg);
-            Run(10, Hold);
+            Run(10 * SimTime.Per60, Hold);
             int smgLeft = Ammo(Weapon.Smg);
             Equip(Weapon.Ar);
             Assert.That(Ammo(Weapon.Ar), Is.EqualTo(Of(Weapon.Ar).MagSize));
@@ -168,7 +168,7 @@ namespace Sculpt.Core.Tests.Weapons
         public void RespawnRefillsEveryMagazine()
         {
             Equip(Weapon.Smg);
-            Run(10, Hold);
+            Run(10 * SimTime.Per60, Hold);
             Step(default, default);
             _tick++;
             NetSim.Simulate(_grid, _mc, _nc, ref _s, InputCmd.Quantize(new InputCmd { Tick = _tick, Respawn = true }), _spawn, null, _shots);
@@ -180,14 +180,14 @@ namespace Sculpt.Core.Tests.Weapons
         public void BloomIsPerGunWithASmallSwapPenalty()
         {
             Equip(Weapon.Ar);
-            Run(40, Hold); // spray: bloom builds up
+            Run(40 * SimTime.Per60, Hold); // spray: bloom builds up
             Assert.That(_s.Weapon.Bloom, Is.GreaterThan(1.0));
             Step(default, Key(Weapon.Pump));
             Assert.That(_s.Weapon.Bloom, Is.EqualTo(Of(Weapon.Pump).SwapBloom), "the pump doesn't inherit the AR's spray");
             Run(_mc.Hand.Draw(Weapon.Pump) - 2, default);
             Assert.That(_s.Weapon.Bloom, Is.EqualTo(Of(Weapon.Pump).SwapBloom), "the penalty waits for the draw");
             _shots.Clear();
-            Run(3, Hold);
+            Run(3 * SimTime.Per60, Hold);
             Assert.That(_shots.Count, Is.EqualTo(1));
             Assert.That(_shots[0].Spread, Is.LessThanOrEqualTo(Of(Weapon.Pump).SwapBloom + 1e-9), "first shot after a swap carries at most the small penalty");
         }
@@ -203,7 +203,7 @@ namespace Sculpt.Core.Tests.Weapons
         public void AmmoAndReloadSurviveTheWire()
         {
             Equip(Weapon.Ar);
-            Run(5, Hold);
+            Run(5 * SimTime.Per60, Hold);
             Step(default, ReloadKey);
             var w = new ByteWriter();
             Protocol.WriteMotor(w, _s);

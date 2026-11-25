@@ -12,6 +12,19 @@ namespace Sculpt.Core.Net
         private int[] _tileStartHealth;
         private List<GroundItem> _itemsStart;
 
+        /// <summary>In a two-player match, the one other match player on the other team (0 if there isn't exactly one).</summary>
+        private int TheOpponent(ServerPlayer victim)
+        {
+            int found = 0, n = 0;
+            foreach (ServerPlayer p in _players)
+            {
+                if (p == victim || !CountsForMatch(p)) continue;
+                n++;
+                if (p.Team != victim.Team) found = p.Id;
+            }
+            return n == 1 ? found : 0;
+        }
+
         private int HumanCount()
         {
             int n = 0;

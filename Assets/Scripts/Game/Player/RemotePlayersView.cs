@@ -79,15 +79,16 @@ namespace Sculpt.Game.Player
                 float eye = (float)(v.Crouched ? _cfg.CrouchEye : _cfg.StandEye);
                 float w = (float)(_cfg.HalfWidth * 2);
                 a.Root.transform.SetPositionAndRotation(v.Position.ToUnity(), Quaternion.Euler(0, (float)(v.Yaw * Mathf.Rad2Deg), 0));
-                // Body below the head; the head is exactly the headshot zone (top of the box, full width), so what you see
-                // is what you hit. Together they fill the collision box.
+                // Body below the head; the head is exactly the headshot zone (top of the box, narrower than the body), so
+                // what you see is what you hit: bullets past the head's sides miss (Core HitTarget.HeadBox).
                 float headH = (float)_cfg.Weapons.HeadZone(h);
+                float headW = Mathf.Min(w, (float)_cfg.Weapons.HeadWidth);
                 a.Body.localScale = new Vector3(w, h - headH, w);
                 a.Body.localPosition = Vector3.zero;
-                a.Head.localScale = new Vector3(w, headH, w);
+                a.Head.localScale = new Vector3(headW, headH, headW);
                 a.Head.localPosition = new Vector3(0, h - headH, 0);
                 a.Head.localRotation = Quaternion.identity;
-                a.Visor.localPosition = new Vector3(0, eye - 0.05f, w * 0.4f);
+                a.Visor.localPosition = new Vector3(0, eye - 0.05f, headW * 0.48f);
                 a.Visor.localRotation = Quaternion.Euler((float)v.Pitch, 0, 0);
 
                 // Their gun: held at the right side, along their aim; lowered out of sight in sculpt mode (a tell).
@@ -108,7 +109,43 @@ namespace Sculpt.Game.Player
                     a.Gun.localPosition = new Vector3(w * 0.5f + 0.02f, eye - 0.28f, 0.1f);
                     a.Gun.localRotation = Quaternion.Euler((float)v.Pitch, 0, 0);
                 }
+
+                // The anti-hiding ping: the server says this player is shown through walls right now.
+                if (net.IsRevealed(id, out RevealEntry rev)) DrawXray(a, v.Team, rev.EndTick - net.ServerTimeEstimate);
             }
+        }
+
+        private Material _xray;
+        private Mesh _xrayBox;
+        private MaterialPropertyBlock _xrayBlock;
+        private static readonly int ColorId = Shader.PropertyToID("_Color");
+
+        /// <summary>
+        /// A see-through silhouette drawn only where walls hide the player (depth test "greater"), in their team colour
+        /// (never purple), pulsing, fading out over the last 0.4 s. Their real box still draws normally where visible.
+        /// </summary>
+        private void DrawXray(Avatar a, int team, double ticksLeft)
+        {
+            if (_xray == null)
+            {
+                _xray = new Material(Shader.Find("Hidden/Internal-Colored")) { name = "Ping x-ray (runtime)", hideFlags = HideFlags.HideAndDontSave };
+                _xray.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                _xray.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                _xray.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Back);
+                _xray.SetInt("_ZWrite", 0);
+                _xray.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Greater);
+                _xray.renderQueue = 3200;
+                _xrayBox = BuildBox(Color.white, centred: false);
+                _xrayBlock = new MaterialPropertyBlock();
+            }
+            float secs = (float)(ticksLeft / SimTime.TicksPerSecond);
+            float fade = Mathf.Clamp01(secs / 0.4f);
+            float pulse = 0.42f + 0.16f * Mathf.Sin(Time.time * 9f);
+            Color c = Color.Lerp(TeamColours[Mathf.Abs(team - 1) % TeamColours.Length], Color.white, 0.2f);
+            c.a = pulse * fade;
+            _xrayBlock.SetColor(ColorId, c);
+            Graphics.DrawMesh(_xrayBox, a.Body.localToWorldMatrix, _xray, 0, null, 0, _xrayBlock, false, false);
+            Graphics.DrawMesh(_xrayBox, a.Head.localToWorldMatrix, _xray, 0, null, 0, _xrayBlock, false, false);
         }
 
         private Avatar Create(int id)
@@ -159,7 +196,7 @@ namespace Sculpt.Game.Player
         }
 
         /// <summary>Unit box (bottom-centred unless centred) with per-face shading baked into vertex colours.</summary>
-        private static Mesh BuildBox(Color? colour = null, bool centred = false)
+        internal static Mesh BuildBox(Color? colour = null, bool centred = false)
         {
             Color c = colour ?? Color.grey;
             var verts = new List<Vector3>();

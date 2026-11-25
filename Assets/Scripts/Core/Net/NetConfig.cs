@@ -4,7 +4,7 @@ namespace Sculpt.Core.Net
     public sealed class NetConfig
     {
         /// <summary>Each input packet repeats this many of the newest commands, so lost packets cost nothing.</summary>
-        public int InputRedundancy = 8;
+        public int InputRedundancy = 12; // 100 ms of commands at 120 Hz (was 8 at 60 Hz = 133 ms)
 
         /// <summary>
         /// How many ticks early (at minimum, over the feedback window) a client's newest command should reach the server.
@@ -23,7 +23,7 @@ namespace Sculpt.Core.Net
         public int ClockDeadbandTicks = 0;
 
         /// <summary>Lead feedback window: the server reports the worst lead seen in this many ticks.</summary>
-        public int LeadWindowTicks = 60;
+        public int LeadWindowTicks = 60 * SimTime.Per60;
 
         /// <summary>Clock speed-up/slow-down per tick of lead error, as a fraction of tick rate.</summary>
         public double ClockGainPerTick = 0.01;
@@ -32,25 +32,25 @@ namespace Sculpt.Core.Net
         public double MaxClockDilation = 0.03;
 
         /// <summary>Lead errors larger than this jump the clock at once instead of dilating.</summary>
-        public int ClockSnapTicks = 8;
+        public int ClockSnapTicks = 8 * SimTime.Per60;
 
         /// <summary>Most ticks a client may run in one frame when catching up.</summary>
-        public int MaxCatchUpTicksPerFrame = 10;
+        public int MaxCatchUpTicksPerFrame = 10 * SimTime.Per60;
 
         /// <summary>Furthest ahead of the server tick a command may be. Anything later is ignored.</summary>
-        public int MaxCommandLeadTicks = 60;
+        public int MaxCommandLeadTicks = 60 * SimTime.Per60;
 
         /// <summary>Client prediction history length (ticks). Must cover the round trip plus lead.</summary>
-        public int HistoryTicks = 128;
+        public int HistoryTicks = 128 * SimTime.Per60;
 
         /// <summary>Server sends a snapshot every N ticks (1 = 60 Hz).</summary>
         public int SnapshotEveryTicks = 1;
 
         /// <summary>Remote players are drawn this many ticks behind the newest snapshot (covers jitter and a lost snapshot).</summary>
-        public double InterpDelayTicks = 3.0;
+        public double InterpDelayTicks = 3.0; // 25 ms at 120 Hz. Kept at 3 ticks on purpose: at 60 Hz this was 50 ms of delay on every enemy you see.
 
         /// <summary>When the snapshot stream stalls, remote players extrapolate at most this many ticks, then hold.</summary>
-        public double MaxExtrapolateTicks = 6.0;
+        public double MaxExtrapolateTicks = 6.0 * SimTime.Per60;
 
         /// <summary>Visual correction offset decays with this time constant (seconds). Sim state is never smoothed.</summary>
         public double CorrectionSmoothSeconds = 0.08;
@@ -59,7 +59,7 @@ namespace Sculpt.Core.Net
         public double CorrectionSnapDistance = 2.0;
 
         /// <summary>Server keeps this many ticks of every player's position for lag compensation (M5+).</summary>
-        public int ServerHistoryTicks = 64;
+        public int ServerHistoryTicks = 64 * SimTime.Per60;
 
         /// <summary>Falling below this height respawns the player (server and client run the same rule).</summary>
         public double KillY = -30.0;

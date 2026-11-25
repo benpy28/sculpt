@@ -54,12 +54,14 @@ namespace Sculpt.Game.Player
         public HealKind HealKindNow => ReinforceHeld ? HealKind.Reinforce : HealKind.Heal;
         /// <summary>Healing replaces block moving while block moves are parked (Breach Settings).</summary>
         public bool Heals => Net.Heals != null && !SculptConfig.BlockMovesEnabled;
+        /// <summary>Q heals what you aim at straight away, no sculpt mode (Ben 2026-11-25: "no heal menu").</summary>
+        public bool QuickHeal => Heals && _cfg.Hand.QuickHeal;
         /// <summary>Last refused heal press (local check or the server) and when, for the red flash.</summary>
         public float HealRejectTime { get; set; } = -10f;
         public HealResult LastHealReject { get; set; }
         public int LastHealRejectTile { get; set; } = -1;
         private bool _healWant;
-        private int _healWantTile;
+        private int _healWantTile, _healWantCell;
         private HealKind _healWantKind;
         private float _healWantTime;
 
@@ -82,7 +84,12 @@ namespace Sculpt.Game.Player
         public string InteractKeyName => UI.SculptHud.Key(_input.Interact);
         public string AimKeyName => UI.SculptHud.Key(_input.Aim);
         public string FireKeyName => UI.SculptHud.Key(_input.Fire);
-        private bool _pickupLatch, _dropLatch, _holdForDrop;
+        private bool _pickupLatch, _dropLatch, _holdForDrop, _doorLatch, _doorOpen;
+        private int _doorTile;
+        /// <summary>The door leaf under the crosshair within reach (open or shut), or -1: interact opens or shuts it.</summary>
+        public int DoorTarget { get; private set; } = -1;
+        /// <summary>Is <see cref="DoorTarget"/> open now (in your view)?</summary>
+        public bool DoorTargetOpen => DoorTarget >= 0 && Net.Walls != null && DoorRules.IsOpen(Net.Walls, DoorTarget);
         private int _pickupId;
         private float _holdStart;
 
@@ -98,7 +105,12 @@ namespace Sculpt.Game.Player
         // ---- Movement showcase (F6, dev builds): warp to the course and play the tool-assisted run ----
         private CourseInfo _course;
         private ShowcaseRun _showcase;
-        private bool _showcaseLatch, _warping;
+        private bool _showcaseLatch, _watchLatch, _warping, _warpForRace;
+        private CourseRace _race;
+        private int _raceOverTicks;
+        /// <summary>The course race in progress (F6: 3-2-1, then race the TAS ghost), or the last one for a few seconds
+        /// after you finish. Null when none.</summary>
+        public CourseRace Race => _race;
         private float _showcaseYaw;
         /// <summary>The showcase run in progress (null when none). Its inputs replace yours until it ends or you move.</summary>
         public ShowcaseRun Showcase => _showcase;
@@ -106,7 +118,16 @@ namespace Sculpt.Game.Player
         public ShowcaseRun LastShowcase { get; private set; }
 
         /// <summary>Gives the player the movement course (breach map only), which enables F6.</summary>
-        public void SetCourse(CourseInfo course) => _course = course;
+        public void SetCourse(CourseInfo course)
+        {
+            _course = course;
+            // Dev builds: -race starts the F6 race (and -watchtas the F7 run) as soon as you are in.
+            if (!GameInput.DevBuild) return;
+            string[] args = System.Environment.GetCommandLineArgs();
+            _autoRace = System.Array.IndexOf(args, "-race") >= 0;
+            _autoWatch = System.Array.IndexOf(args, "-watchtas") >= 0;
+        }
+        private bool _autoRace, _autoWatch;
 
         private byte _weaponLatch;
         private bool _confirmLatch;
@@ -183,7 +204,12 @@ namespace Sculpt.Game.Player
             if (_input.Crouch.WasPressedThisFrame()) _crouchLatch = true;
             if (GameInput.DevBuild && _input.DevRespawn.WasPressedThisFrame()) _respawnLatch = true;
             if (GameInput.DevBuild && _course != null && _input.DevShowcase.WasPressedThisFrame()) _showcaseLatch = true;
-            if (_input.SculptToggle.WasPressedThisFrame()) _toggleLatch = true;
+            if (GameInput.DevBuild && _course != null && _input.DevShowcaseWatch.WasPressedThisFrame()) _watchLatch = true;
+            if (_input.SculptToggle.WasPressedThisFrame())
+            {
+                if (QuickHeal) PressHeal(); // Q heals (Alt + Q reinforces); there is no heal mode
+                else _toggleLatch = true;
+            }
             for (int i = 0; i < Items.Slots; i++) if (_input.Hotbar[i].WasPressedThisFrame()) _weaponLatch = (byte)(i + 1);
             if (_input.LastWeapon.WasPressedThisFrame()) _weaponLatch = (byte)(State.Hand.PrevSlot + 1);
             if (!InSculptMode && !clickToLock && _input.Fire.WasPressedThisFrame()) _fireLatch = true;
@@ -220,6 +246,7 @@ namespace Sculpt.Game.Player
         private void UpdateItems()
         {
             PickTarget = -1;
+            DoorTarget = -1;
             if (!Net.Joined || State.Dead) { _holdForDrop = false; DropHold = 0; return; }
             int i = ItemRules.FindTarget(Net.Items, Net.Grid, SimEye, LookDir, _cfg.Items);
             if (i >= 0)
@@ -227,12 +254,21 @@ namespace Sculpt.Game.Player
                 PickTarget = i;
                 PickPlan = ItemRules.Plan(State, Net.Items[i], Net.PlayerId, Net.Tick, _cfg.Items);
             }
+            else if (Net.Walls != null) DoorTarget = DoorRules.FindTarget(Net.Walls, Net.Grid, SimEye, LookDir, Net.Walls.Config.DoorReach);
             bool active = CursorLocked && !InputBlocked;
             if (active && _input.Interact.WasPressedThisFrame())
             {
                 if (PickTarget >= 0)
                 {
                     if (PickPlan.Allowed) { _pickupLatch = true; _pickupId = Net.Items[PickTarget].Id; }
+                    _holdForDrop = false;
+                }
+                else if (DoorTarget >= 0)
+                {
+                    // Doors: one press opens a shut door or shuts an open one (yours shows at once; the server decides).
+                    _doorLatch = true;
+                    _doorTile = DoorTarget;
+                    _doorOpen = !DoorTargetOpen;
                     _holdForDrop = false;
                 }
                 else { _holdForDrop = true; _holdStart = Time.unscaledTime; }
@@ -263,6 +299,7 @@ namespace Sculpt.Game.Player
             if (HealCheck != HealResult.Ok && HealCheck != HealResult.NotInSculptMode) { RejectHeal(HealCheck, t.Tile); return; }
             _healWant = true;
             _healWantTile = t.Tile;
+            _healWantCell = t.Cell;
             _healWantKind = kind;
             _healWantTime = Time.unscaledTime;
         }
@@ -303,10 +340,10 @@ namespace Sculpt.Game.Player
         {
             HealTarget = TileTarget.None;
             HealCheck = HealResult.NoTile;
-            if (!Net.Joined || !Heals || !InSculptMode || State.Dead) { _healWant = false; return; }
+            if (!Net.Joined || !Heals || (!QuickHeal && !InSculptMode) || State.Dead) { _healWant = false; return; }
             HealTarget = TileAim.Find(Net.Grid, Net.Walls, SimEye, LookDir, Net.Walls.Config.HealRange, HealKindNow);
             if (!HealTarget.Valid) return;
-            HealCheck = Net.Heals.Check(Net.Grid, Net.PlayerId, SimEye, State.Hand.CanConfirmSculpt, HealTarget.Tile, HealKindNow, Net.DisplayBar);
+            HealCheck = Net.Heals.Check(Net.Grid, Net.PlayerId, SimEye, _cfg.Hand.CanHeal(State.Hand), HealTarget.Tile, HealTarget.Cell, HealKindNow, Net.DisplayBar);
         }
 
         /// <summary>
@@ -375,19 +412,22 @@ namespace Sculpt.Game.Player
             {
                 SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0, Reload = _reloadLatch && active,
                 Pickup = _pickupLatch && active, PickId = _pickupId, Drop = _dropLatch && active, Punch = _punchLatch && active,
+                Door = _doorLatch && active, DoorTile = _doorTile, DoorOpen = _doorOpen,
             };
-            if (_healWant && (!active || !InSculptMode || Time.unscaledTime - _healWantTime > 0.25f)) _healWant = false;
-            if (_healWant && h0.CanConfirmSculpt)
+            if (_healWant && (!active || (!QuickHeal && !InSculptMode) || Time.unscaledTime - _healWantTime > 0.25f)) _healWant = false;
+            if (_healWant && _cfg.Hand.CanHeal(h0))
             {
                 _healWant = false;
                 hand.Heal = true;
                 hand.HealTile = _healWantTile;
+                hand.HealCell = _healWantCell;
                 hand.HealReinforce = _healWantKind == HealKind.Reinforce;
             }
             _reloadLatch = false;
             _punchLatch = false;
             _pickupLatch = false;
             _dropLatch = false;
+            _doorLatch = false;
             bool respawn = _respawnLatch;
             bool confirm = _confirmLatch && active;
             SculptAction action = _confirmAction;
@@ -398,17 +438,31 @@ namespace Sculpt.Game.Player
             _weaponLatch = 0;
             _confirmLatch = false;
 
-            // F6: warp to the course start (a real command the server applies), then let the showcase drive. Pressing
-            // F6 again, or any move key, hands control back.
-            if (_showcaseLatch)
+            if ((_autoRace || _autoWatch) && Net.Joined && !State.Dead)
             {
-                _showcaseLatch = false;
-                if (_showcase != null) StopShowcase();
+                _showcaseLatch = _autoRace;
+                _watchLatch = _autoWatch && !_autoRace;
+                _autoRace = _autoWatch = false;
+            }
+            // F6: warp to the course start (a real command the server applies), count down 3-2-1 and race the TAS ghost.
+            // F7: warp there and let the TAS drive you. Either key again stops what is running; a move key stops F7.
+            if (_showcaseLatch || _watchLatch)
+            {
+                bool race = _showcaseLatch;
+                _showcaseLatch = _watchLatch = false;
+                if (_showcase != null || _race != null) { StopShowcase(); StopRace(); }
                 else
                 {
                     Net.WarpNext = true;
                     _warping = true;
+                    _warpForRace = race;
                 }
+            }
+            if (_race != null && !_race.Started)
+            {
+                // The countdown: look around, but stay on the start line.
+                mi = new MoveInput { Yaw = mi.Yaw };
+                hand = default;
             }
             if (_showcase != null && active && move.sqrMagnitude > 0.01f) StopShowcase();
             if (_showcase != null)
@@ -424,6 +478,13 @@ namespace Sculpt.Game.Player
             // Toggle crouch: one press is a whole slide. When the slide runs out on the ground you stand back up instead
             // of being left crouch-walking (jumping out of a slide keeps it on, so the landing slides again).
             if (_client.CrouchToggle && _crouchOn && modeBefore == MoveMode.Slide && State.Mode == MoveMode.Ground) _crouchOn = false;
+            if (_race != null)
+            {
+                _race.Step(State);
+                if (_race.PlayerFinished && ++_raceOverTicks == 1)
+                    Debug.Log($"[SCULPT] Course race: you {_race.PlayerFinishTicks / (float)SimTime.TicksPerSecond:0.00} s, TAS {_race.GhostFinishTicks / (float)SimTime.TicksPerSecond:0.00} s.");
+                if (_raceOverTicks > SimTime.TicksPerSecond * 8) StopRace(); // the result stays up for 8 s
+            }
             for (int i = before; i < Events.Count; i++)
             {
                 if (Events[i].Type != MoveEventType.Respawned) continue;
@@ -432,16 +493,37 @@ namespace Sculpt.Game.Player
                 {
                     _warping = false;
                     Yaw = _showcaseYaw = (float)(_course.StartYaw * Mathf.Rad2Deg);
-                    Pitch = 12f;
-                    _showcase = new ShowcaseRun(_course, _cfg);
-                    Debug.Log("[SCULPT] Movement showcase: started.");
+                    Pitch = _warpForRace ? 0f : 12f;
+                    if (_warpForRace)
+                    {
+                        // Record the TAS ghost from the same start through the same movement code (~25 s of ticks, a
+                        // few milliseconds, once).
+                        _race = CourseRace.Begin(Net.Grid, _course, _cfg);
+                        _raceOverTicks = 0;
+                        Debug.Log($"[SCULPT] Course race: 3-2-1 (TAS {_race.GhostFinishTicks / (float)SimTime.TicksPerSecond:0.00} s).");
+                    }
+                    else
+                    {
+                        _showcase = new ShowcaseRun(_course, _cfg);
+                        Debug.Log("[SCULPT] Movement showcase: started.");
+                    }
                 }
-                else FaceSpawn();
+                else
+                {
+                    if (_race != null) StopRace(); // died or respawned mid-race
+                    FaceSpawn();
+                }
             }
         }
 
         /// <summary>Turn to face the way your spawn faces (a new match moved you back there).</summary>
         public void FaceSpawnNow() => FaceSpawn();
+
+        private void StopRace()
+        {
+            _race = null;
+            _raceOverTicks = 0;
+        }
 
         private void StopShowcase()
         {
@@ -454,8 +536,12 @@ namespace Sculpt.Game.Player
         }
 
         /// <summary>Interpolates between the last two predicted ticks. alpha in [0, 1].</summary>
+        /// <summary>The alpha of the last Render call (where the drawn player sits between the last two ticks).</summary>
+        public float RenderAlpha { get; private set; }
+
         public void Render(float alpha)
         {
+            RenderAlpha = alpha;
             MotorState prev = Net.PreviousPredicted, cur = Net.Predicted;
             // A warp or respawn jumps metres in one tick: draw the new spot, never a one-frame streak across the map.
             Vector3 from = prev.Position.ToUnity(), to = cur.Position.ToUnity();

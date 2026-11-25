@@ -50,8 +50,13 @@ namespace Sculpt.Game.Bootstrap
             NextLaunch = launch;
             NextMap = map;
             NextAddress = address ?? "";
+            _relaunchClock = System.Diagnostics.Stopwatch.StartNew();
             UnityEngine.SceneManagement.SceneManager.LoadScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
         }
+
+        private static System.Diagnostics.Stopwatch _relaunchClock;
+        /// <summary>The duel map's bot nav never changes: built once per run, not on every menu reload (0.6 s).</summary>
+        private static BotNav _duelNav;
 
         public static MapChoice CurrentMap { get; private set; }
 
@@ -80,6 +85,10 @@ namespace Sculpt.Game.Bootstrap
 
         private void Awake()
         {
+            var loadClock = System.Diagnostics.Stopwatch.StartNew();
+            _awakeClock = loadClock;
+            var loadSteps = new System.Text.StringBuilder();
+            void Mark(string what) { loadSteps.Append(what).Append(' ').Append(loadClock.ElapsedMilliseconds).Append(" ms, "); }
             Time.fixedDeltaTime = 1f / SimTime.TicksPerSecond;
             Physics.simulationMode = SimulationMode.Script; // Core does all collision
             QualitySettings.vSyncCount = 0;                 // lowest input latency
@@ -94,6 +103,7 @@ namespace Sculpt.Game.Bootstrap
             breachSettings.ApplyTo(sculptConfig);
             breachSettings.ApplyTo(movement.Items);
             breachSettings.ApplyTo(movement.Punch);
+            breachSettings.ApplyTo(movement.Hand);
             var breach = new BreachConfig();
             breachSettings.ApplyTo(breach);
             var netConfig = new NetConfig { AllowDevWarp = GameInput.DevBuild };
@@ -145,6 +155,7 @@ namespace Sculpt.Game.Bootstrap
                 spawns = new[] { pads, pads };
                 yaw = new[] { spawnYaw, spawnYaw };
             }
+            Mark("map");
             Action<NetServer> setup = null;
             bool vsBot = NextLaunch == Launch.VsBot && NextMap == MapChoice.Duel;
             if (vsBot)
@@ -158,7 +169,7 @@ namespace Sculpt.Game.Bootstrap
                 {
                     foreach (GroundItem g in bi.ItemSpawns) server.SpawnItem(g.Kind, g.Count, g.Position);
                     var sw = System.Diagnostics.Stopwatch.StartNew();
-                    BotNav nav = BotNav.Build(server.Grid, 0, 0, bi.SizeX, bi.SizeZ);
+                    BotNav nav = NextMap == MapChoice.Duel ? (_duelNav ??= DuelMap.BuildNav()) : BotNav.Build(server.Grid, 0, 0, bi.SizeX, bi.SizeZ); // duel: doors count as open (the bot punches them)
                     server.AddBot(new DuelBot(nav, DuelBotConfig.For(level), Environment.TickCount), 2, botSpawn, botYaw);
                     Debug.Log($"[SCULPT] Bot ({level}) added; nav {nav.Nodes.Count} spots in {sw.ElapsedMilliseconds} ms.");
                 };
@@ -180,6 +191,7 @@ namespace Sculpt.Game.Bootstrap
             _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
             if (vsBot) { _session.MatchOffline = true; _session.Server.MatchConfig.Enabled = true; }
 
+            Mark("session");
             _world = new GameObject("World").AddComponent<WorldView>();
             GroundCover cover = null;
             if (brushes != null)
@@ -199,9 +211,12 @@ namespace Sculpt.Game.Bootstrap
                 }
                 cover = new GroundCover(_grid, paved);
             }
+            Mark("cover");
             _world.Init(_grid, sculptConfig, mapInfo, cover);
+            Mark("world init");
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
+            Mark("ground");
             if (brushes != null)
             {
                 var buildings = new GameObject("Buildings").AddComponent<BrushView>();
@@ -210,21 +225,28 @@ namespace Sculpt.Game.Bootstrap
                 _session.ClientChanged += () => buildings.BindTiles(_session.Client.Walls);
             }
 
+            Mark("buildings");
             // Sky, haze, fixed sun and the distant hills around the arena.
             float half = (float)(_grid.SizeX * SubGrid.SubSize * 0.5);
             Scenery.Build(half, (float)(_grid.SizeZ * SubGrid.SubSize * 0.5));
 
+            Mark("scenery");
             _input = new GameInput();
             var client = ClientSettings.Load();
 
             _player = new GameObject("Local Player").AddComponent<LocalPlayer>();
             _player.Init(_session, movement, movementSettings, _input, client);
-            if (breachInfo?.Course != null) _player.SetCourse(breachInfo.Course);
+            if (breachInfo?.Course != null)
+            {
+                _player.SetCourse(breachInfo.Course);
+                new GameObject("Course Race").AddComponent<CourseRaceView>().Init(_player, movement);
+            }
             _world.TrackPlayers(_player, _session);
 
             new GameObject("Remote Players").AddComponent<RemotePlayersView>().Init(_session, movement);
             new GameObject("Ground Items").AddComponent<ItemsView>().Init(_session, _player);
 
+            Mark("player");
             _rig = new GameObject("Camera Rig").AddComponent<CameraRig>();
             _rig.Init();
             var firstPerson = new FirstPersonMode(_player, client);
@@ -235,10 +257,12 @@ namespace Sculpt.Game.Bootstrap
             _weapons.Grenades = new GameObject("Grenades").AddComponent<GrenadeView>();
             _weapons.Grenades.Init(_session, firstPerson.Shake);
 
+            Mark("weapons");
             gameObject.AddComponent<DevHud>().Init(_player, client, _session);
             _player.gameObject.AddComponent<MovementAudio>().Init(_player);
             gameObject.AddComponent<AmbientAudio>().Init(client, Perches(mapInfo));
 
+            Mark("audio");
             var sculptView = new GameObject("Sculpt View").AddComponent<SculptView>();
             sculptView.Init(_player, _session, _rig, _world, firstPerson.Shake);
             gameObject.AddComponent<SculptHud>().Init(_player, _session, sculptView, _rig.Camera);
@@ -247,9 +271,13 @@ namespace Sculpt.Game.Bootstrap
             gameObject.AddComponent<FeelHud>().Init(_player, client);
             gameObject.AddComponent<SettingsMenu>().Init(_player, client, _input);
             gameObject.AddComponent<MatchHud>().Init(_player, _session);
+            gameObject.AddComponent<PingHud>().Init(_session, _rig.Camera);
             var menu = gameObject.AddComponent<MainMenu>();
             menu.Init(_player, _session);
 
+            Mark("huds");
+            Debug.Log("[SCULPT] Load: " + loadSteps + (_relaunchClock != null ? $" (menu press to here {_relaunchClock.ElapsedMilliseconds - loadClock.ElapsedMilliseconds} ms before this load)" : ""));
+            _relaunchClock = null;
             switch (NextLaunch)
             {
                 case Launch.Host: _session.StartHost(FishNetTransport.DefaultPort); break;
@@ -261,12 +289,13 @@ namespace Sculpt.Game.Bootstrap
             PerfSetup.Install(gameObject, _session, _player, _input, _rig, _grid);
             string tour = Sculpt.Game.Dev.PhotoTour.RequestedFolder();
             if (tour != null && breachInfo != null && (GameInput.DevBuild || Application.isEditor))
-                gameObject.AddComponent<Sculpt.Game.Dev.PhotoTour>().Init(tour, _rig.Camera, breachInfo, CurrentMap == MapChoice.Duel);
+                gameObject.AddComponent<Sculpt.Game.Dev.PhotoTour>().Init(tour, _rig.Camera, breachInfo, CurrentMap == MapChoice.Duel, () => _session.Server?.Walls);
             Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {(NextMap == MapChoice.Duel ? "1v1 duel" : breachMap ? "Breach" : map.ToString())} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
         }
 
         private void Update()
         {
+            if (_frameLog < 3 && _awakeClock != null) { _frameLog++; Debug.Log($"[SCULPT] Frame {_frameLog} at {_awakeClock.ElapsedMilliseconds} ms after Awake."); }
             double dt = Math.Min(Time.unscaledDeltaTime, 0.25f);
 #if UNITY_EDITOR
             if (weaponSettings != null) weaponSettings.ApplyTo(_movement.Weapons); // live tuning in Play mode
@@ -367,10 +396,15 @@ namespace Sculpt.Game.Bootstrap
             if (connect != null && port != FishNetTransport.DefaultPort && connect.LastIndexOf(':') < 0) _session.Join(connect, port);
         }
 
+        private System.Diagnostics.Stopwatch _awakeClock;
+        private int _frameLog;
+
         private void OnDestroy()
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             _input?.Dispose();
             _session?.Dispose();
+            Debug.Log($"[SCULPT] Unload: input and network shut down in {sw.ElapsedMilliseconds} ms.");
         }
     }
 }

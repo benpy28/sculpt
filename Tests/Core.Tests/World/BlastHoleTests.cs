@@ -6,12 +6,15 @@ using Sculpt.Core.Net;
 namespace Sculpt.Core.Tests
 {
     /// <summary>
-    /// Blast holes (Ben 2026-11-25): holes are shaped by the hit on an 8 x 8 cell grid per tile, never a pixel hole or a
-    /// sliver. Hand-worked cases plus a seeded random fight that checks the fairness rules after every hit.
+    /// Walls by area (Ben 2026-11-25: "remove the grid", cracks by area, "a shotgun pump should one shot any wall and AR
+    /// should 2 tap", heals by area). Damage lands on an 8 x 8 cell grid per tile, never by tile; holes are never a
+    /// pixel hole or a sliver, and their edges are cut on the diagonal. Hand-worked cases plus a seeded random fight that
+    /// checks the fairness rules after every hit and heal.
     /// </summary>
     public class BlastHoleTests
     {
         private const int N = Brush.CellsPerSide;
+        private const double Cell = 1.5 / N;
 
         /// <summary>A wall of w x h tiles running east from (0, 0, 10), thin in Z; tile (i, j) is ids[j * w + i].</summary>
         private static BrushWorld Wall(int w, int h, out int[] ids, BreachConfig c = null)
@@ -94,7 +97,7 @@ namespace Sculpt.Core.Tests
                             q.Enqueue((nx, ny));
                         }
                     }
-                    Assert.That(size >= minCells || edge, Is.True, $"{when}: an opening of only {size} cells (min {minCells})");
+                    Assert.That(size >= minCells || edge, Is.True, $"{when}: an opening of only {size} cells (min {minCells})\n{Dump(g)}");
                 }
         }
 
@@ -110,7 +113,7 @@ namespace Sculpt.Core.Tests
             return sb.ToString();
         }
 
-        /// <summary>What collides is exactly what the cells say.</summary>
+        /// <summary>What collides at every cell centre is exactly what the cells say.</summary>
         private static void AssertCollisionMatches(BrushWorld world, TileWalls tw, int[] ids)
         {
             foreach (int t in ids)
@@ -125,77 +128,198 @@ namespace Sculpt.Core.Tests
             }
         }
 
-        private static Vec3d Face(double x, double y) => new Vec3d(x, y, 10);
+        /// <summary>
+        /// What collides everywhere on the face is the drawn shape (quarter cells, edges cut on the diagonal) to within
+        /// 2.5 cm, sampled on a fine lattice.
+        /// </summary>
+        private static void AssertCollisionIsTheDrawnShape(BrushWorld world, TileWalls tw, int[] ids)
+        {
+            const int Q = TileWalls.Quads;
+            double q = 1.5 / Q;
+            foreach (int t in ids)
+            {
+                Aabb b = tw.BoundsOf(t);
+                for (int sx = 0; sx < Q * 4; sx++)
+                    for (int sy = 0; sy < Q * 4; sy++)
+                    {
+                        double x = (sx + 0.37) / 4.0, y = (sy + 0.61) / 4.0; // in quarter cells, never on a seam
+                        int qi = (int)x, qj = (int)y;
+                        QuadFill f = tw.QuadOf(t, qi, qj);
+                        bool drawn = TileWalls.SolidAt(f, qi, qj, x, y);
+                        var p = new Vec3d(b.Min.X + x * q, b.Min.Y + y * q, 10.15);
+                        bool hits = world.BoxOverlapsSolid(new Aabb(p - new Vec3d(0.0005, 0.0005, 0.0005), p + new Vec3d(0.0005, 0.0005, 0.0005)));
+                        if (drawn == hits) continue;
+                        Assert.That(f == QuadFill.Inner || f == QuadFill.Outer, Is.True, $"tile {t} quad ({qi}, {qj}) {f}: only a diagonal edge may differ");
+                        double u = (qi & 1) == 1 ? x - qi : qi + 1 - x, v = (qj & 1) == 1 ? y - qj : qj + 1 - y;
+                        Assert.That(Math.Abs(u + v - 1) * q, Is.LessThanOrEqualTo(0.025), $"tile {t} quad ({qi}, {qj}): {Math.Abs(u + v - 1) * q:F3} m off the drawn edge");
+                    }
+            }
+        }
+
+        internal static Vec3d Face(double x, double y) => new Vec3d(x, y, 10);
+
+        internal static int Tile(int[] ids, int w, double x, double y) => ids[(int)(y / 1.5) * w + (int)(x / 1.5)];
+
+        internal static BulletHit Pellet(TileWalls tw, int[] ids, int w, double x, double y) =>
+            new BulletHit { Kind = HitKind.Terrain, Brush = tw[Tile(ids, w, x, y)].Brush + 1, Point = Face(x, y) };
+
+        private static List<BulletHit> Ar(TileWalls tw, int[] ids, int w, double x, double y) => new List<BulletHit> { Pellet(tw, ids, w, x, y) };
+
+        /// <summary>A point-blank pump shot: nine pellets in a tight ring round (x, y).</summary>
+        internal static List<BulletHit> Pump(TileWalls tw, int[] ids, int w, double x, double y, double spread = 0.06)
+        {
+            var list = new List<BulletHit> { Pellet(tw, ids, w, x, y) };
+            int h = ids.Length / w;
+            for (int k = 0; k < 8; k++)
+            {
+                double a = k * Math.PI / 4;
+                double px = x + Math.Cos(a) * spread, py = y + Math.Sin(a) * spread;
+                if (px <= 0 || py <= 0 || px >= w * 1.5 || py >= h * 1.5) continue; // missed the wall
+                list.Add(Pellet(tw, ids, w, px, py));
+            }
+            return list;
+        }
 
         // ------------------------------------------------------------------ hand-worked cases
 
         [Test]
-        public void FarBulletBreak_OpensARoundHoleAroundTheHit_RestOfTheTileStands()
-        {
-            var world = Wall(3, 3, out int[] ids);
-            TileWalls tw = world.Tiles;
-            int mid = ids[4]; // tile (1, 1): x 1.5..3, y 1.5..3
-            Vec3d hit = Face(2.25, 2.25);
-            for (int i = 0; i < 7; i++) tw.Damage(mid, 13, hit, TileCause.Bullet);
-            Assert.That(tw[mid].Holed, Is.False, "7 AR bullets crack it but do not break it");
-            Assert.That(tw.Damage(mid, 13, hit, TileCause.Bullet), Is.True, "the 8th breaks it");
-            WallTile t = tw[mid];
-            Assert.That(t.State, Is.EqualTo(TileState.Damaged), "a far bullet takes a round chunk; the rest stays, cracked");
-            Assert.That(t.Holed, Is.True);
-            bool[,] g = Grid(tw, 3, 3, ids);
-            int open = OpenCount(g);
-            double cellArea = (1.5 / N) * (1.5 / N);
-            Assert.That(open * cellArea, Is.GreaterThanOrEqualTo(0.63), "at least half a body");
-            Assert.That(open * cellArea, Is.LessThan(1.8), "a far bullet's hole stays modest");
-            // Round-ish around the hit: no open cell further than the radius plus the roughness, and the cells right
-            // at the hit are open.
-            double r = tw.Config.BlastRadiusFor(13) + tw.Config.BlastJitter + 0.3;
-            for (int x = 0; x < 3 * N; x++)
-                for (int y = 0; y < 3 * N; y++)
-                {
-                    if (!g[x, y]) continue;
-                    double cx = (x + 0.5) * 1.5 / N, cy = (y + 0.5) * 1.5 / N;
-                    Assert.That(Math.Sqrt((cx - 2.25) * (cx - 2.25) + (cy - 2.25) * (cy - 2.25)), Is.LessThan(r));
-                }
-            Assert.That(g[11, 11] && g[12, 12], Is.True, "the cells at the hit are gone");
-            Assert.That(t.Health, Is.InRange(1, 49), "what is left needs a few more hits");
-            AssertFair(g, tw.MinHoleCells(mid), "after one break");
-            AssertCollisionMatches(world, tw, ids);
-        }
-
-        [Test]
-        public void PointBlankPump_BlowsABigUnevenChunk_AcrossTileBorders()
+        public void Ar_FirstShotCracksAround_SecondOnTheSameSpotOpensAHole()
         {
             var world = Wall(3, 3, out int[] ids);
             TileWalls tw = world.Tiles;
             int mid = ids[4];
-            // Two point-blank pump shots, all 9 pellets on the middle tile near its lower-left corner.
-            var pellets = new List<BulletHit>();
-            for (int k = 0; k < 9; k++)
-                pellets.Add(new BulletHit { Kind = HitKind.Terrain, Brush = tw[mid].Brush + 1, Point = Face(1.8 + 0.02 * k, 1.8 + 0.01 * k) });
-            tw.ApplyShot(pellets, Weapon.Pump, 1);
-            Assert.That(tw[mid].Holed, Is.False);
-            tw.ApplyShot(pellets, Weapon.Pump, 1);
+            tw.ApplyShot(Ar(tw, ids, 3, 2.25, 2.25), Weapon.Ar, 1);
+            Assert.That(OpenCount(Grid(tw, 3, 3, ids)), Is.EqualTo(0), "one AR bullet only cracks");
+            int cell = tw.CellAt(mid, Face(2.25, 2.25));
+            Assert.That(tw.CellHealth(mid, cell), Is.EqualTo(tw.Config.IntactHealth - tw.Config.ArTileDamage), "the cells round the hit took the damage");
+            Assert.That(tw.CellHealth(mid, 0), Is.EqualTo(tw.Config.IntactHealth), "a corner 1 m away took none");
+            tw.ApplyShot(Ar(tw, ids, 3, 2.25, 2.25), Weapon.Ar, 1);
             bool[,] g = Grid(tw, 3, 3, ids);
-            double area = OpenCount(g) * (1.5 / N) * (1.5 / N);
-            Assert.That(area, Is.GreaterThan(3.0), "a big chunk, not a 1.5 m square (2.25 m^2)");
-            int neighboursHit = 0;
-            foreach (int t in ids) if (t != mid && tw.OpenCells(t) != 0) neighboursHit++;
-            Assert.That(neighboursHit, Is.GreaterThanOrEqualTo(2), "the hole cuts into the tiles around it");
-            AssertFair(g, tw.MinHoleCells(mid), "after the pump");
+            double area = OpenCount(g) * Cell * Cell;
+            Assert.That(area, Is.GreaterThanOrEqualTo(0.63), "a hole of at least half a body");
+            Assert.That(area, Is.LessThan(1.2), "an AR hole stays modest");
+            AssertFair(g, tw.MinHoleCells(mid), "after two AR bullets");
             AssertCollisionMatches(world, tw, ids);
+            AssertCollisionIsTheDrawnShape(world, tw, ids);
         }
 
         [Test]
-        public void ReinforcedNeighbours_KeepEveryCell()
+        public void Ar_TwoTaps_OnATileSeam_StillOpenAHole_AcrossBothTiles()
         {
             var world = Wall(3, 3, out int[] ids);
             TileWalls tw = world.Tiles;
-            foreach (int t in ids) if (t != ids[4]) tw.Set(t, TileState.Reinforced, 200, TileCause.Reinforce);
-            tw.Damage(ids[4], 1000, Face(2.25, 2.25), TileCause.Grenade, 1, 2.2);
+            // Right on the border between tiles (1, 1) and (2, 1): the tile grid must not matter.
+            tw.ApplyShot(Ar(tw, ids, 3, 3.0, 2.2), Weapon.Ar, 1);
+            tw.ApplyShot(Ar(tw, ids, 3, 3.02, 2.25), Weapon.Ar, 1);
+            Assert.That(tw.OpenCells(ids[4]), Is.Not.EqualTo(0ul), "the left tile opened");
+            Assert.That(tw.OpenCells(ids[5]), Is.Not.EqualTo(0ul), "and the right one: one hole across the seam");
+            AssertFair(Grid(tw, 3, 3, ids), tw.MinHoleCells(ids[4]), "seam hole");
+        }
+
+        [Test]
+        public void Ar_TwoShotsFarApart_OnlyCrack()
+        {
+            var world = Wall(3, 3, out int[] ids);
+            TileWalls tw = world.Tiles;
+            tw.ApplyShot(Ar(tw, ids, 3, 1.0, 1.0), Weapon.Ar, 1);
+            tw.ApplyShot(Ar(tw, ids, 3, 3.2, 3.2), Weapon.Ar, 1);
+            Assert.That(OpenCount(Grid(tw, 3, 3, ids)), Is.EqualTo(0), "damage is where you hit: two different spots are two cracks");
+        }
+
+        [Test]
+        public void Punch_FirstOneShowsDamage_SecondOpens()
+        {
+            var world = Wall(3, 3, out int[] ids);
+            TileWalls tw = world.Tiles;
+            int mid = ids[4];
+            tw.Damage(mid, tw.Config.PunchTileDamage, Face(2.25, 2.25), TileCause.Punch, 1, tw.Config.PunchHitRadius);
+            Assert.That(tw.Changes.Count, Is.GreaterThan(0), "the first punch is a change the clients see (cracks)");
+            Assert.That(tw.CellHealth(mid, tw.CellAt(mid, Face(2.25, 2.25))), Is.LessThan(tw.Config.IntactHealth));
+            Assert.That(tw.OpenCells(mid), Is.EqualTo(0ul));
+            tw.Damage(mid, tw.Config.PunchTileDamage, Face(2.25, 2.25), TileCause.Punch, 1, tw.Config.PunchHitRadius);
+            Assert.That(tw.OpenCells(mid), Is.Not.EqualTo(0ul), "two punches open it");
+        }
+
+        [Test]
+        public void PointBlankPump_OneShotsAPlainOrPatchedWall_NotAReinforcedOne()
+        {
+            var world = Wall(3, 3, out int[] ids);
+            TileWalls tw = world.Tiles;
+            tw.ApplyShot(Pump(tw, ids, 3, 2.25, 2.25), Weapon.Pump, 1);
+            bool[,] g = Grid(tw, 3, 3, ids);
+            Assert.That(OpenCount(g) * Cell * Cell, Is.GreaterThan(0.9), "one shot, one big hole");
+            AssertFair(g, tw.MinHoleCells(ids[4]), "after the pump");
+            AssertCollisionIsTheDrawnShape(world, tw, ids);
+
+            var w2 = Wall(3, 3, out int[] ids2);
+            foreach (int t in ids2) w2.Tiles.Set(t, TileState.Patched, w2.Tiles.Config.PatchedHealth, TileCause.Heal);
+            w2.Tiles.ApplyShot(Pump(w2.Tiles, ids2, 3, 2.25, 2.25), Weapon.Pump, 1);
+            Assert.That(OpenCount(Grid(w2.Tiles, 3, 3, ids2)), Is.GreaterThan(0), "a patched wall goes in one shot too");
+
+            var w3 = Wall(3, 3, out int[] ids3);
+            foreach (int t in ids3) w3.Tiles.Set(t, TileState.Reinforced, w3.Tiles.Config.ReinforcedHealth, TileCause.Reinforce);
+            w3.Tiles.ApplyShot(Pump(w3.Tiles, ids3, 3, 2.25, 2.25), Weapon.Pump, 1);
+            Assert.That(OpenCount(Grid(w3.Tiles, 3, 3, ids3)), Is.EqualTo(0), "Ben: no one-shot on reinforced");
+            w3.Tiles.ApplyShot(Pump(w3.Tiles, ids3, 3, 2.25, 2.25), Weapon.Pump, 1);
+            Assert.That(OpenCount(Grid(w3.Tiles, 3, 3, ids3)), Is.GreaterThan(0), "two pump shots do");
+        }
+
+        [Test]
+        public void ReinforcedWall_TakesFourAr_PatchedOne()
+        {
+            var w = Wall(3, 3, out int[] ids);
+            foreach (int t in ids) w.Tiles.Set(t, TileState.Reinforced, w.Tiles.Config.ReinforcedHealth, TileCause.Reinforce);
+            for (int i = 0; i < 3; i++) w.Tiles.ApplyShot(Ar(w.Tiles, ids, 3, 2.25, 2.25), Weapon.Ar, 1);
+            Assert.That(OpenCount(Grid(w.Tiles, 3, 3, ids)), Is.EqualTo(0));
+            w.Tiles.ApplyShot(Ar(w.Tiles, ids, 3, 2.25, 2.25), Weapon.Ar, 1);
+            Assert.That(OpenCount(Grid(w.Tiles, 3, 3, ids)), Is.GreaterThan(0));
+
+            var p = Wall(3, 3, out int[] pids);
+            foreach (int t in pids) p.Tiles.Set(t, TileState.Patched, p.Tiles.Config.PatchedHealth, TileCause.Heal);
+            p.Tiles.ApplyShot(Ar(p.Tiles, pids, 3, 2.25, 2.25), Weapon.Ar, 1);
+            Assert.That(OpenCount(Grid(p.Tiles, 3, 3, pids)), Is.GreaterThan(0), "patched wall is weaker: one AR bullet");
+        }
+
+        [Test]
+        public void PumpHoles_AreAllAboutOneSize_CloseOrFar_AndNeverMissing()
+        {
+            // Ben 2026-11-25: no pump hole much bigger than a body from range, none smaller than a chest up close.
+            double cell = 1.5 / 8;
+            double min = double.MaxValue, max = 0;
+            foreach (double spread in new[] { 0.03, 0.06, 0.2, 0.4, 0.6 })
+                for (double x = 1.6; x < 3.0; x += 0.1)
+                    for (double y = 1.6; y < 3.0; y += 0.35)
+                    {
+                        var world = Wall(3, 3, out int[] ids);
+                        TileWalls tw = world.Tiles;
+                        tw.ApplyShot(Pump(tw, ids, 3, x, y, spread), Weapon.Pump, 1);
+                        int open = 0;
+                        foreach (int t in ids)
+                            for (int c = 0; c < 64; c++) if (((tw[t].Open >> c) & 1) != 0) open++;
+                        double area = open * cell * cell;
+                        min = Math.Min(min, area);
+                        max = Math.Max(max, area);
+                    }
+            TestContext.WriteLine($"pump hole area {min:0.00} to {max:0.00} m^2");
+            Assert.That(min, Is.GreaterThanOrEqualTo(0.9), "bigger than a chest even point blank (and never no hole)");
+            Assert.That(max, Is.LessThanOrEqualTo(1.9), "no bigger than a body from range");
+        }
+
+        [Test]
+        public void HoleEdges_AreCutOnTheDiagonal_NotStairSteps()
+        {
+            var world = Wall(3, 3, out int[] ids);
+            TileWalls tw = world.Tiles;
+            tw.ApplyShot(Pump(tw, ids, 3, 2.25, 2.25), Weapon.Pump, 1);
+            int diagonal = 0;
             foreach (int t in ids)
-                if (t != ids[4]) Assert.That(tw.OpenCells(t), Is.EqualTo(0ul), $"reinforced tile {t}");
-            Assert.That(tw[ids[4]].State, Is.EqualTo(TileState.Broken), "the big blast takes the middle tile whole");
+                for (int qi = 0; qi < TileWalls.Quads; qi++)
+                    for (int qj = 0; qj < TileWalls.Quads; qj++)
+                    {
+                        QuadFill f = tw.QuadOf(t, qi, qj);
+                        if (f == QuadFill.Inner || f == QuadFill.Outer) diagonal++;
+                    }
+            Assert.That(diagonal, Is.GreaterThan(8), "a round hole has diagonal edges all round it");
         }
 
         [Test]
@@ -206,25 +330,38 @@ namespace Sculpt.Core.Tests
             var blast = new Vec3d(3.75, 3.75, 9.8); // 0.2 m in front of the middle tile's face
             var into = new List<int>();
             GrenadeRules.TilesInBlast(tw, blast, new GrenadeConfig(), into);
-            foreach (int t in into) tw.Damage(t, tw.Config.GrenadeTileDamage, blast, TileCause.Grenade, 1, tw.Config.GrenadeBlastRadius);
+            tw.Blast(blast, into, tw.Config.GrenadeTileDamage, tw.Config.GrenadeBlastRadius, TileCause.Grenade, 1);
             bool[,] g = Grid(tw, 5, 5, ids);
-            // Across the middle row and column it is about 4.4 m wide, but the corners of the 3 x 3 tile square stand.
             int row = 0, col = 0;
             for (int x = 0; x < 5 * N; x++) if (g[x, 20]) row++;
             for (int y = 0; y < 5 * N; y++) if (g[20, y]) col++;
-            Assert.That(row * 1.5 / N, Is.InRange(3.6, 5.2));
-            Assert.That(col * 1.5 / N, Is.InRange(3.6, 5.2));
-            Assert.That(g[8, 8], Is.False, "the corner of the old 3 x 3 square still stands: the hole is round");
+            Assert.That(row * Cell, Is.InRange(3.6, 5.2));
+            Assert.That(col * Cell, Is.InRange(3.6, 5.2));
+            Assert.That(g[3, 3], Is.False, "far corners stand: the hole is round");
             AssertFair(g, tw.MinHoleCells(ids[0]), "after the grenade");
             AssertCollisionMatches(world, tw, ids);
         }
 
         [Test]
-        public void BulletsAndPlayersPassThroughTheHole_NotThroughTheWallBeside_It()
+        public void GrenadeOnReinforcedWall_LeavesItStanding()
         {
             var world = Wall(3, 3, out int[] ids);
             TileWalls tw = world.Tiles;
-            tw.Damage(ids[4], 100, Face(2.25, 2.25), TileCause.Bullet);
+            foreach (int t in ids) tw.Set(t, TileState.Reinforced, 200, TileCause.Reinforce);
+            var blast = new Vec3d(2.25, 2.25, 9.8);
+            var into = new List<int>();
+            GrenadeRules.TilesInBlast(tw, blast, new GrenadeConfig(), into);
+            tw.Blast(blast, into, tw.Config.GrenadeTileDamage, tw.Config.GrenadeBlastRadius, TileCause.Grenade, 1);
+            Assert.That(OpenCount(Grid(tw, 3, 3, ids)), Is.EqualTo(0), "a reinforced wall survives a grenade (badly cracked)");
+            Assert.That(tw.CellHealth(ids[4], TileWalls.MiddleCell), Is.EqualTo(200 - tw.Config.GrenadeTileDamage));
+        }
+
+        [Test]
+        public void BulletsPassThroughTheHole_NotThroughTheWallBeside_It()
+        {
+            var world = Wall(3, 3, out int[] ids);
+            TileWalls tw = world.Tiles;
+            tw.ApplyShot(Pump(tw, ids, 3, 2.25, 2.25), Weapon.Pump, 1);
             TerrainHit through = world.Raycast(new Vec3d(2.25, 2.25, 8), new Vec3d(0, 0, 1), 5);
             Assert.That(through.Hit, Is.False, "straight through the middle of the hole");
             TerrainHit beside = world.Raycast(new Vec3d(0.3, 0.3, 8), new Vec3d(0, 0, 1), 5);
@@ -232,23 +369,97 @@ namespace Sculpt.Core.Tests
             Assert.That(beside.Point.Z, Is.EqualTo(10).Within(1e-9));
         }
 
+        // ------------------------------------------------------------------ healing by area
+
+        private static void Heal(TileWalls tw, int tile, int cell, HealKind kind = HealKind.Heal)
+        {
+            var plan = new Dictionary<int, ulong>();
+            tw.HealPlan(tile, cell, kind, plan);
+            tw.ApplyHeal(plan, kind, 1);
+        }
+
         [Test]
-        public void Heal_FillsTheTile_AndTheSmallBitsItLeavesNextDoor()
+        public void Heal_ASmallHole_FillsAllOfIt()
         {
             var world = Wall(3, 3, out int[] ids);
             TileWalls tw = world.Tiles;
-            // A break near the middle tile's right edge takes a little of the tile to its right.
-            tw.Damage(ids[4], 100, Face(2.9, 2.25), TileCause.Bullet);
-            Assert.That(tw.OpenCells(ids[5]), Is.Not.EqualTo(0ul), "the hole crosses into the right-hand tile");
-            var filled = new List<Aabb>();
-            tw.CellsFilledByRestoring(ids[4], filled);
-            tw.Set(ids[4], TileState.Patched, 50, TileCause.Heal);
-            Assert.That(tw[ids[4]].Open, Is.EqualTo(0ul), "a heal brings every cell back");
-            bool[,] g = Grid(tw, 3, 3, ids);
-            AssertFair(g, tw.MinHoleCells(ids[4]), "after the heal");
+            tw.ApplyShot(Pump(tw, ids, 3, 2.25, 2.25, 0.25), Weapon.Pump, 1);
+            Assert.That(OpenCount(Grid(tw, 3, 3, ids)), Is.GreaterThan(0));
+            // Aim at the hole's lowest open cell, off centre: the whole hole still closes.
+            int t = -1, cell = -1;
+            foreach (int u in ids)
+            {
+                ulong o = tw.OpenCells(u);
+                for (int c = 0; c < 64 && t < 0; c++) if (((o >> c) & 1) != 0) { t = u; cell = c; }
+            }
+            Heal(tw, t, cell);
+            Assert.That(OpenCount(Grid(tw, 3, 3, ids)), Is.EqualTo(0), "a hole smaller than a person heals whole");
+            Assert.That(tw[t].Patch, Is.Not.EqualTo(0ul), "and comes back as patch");
             AssertCollisionMatches(world, tw, ids);
-            if (tw.OpenCells(ids[5]) == 0) Assert.That(filled, Is.Not.Empty, "the dry run named the cells that filled");
         }
+
+        [Test]
+        public void Heal_ABrokenTile_InAWall_FillsTheWholeTile()
+        {
+            var world = Wall(3, 3, out int[] ids);
+            TileWalls tw = world.Tiles;
+            tw.Set(ids[4], TileState.Broken, 0, TileCause.Bullet);
+            Heal(tw, ids[4], 0);
+            Assert.That(tw[ids[4]].State, Is.EqualTo(TileState.Patched));
+            Assert.That(tw[ids[4]].Health, Is.EqualTo(tw.Config.PatchedHealth));
+        }
+
+        [Test]
+        public void Heal_ABigHole_ClosesAChunkAroundTheAim_AndStaysFair()
+        {
+            var world = Wall(5, 5, out int[] ids);
+            TileWalls tw = world.Tiles;
+            var blast = new Vec3d(3.75, 3.75, 9.8);
+            var into = new List<int>();
+            GrenadeRules.TilesInBlast(tw, blast, new GrenadeConfig(), into);
+            tw.Blast(blast, into, tw.Config.GrenadeTileDamage, tw.Config.GrenadeBlastRadius, TileCause.Grenade, 1);
+            int before = OpenCount(Grid(tw, 5, 5, ids));
+            int mid = ids[12];
+            Heal(tw, mid, tw.CellAt(mid, Face(3.75, 3.75)));
+            bool[,] g = Grid(tw, 5, 5, ids);
+            int closed = before - OpenCount(g);
+            double r = tw.Config.HealRadius;
+            Assert.That(closed * Cell * Cell, Is.InRange(Math.PI * r * r * 0.7, Math.PI * r * r * 1.6), "about a 1.9 m disc of it");
+            Assert.That(OpenCount(g), Is.GreaterThan(0), "a grenade hole takes more than one heal");
+            AssertFair(g, tw.MinHoleCells(mid), "after a chunk heal");
+            AssertCollisionMatches(world, tw, ids);
+        }
+
+        [Test]
+        public void Heal_RepairsBadCracks_NeverWeakensReinforced()
+        {
+            var world = Wall(3, 3, out int[] ids);
+            TileWalls tw = world.Tiles;
+            tw.Damage(ids[4], 70, Face(2.25, 2.25), TileCause.Bullet, 1, 0.5); // cracked to 30, nothing open
+            int cell = tw.CellAt(ids[4], Face(2.25, 2.25));
+            Assert.That(tw.CellHealth(ids[4], cell), Is.EqualTo(30));
+            Heal(tw, ids[4], cell);
+            Assert.That(tw.CellHealth(ids[4], cell), Is.EqualTo(tw.Config.PatchedHealth));
+            var plan = new Dictionary<int, ulong>();
+            tw.Set(ids[0], TileState.Reinforced, 120, TileCause.Reinforce);
+            tw.HealPlan(ids[0], 9, HealKind.Heal, plan);
+            Assert.That(plan.ContainsKey(ids[0]), Is.False, "a heal never touches reinforced cells");
+        }
+
+        [Test]
+        public void HealSpace_NamesTheCellsThatComeBack()
+        {
+            var world = Wall(3, 3, out int[] ids);
+            TileWalls tw = world.Tiles;
+            tw.ApplyShot(Pump(tw, ids, 3, 2.25, 2.25), Weapon.Pump, 1);
+            var plan = new Dictionary<int, ulong>();
+            tw.HealPlan(ids[4], tw.CellAt(ids[4], Face(2.25, 2.25)), HealKind.Heal, plan);
+            var cells = new List<Aabb>();
+            tw.HealSpace(plan, cells, new List<int>());
+            Assert.That(cells.Count, Is.EqualTo(OpenCount(Grid(tw, 3, 3, ids))), "every open cell of the small hole");
+        }
+
+        // ------------------------------------------------------------------ the rest
 
         [Test]
         public void SameHits_SameHoles_OnEveryMachine()
@@ -263,10 +474,16 @@ namespace Sculpt.Core.Tests
                     int t = ids[rng.Next(ids.Length)];
                     Aabb b = tw.BoundsOf(t);
                     var at = Face(b.Min.X + rng.NextDouble() * 1.5, b.Min.Y + rng.NextDouble() * 1.5);
-                    tw.Damage(t, 13 + rng.Next(60), at, TileCause.Bullet);
+                    tw.Damage(t, 13 + rng.Next(60), at, TileCause.Bullet, 1, 0.3 + rng.NextDouble() * 0.5);
                 }
-                var masks = new ulong[ids.Length];
-                for (int i = 0; i < ids.Length; i++) masks[i] = tw.OpenCells(ids[i]);
+                var masks = new ulong[ids.Length * 2];
+                for (int i = 0; i < ids.Length; i++)
+                {
+                    masks[i] = tw.OpenCells(ids[i]);
+                    ulong h = 0;
+                    for (int c = 0; c < 64; c++) h = h * 31 + (ulong)tw.CellHealth(ids[i], c);
+                    masks[ids.Length + i] = h;
+                }
                 return masks;
             }
             Assert.That(Run(), Is.EqualTo(Run()));
@@ -277,20 +494,30 @@ namespace Sculpt.Core.Tests
         {
             var server = Wall(3, 3, out int[] ids);
             var client = Wall(3, 3, out _);
-            server.Tiles.Damage(ids[4], 100, Face(2.0, 2.6), TileCause.Bullet, 3);
+            client.Tiles.CopyOnly = true;
+            server.Tiles.ApplyShot(Ar(server.Tiles, ids, 3, 2.0, 2.6), Weapon.Ar, 3);
+            server.Tiles.ApplyShot(Ar(server.Tiles, ids, 3, 2.0, 2.6), Weapon.Ar, 3);
+            server.Tiles.Set(ids[0], TileState.Reinforced, 200, TileCause.Reinforce, 3);
+            server.Tiles.ApplyShot(Ar(server.Tiles, ids, 3, 0.7, 0.7), Weapon.Ar, 3);
             var w = new ByteWriter();
             TileProtocol.Write(w, new TilesMsg { Tick = 5, Changes = new List<TileChange>(server.Tiles.Changes) });
             var r = new ByteReader(w.ToArray(), 0, w.Length);
             var changes = new List<TileChange>();
             TilesMsg m = TileProtocol.Read(ref r, changes, new List<HealEvent>());
             Assert.That(m.Changes.Count, Is.EqualTo(server.Tiles.Changes.Count));
-            foreach (TileChange c in m.Changes) client.Tiles.Set(c.Tile, c.To, c.Health, c.Cause, c.By, c.Open);
+            foreach (TileChange c in m.Changes)
+                client.Tiles.WriteCells(c.Tile, c.To == TileState.Broken ? ulong.MaxValue : c.Open, c.Patch, c.Steel, c.Hp, c.Cause, c.By);
             for (int i = 0; i < ids.Length; i++)
             {
-                Assert.That(client.Tiles[ids[i]].Open, Is.EqualTo(server.Tiles[ids[i]].Open));
-                Assert.That(client.Tiles[ids[i]].State, Is.EqualTo(server.Tiles[ids[i]].State));
+                WallTile a = server.Tiles[ids[i]], b = client.Tiles[ids[i]];
+                Assert.That(b.Open, Is.EqualTo(a.Open));
+                Assert.That(b.State, Is.EqualTo(a.State));
+                Assert.That(b.Health, Is.EqualTo(a.Health));
+                Assert.That(b.Steel, Is.EqualTo(a.Steel));
+                Assert.That(client.Tiles.CellHealths(ids[i]), Is.EqualTo(server.Tiles.CellHealths(ids[i])));
             }
             AssertCollisionMatches(client, client.Tiles, ids);
+            AssertCollisionIsTheDrawnShape(client, client.Tiles, ids);
         }
 
         [Test]
@@ -300,6 +527,27 @@ namespace Sculpt.Core.Tests
             world.Tiles.Damage(ids[4], 100, Face(2.9, 2.25), TileCause.Bullet);
             Assert.That(world.Tiles[ids[4]].State, Is.EqualTo(TileState.Broken));
             foreach (int t in ids) if (t != ids[4]) Assert.That(world.Tiles.OpenCells(t), Is.EqualTo(0ul));
+        }
+
+        [Test]
+        public void ServerCost_OfAHit_StaysSmall()
+        {
+            var world = Wall(8, 3, out int[] ids);
+            TileWalls tw = world.Tiles;
+            var rng = new Random(3);
+            for (int i = 0; i < 20; i++) tw.ApplyShot(Ar(tw, ids, 8, 0.5 + rng.NextDouble() * 11, 0.5 + rng.NextDouble() * 3.5), Weapon.Ar, 1); // warm up
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            const int Hits = 200;
+            for (int i = 0; i < Hits; i++)
+            {
+                double x = 0.5 + rng.NextDouble() * 11, y = 0.5 + rng.NextDouble() * 3.5;
+                if (i % 4 == 0) tw.ApplyShot(Pump(tw, ids, 8, x, y, 0.2), Weapon.Pump, 1);
+                else tw.ApplyShot(Ar(tw, ids, 8, x, y), Weapon.Ar, 1);
+                if (i % 25 == 24) foreach (int t in ids) tw.Set(t, TileState.Intact, 100, TileCause.Built);
+            }
+            double ms = sw.Elapsed.TotalMilliseconds / Hits;
+            TestContext.WriteLine($"{ms:F3} ms per hit");
+            Assert.That(ms, Is.LessThan(2.0), "a hit stays cheap for the server");
         }
 
         // ------------------------------------------------------------------ seeded fight
@@ -317,24 +565,36 @@ namespace Sculpt.Core.Tests
                 int t = ids[rng.Next(ids.Length)];
                 Aabb b = tw.BoundsOf(t);
                 double roll = rng.NextDouble();
+                var at = Face(b.Min.X + rng.NextDouble() * 1.5, b.Min.Y + rng.NextDouble() * 1.5);
                 string what;
-                if (roll < 0.12)
+                if (roll < 0.15)
                 {
-                    bool reinforce = rng.NextDouble() < 0.3;
-                    if (reinforce) tw.Set(t, TileState.Reinforced, 200, TileCause.Reinforce);
-                    else tw.Set(t, TileState.Patched, 50, TileCause.Heal);
-                    what = (reinforce ? "reinforce " : "heal ") + t;
+                    HealKind kind = rng.NextDouble() < 0.3 ? HealKind.Reinforce : HealKind.Heal;
+                    Heal(tw, t, tw.CellAt(t, at), kind);
+                    what = $"{kind} {t} at ({at.X:F2}, {at.Y:F2})";
+                }
+                else if (roll < 0.2)
+                {
+                    tw.Set(t, TileState.Reinforced, 200, TileCause.Reinforce);
+                    what = "reinforce whole " + t;
                 }
                 else
                 {
-                    var at = Face(b.Min.X + rng.NextDouble() * 1.5, b.Min.Y + rng.NextDouble() * 1.5);
-                    int dmg = roll < 0.5 ? 13 : roll < 0.8 ? 54 : roll < 0.9 ? 50 : 150;
-                    double radius = dmg == 150 ? tw.Config.GrenadeBlastRadius : -1;
-                    tw.Damage(t, dmg, at, TileCause.Bullet, 1, radius);
-                    what = $"hit {t} for {dmg} at ({at.X:F2}, {at.Y:F2})";
+                    if (roll < 0.55) tw.ApplyShot(Ar(tw, ids, W, at.X, at.Y), Weapon.Ar, 1);
+                    else if (roll < 0.8) tw.ApplyShot(Pump(tw, ids, W, at.X, at.Y, rng.NextDouble() * 0.4), Weapon.Pump, 1);
+                    else if (roll < 0.9) tw.Damage(t, 50, at, TileCause.Punch, 1, tw.Config.PunchHitRadius);
+                    else
+                    {
+                        var blast = new Vec3d(at.X, at.Y, 9.8);
+                        var into = new List<int>();
+                        GrenadeRules.TilesInBlast(tw, blast, new GrenadeConfig(), into);
+                        tw.Blast(blast, into, tw.Config.GrenadeTileDamage, tw.Config.GrenadeBlastRadius, TileCause.Grenade, 1);
+                    }
+                    what = $"hit ({roll:F2}) at ({at.X:F2}, {at.Y:F2})";
                 }
                 AssertFair(Grid(tw, W, H, ids), min, $"seed {seed} step {step} ({what})");
                 AssertCollisionMatches(world, tw, ids);
+                if (step % 20 == 19) AssertCollisionIsTheDrawnShape(world, tw, ids);
             }
         }
     }

@@ -59,8 +59,8 @@ namespace Sculpt.Core.Tests
             Assert.That(h.Server.Walls[room[SouthTile]].State, Is.EqualTo(TileState.Broken), "still open during the 3 s delay");
             Assert.That(h.Server.Healing.Count, Is.Zero);
             h.RunSeconds(0.5);
-            Assert.That(h.Server.Healing.HealerOf(room[SouthTile]), Is.EqualTo(d.Id), "then it starts healing (in sculpt mode, like anyone)");
-            Assert.That(d.State.Hand.InSculptMode, Is.True);
+            Assert.That(h.Server.Walls[room[SouthTile]].State, Is.EqualTo(TileState.Patched), "then it heals it (one press, 0.2 s, like anyone)");
+            Assert.That(d.State.Hand.InSculptMode, Is.False, "no heal mode any more");
             h.RunSeconds(1.0);
             Assert.That(h.Server.Walls[room[SouthTile]].State, Is.EqualTo(TileState.Patched));
             Assert.That(watcher.Client.Walls[room[SouthTile]].State, Is.EqualTo(TileState.Patched), "players see it");
@@ -160,7 +160,7 @@ namespace Sculpt.Core.Tests
             // One tile in each wall, bottom and top rows.
             int[] hits = { info.Room[1], info.Room[12 + 9], info.Room[24 + 2], info.Room[36 + 10] };
             foreach (int t in hits) w.Tiles.Damage(t, 1000, TileCause.Grenade);
-            for (int k = 0; k < 60 * 9; k++) server.Step();
+            for (int k = 0; k < SimTime.TicksPerSecond * 9; k++) server.Step();
             foreach (int t in hits) Assert.That(w.Tiles[t].State, Is.EqualTo(TileState.Patched), $"tile {t}");
         }
 

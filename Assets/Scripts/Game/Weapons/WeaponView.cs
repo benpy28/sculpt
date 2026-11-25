@@ -81,17 +81,25 @@ namespace Sculpt.Game.Weapons
         private static readonly Color TracerColour = new Color(1f, 0.86f, 0.55f, 0.9f);
         private static readonly Color FlashCore = new Color(1f, 0.93f, 0.7f, 1f);
         private static readonly Color FlashOuter = new Color(1f, 0.62f, 0.22f, 0.85f);
+        private const float FlashLife = 0.05f;
 
         /// <summary>Viewmodel feel per gun: kick back (m/s impulse), kick up (deg/s impulse), spring stiffness, damping,
-        /// camera roll impulse (deg/s) and FOV punch (deg). Heavier guns kick harder and settle slower.</summary>
+        /// camera roll impulse (deg/s) and FOV punch (deg). Heavier guns kick harder and settle slower. All of it is
+        /// cosmetic: the viewmodel and the camera roll never move the crosshair, and every gun is settled well before its
+        /// next shot (pump ~0.35 s of its 0.9 s cycle, AR ~0.15 s of 0.18 s), so the weight never gets in the way of aim
+        /// while moving fast (Ben: hit hard, but never high effort to run and shoot).</summary>
         private static readonly float[,] Feel =
         {
             // back,  up,   w,  zeta, roll, fov
-            { 2.4f, 300f, 13f, 0.55f, 90f, 2.6f }, // pump
-            { 0.75f, 60f, 27f, 0.7f, 18f, 0.35f }, // SMG
-            { 1.1f, 100f, 22f, 0.65f, 30f, 0.7f }, // AR
-            { 1.0f, 190f, 19f, 0.6f, 35f, 0.6f },  // pistol
+            { 3.3f, 430f, 11f, 0.5f, 125f, 3.4f },  // pump: a shove into the shoulder, slow heavy return
+            { 0.9f, 72f, 26f, 0.7f, 22f, 0.45f },   // SMG: light and quick so the spray stays readable
+            { 1.55f, 150f, 18f, 0.6f, 44f, 1.05f }, // AR: a solid thump per round, settled before the next
+            { 1.3f, 245f, 17f, 0.56f, 48f, 0.85f }, // pistol: sharp flip up, fast home
         };
+        // No muzzle flash on any gun (Ben 2026-11-25: too much, doesn't fit the game). Shots read from the kick, the
+        // tracer, a little muzzle smoke and the sound.
+        /// <summary>The gun never tips further than this (deg) from a kick, so a fast pump follow-up never hides the target.</summary>
+        private const float MaxKickPitch = 22f;
 
         public void Init(LocalPlayer player, NetSession session, CameraRig rig, FirstPersonMode fp, ClientSettings settings, MovementConfig mc)
         {
@@ -147,7 +155,18 @@ namespace Sculpt.Game.Weapons
             _fist.SetActive(false);
             _puffs = MakeParticles("Impact puffs", _puffMat, -0.1f);
             _sparks = MakeParticles("Impact sparks", _puffMat, 1.2f);
+            _hotMat = new Material(overlay) { name = "Hot sparks", renderQueue = 3016 };
+            _hotMat.SetFloat("_Soft", 1f);
+            _hot = MakeParticles("Hot sparks", _hotMat, 1.6f);
+            var hr = _hot.GetComponent<ParticleSystemRenderer>();
+            hr.renderMode = ParticleSystemRenderMode.Stretch; // streaks along their flight, reads as hot metal
+            hr.velocityScale = 0.025f;
+            hr.lengthScale = 1.2f;
+            GunAudio.Warm(); // generate every gun clip at load, never on the first shot
         }
+
+        private ParticleSystem _hot;
+        private Material _hotMat;
 
         private ParticleSystem MakeParticles(string name, Material mat, float gravity)
         {
@@ -239,11 +258,13 @@ namespace Sculpt.Game.Weapons
             float wn = Feel[(int)w, 2], z = Feel[(int)w, 3];
             Spring(ref _kickPos, ref _kickPosVel, wn, z, dt);
             Spring(ref _kickRot, ref _kickRotVel, wn, z, dt);
+            if (_kickRot.x < -MaxKickPitch) { _kickRot.x = -MaxKickPitch; if (_kickRotVel.x < 0) _kickRotVel.x = 0; }
             CameraShake sh = _fp.Shake;
             float roll = sh.Roll;
             Spring1(ref roll, ref _rollVel, 16f, 0.6f, dt);
             sh.Roll = roll;
-            sh.FovPunch = Mathf.MoveTowards(sh.FovPunch, 0f, dt * 14f);
+            // FOV punch: out on the shot's frame, then back fast and smooth (exponential, ~0.2 s), never lingering.
+            sh.FovPunch = sh.FovPunch < 0.02f ? 0f : sh.FovPunch * Mathf.Exp(-13f * dt);
             sh.Offset = Vector3.Lerp(sh.Offset, Vector3.zero, 1f - Mathf.Exp(-30f * dt));
         }
 
@@ -257,7 +278,7 @@ namespace Sculpt.Game.Weapons
             {
                 GunModel g = _guns[(int)p.Shot.Weapon];
                 Vector3 muzzle = g.Root.activeInHierarchy ? g.Muzzle.position : p.Shot.Origin.ToUnity() + p.Shot.Aim.ToUnity() * 0.6f;
-                _flashes.Add(new Flash { At = muzzle, Fwd = p.Shot.Aim.ToUnity(), Born = Time.time, Size = p.Shot.Weapon == Weapon.Pump ? 0.22f : 0.13f, Local = true });
+                MuzzleSmoke(muzzle, p.Shot.Aim.ToUnity(), p.Shot.Weapon);
                 bool pellets = p.Ends.Count > 1;
                 foreach (Vector3 end in p.Ends)
                     AddTracer(muzzle, end, pellets ? 0.012f : 0.018f, pellets ? 0.05f : 0.07f);
@@ -281,7 +302,7 @@ namespace Sculpt.Game.Weapons
             _fp.Shake.FovPunch = Mathf.Max(_fp.Shake.FovPunch, Feel[k, 5]);
 
             Vector3 eye = shot.Origin.ToUnity();
-            GunAudio.Play(GunAudio.Shot(shot.Weapon), eye, 1f, Random.Range(0.96f, 1.04f), false);
+            GunAudio.PlayShot(shot.Weapon, _session.Client.Grid, eye, 1f, Random.Range(0.96f, 1.04f), false);
             if (shot.Weapon == Weapon.Pump) _rackAt.Add(now + 0.32f);
 
             var ends = new List<Vector3>();
@@ -297,7 +318,6 @@ namespace Sculpt.Game.Weapons
             _kickRotVel += new Vector3(-380f, Random.Range(-40f, 40f), Random.Range(-50f, 50f));
             _rollVel += (Random.value < 0.5f ? -1f : 1f) * 110f;
             _fp.Shake.FovPunch = Mathf.Max(_fp.Shake.FovPunch, 3.2f);
-            _flashes.Add(new Flash { At = _launcher.Muzzle.position, Fwd = _rig.Camera.transform.forward, Born = Time.time, Size = 0.3f, Local = true });
         }
 
         private void OnRemoteShot(in CombatEvent e, float now)
@@ -307,8 +327,8 @@ namespace Sculpt.Game.Weapons
             Vector3 fwd = shot.Aim.ToUnity();
             Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
             Vector3 muzzle = eye + fwd * 0.65f + right * 0.2f - Vector3.up * 0.18f;
-            _flashes.Add(new Flash { At = muzzle, Fwd = fwd, Born = now, Size = shot.Weapon == Weapon.Pump ? 0.3f : 0.2f });
-            GunAudio.Play(GunAudio.Shot(shot.Weapon), muzzle, 1f, Random.Range(0.96f, 1.04f), true);
+            MuzzleSmoke(muzzle, fwd, shot.Weapon);
+            GunAudio.PlayShot(shot.Weapon, _session.Client.Grid, muzzle, 1f, Random.Range(0.96f, 1.04f), true);
             if (shot.Weapon == Weapon.Pump) StartCoroutineRack(muzzle, now);
             var ends = new List<Vector3>();
             TraceShot(shot, includeLocal: true, ends);
@@ -338,6 +358,7 @@ namespace Sculpt.Game.Weapons
                     var wall = Sculpt.Game.World.WallImpacts.OnBullet;
                     bool drawn = h.Brush > 0 && wall != null && wall(p, h.Normal.ToUnity(), h.Brush - 1, amount);
                     RockImpact(p, h.Normal.ToUnity(), amount, visuals: !drawn);
+                    HotSparks(p, h.Normal.ToUnity(), shot.Weapon, st.Pellets > 1, i);
                 }
                 // Player hits are drawn when the server confirms them (Hit events).
             }
@@ -422,13 +443,13 @@ namespace Sculpt.Game.Weapons
             }
             var ep = new ParticleSystem.EmitParams();
             Color rock = Sculpt.Game.World.ChunkMesher.RockHigh;
-            int puffs = Mathf.Max(2, Mathf.RoundToInt(5 * amount));
+            int puffs = Mathf.Max(3, Mathf.RoundToInt(7 * amount));
             for (int i = 0; i < puffs; i++)
             {
                 ep.position = at + normal * 0.04f;
-                ep.velocity = (normal * Random.Range(0.6f, 2.2f) + Random.insideUnitSphere * 0.7f);
-                ep.startSize = Random.Range(0.12f, 0.3f);
-                ep.startLifetime = Random.Range(0.35f, 0.8f);
+                ep.velocity = (normal * Random.Range(0.8f, 2.8f) + Random.insideUnitSphere * 0.8f);
+                ep.startSize = Random.Range(0.16f, 0.42f);
+                ep.startLifetime = Random.Range(0.5f, 1.1f);
                 float v = Random.Range(0.8f, 1.0f);
                 ep.startColor = new Color(rock.r * v, rock.g * v, rock.b * v, 0.7f);
                 _puffs.Emit(ep, 1);
@@ -444,6 +465,50 @@ namespace Sculpt.Game.Weapons
                 _sparks.Emit(ep, 1);
             }
             if (Random.value < 0.6f) GunAudio.Play(GunAudio.Impact, at, 0.45f * amount + 0.1f, Random.Range(0.85f, 1.15f), true, 35f, 1.5f);
+        }
+
+        /// <summary>
+        /// The hit itself, on any surface: a short white-hot star at the point and bright streaking sparks off it. The
+        /// surface's own chips and dust (wall colour) come from the building or <see cref="RockImpact"/>. A pump blast
+        /// sparks on every third pellet so a wall of pellets reads as one big hit, not 9 fireworks.
+        /// </summary>
+        private void HotSparks(Vector3 at, Vector3 normal, Weapon w, bool pellet, int index)
+        {
+            if (pellet && index % 3 != 0) return;
+            float heavy = w == Weapon.Pump ? 1.3f : w == Weapon.Ar ? 1.1f : w == Weapon.Pistol ? 1f : 0.75f;
+            _flashes.Add(new Flash { At = at + normal * 0.03f, Fwd = normal, Born = Time.time, Size = 0.09f * heavy });
+            var ep = new ParticleSystem.EmitParams();
+            int n = Mathf.RoundToInt(Random.Range(4f, 7f) * heavy);
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 v = Random.onUnitSphere;
+                if (Vector3.Dot(v, normal) < 0f) v = -v;
+                v += normal * 0.5f; // a cone off the surface, never into it
+                ep.position = at + normal * 0.02f;
+                ep.velocity = v.normalized * Random.Range(3f, 9f) * heavy;
+                ep.startSize = Random.Range(0.012f, 0.025f);
+                ep.startLifetime = Random.Range(0.08f, 0.28f);
+                ep.startColor = Color.Lerp(new Color(1f, 0.95f, 0.75f, 1f), new Color(1f, 0.6f, 0.2f, 1f), Random.value);
+                _hot.Emit(ep, 1);
+            }
+        }
+
+        /// <summary>A puff of grey smoke drifting off the muzzle; heavier and longer for the pump.</summary>
+        private void MuzzleSmoke(Vector3 at, Vector3 fwd, Weapon w)
+        {
+            var ep = new ParticleSystem.EmitParams();
+            int n = w == Weapon.Pump ? 4 : w == Weapon.Smg ? 1 : 2;
+            float big = w == Weapon.Pump ? 1.6f : 1f;
+            for (int i = 0; i < n; i++)
+            {
+                ep.position = at + fwd * Random.Range(0.02f, 0.12f);
+                ep.velocity = fwd * Random.Range(0.4f, 1.4f) * big + Random.insideUnitSphere * 0.25f + Vector3.up * 0.25f;
+                ep.startSize = Random.Range(0.05f, 0.1f) * big;
+                ep.startLifetime = Random.Range(0.3f, 0.6f) * big;
+                float g = Random.Range(0.75f, 0.9f);
+                ep.startColor = new Color(g, g, g, 0.22f);
+                _puffs.Emit(ep, 1);
+            }
         }
 
         private void BloodPuff(Vector3 at, bool head, int pellets)
@@ -485,18 +550,25 @@ namespace Sculpt.Game.Weapons
                 Color c = new Color(t.Colour.r, t.Colour.g, t.Colour.b, t.Colour.a * k);
                 _lines.Add(a, b, c, t.Width);
             }
-            _flashes.RemoveAll(f => now - f.Born > 0.045f);
+            _flashes.RemoveAll(f => now - f.Born > FlashLife);
             foreach (Flash f in _flashes)
             {
                 LineBatch lb = f.Local ? _flashLines : _lines;
-                float s = f.Size * Random.Range(0.85f, 1.15f);
-                Vector3 up = Vector3.Cross(f.Fwd, Vector3.right).normalized;
-                if (up.sqrMagnitude < 0.5f) up = Vector3.up;
+                // Biggest on the shot's own frame, shrinking over ~50 ms (at 144 fps that is 7 frames of fire).
+                float age = Mathf.Clamp01((now - f.Born) / FlashLife);
+                float s = f.Size * Random.Range(0.85f, 1.15f) * (1.15f - 0.55f * age);
+                Vector3 up = Vector3.Cross(f.Fwd, Vector3.right);
+                if (up.sqrMagnitude < 0.01f) up = Vector3.Cross(f.Fwd, Vector3.forward);
+                up.Normalize();
                 Vector3 side = Vector3.Cross(up, f.Fwd).normalized;
-                lb.Add(f.At, f.At + f.Fwd * s * 1.8f, FlashOuter, s * 0.9f);
-                lb.Add(f.At - f.Fwd * s * 0.1f, f.At + f.Fwd * s * 0.9f, FlashCore, s * 0.5f);
-                lb.Add(f.At - side * s * 0.6f, f.At + side * s * 0.6f, FlashOuter, s * 0.25f);
-                lb.Add(f.At - up * s * 0.6f, f.At + up * s * 0.6f, FlashOuter, s * 0.25f);
+                float spin = Random.Range(0f, Mathf.PI);
+                Vector3 a = up * Mathf.Cos(spin) + side * Mathf.Sin(spin), b = Vector3.Cross(f.Fwd, a);
+                Color outer = new Color(FlashOuter.r, FlashOuter.g, FlashOuter.b, FlashOuter.a * (1f - 0.6f * age));
+                lb.Add(f.At, f.At + f.Fwd * s * 2.1f, outer, s * 1.0f);
+                lb.Add(f.At - f.Fwd * s * 0.1f, f.At + f.Fwd * s * 1.0f, FlashCore, s * 0.55f);
+                lb.Add(f.At - a * s * 0.75f, f.At + a * s * 0.75f, outer, s * 0.22f);
+                lb.Add(f.At - b * s * 0.75f, f.At + b * s * 0.75f, outer, s * 0.22f);
+                lb.Add(f.At - (a + b) * s * 0.4f, f.At + (a + b) * s * 0.4f, outer, s * 0.16f);
             }
             _lines.End();
             _flashLines.End();
@@ -521,7 +593,7 @@ namespace Sculpt.Game.Weapons
             Vector3 cam = _rig.Camera.transform.position;
             if (s.PunchTick != _lastPunch)
             {
-                if (_lastPunch != int.MinValue && on && t < 4f)
+                if (_lastPunch != int.MinValue && on && t < 4f * SimTime.Per60)
                 {
                     GunAudio.Play(Whoosh, cam, 0.55f, Random.Range(0.93f, 1.07f), false);
                     _punchHitDone = false;
@@ -538,6 +610,8 @@ namespace Sculpt.Game.Weapons
                     Vector3 at = h.Point.ToUnity();
                     GunAudio.Play(GunAudio.Impact, at, 0.9f, Random.Range(0.6f, 0.7f), true, 40f, 2f);
                     _rollVel += Random.Range(-25f, 25f);
+                    // Chips and a mark at once (Ben: the first punch showed nothing); the cracks follow from the server.
+                    if (h.Brush > 0) World.WallImpacts.OnBullet?.Invoke(at, h.Normal.ToUnity(), h.Brush - 1, 1f);
                 }
             }
             if (_fist.activeSelf != on) _fist.SetActive(on);

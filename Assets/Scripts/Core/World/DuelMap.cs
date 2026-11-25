@@ -46,13 +46,24 @@ namespace Sculpt.Core
             var gl = new Vec3d(mid + 11, 0, 4);
             info.ItemSpawns.Add(new GroundItem { Kind = Item.C4, Count = 2, Position = c4 });
             info.ItemSpawns.Add(new GroundItem { Kind = Item.C4, Count = 2, Position = Turn(c4, size) });
-            info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 4, Position = gl });
-            info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 4, Position = Turn(gl, size) });
+            info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 6, Position = gl });
+            info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 6, Position = Turn(gl, size) });
             return w;
         }
 
         /// <summary>A point turned 180 degrees about the map centre.</summary>
         public static Vec3d Turn(Vec3d p, double size) => new Vec3d(size - p.X, p.Y, size - p.Z);
+
+        /// <summary>
+        /// The bot's walking grid for this map, with every door open: the bot opens shut doors on its way (or punches
+        /// them down; see DuelBot), so a door is a way through, not a wall. Built on its own copy of the map.
+        /// </summary>
+        public static BotNav BuildNav()
+        {
+            BrushWorld w = BuildBrushes(out BreachMapInfo info);
+            foreach (int d in info.Block.Doors) w.Tiles.Set(d, TileState.DoorOpen, w.Tiles[d].Health, TileCause.Built);
+            return BotNav.Build(Terrain(BuildGround(), w), 0, 0, info.SizeX, info.SizeZ);
+        }
 
         public static CompositeTerrain Terrain(SubGrid ground, BrushWorld brushes) => new CompositeTerrain(ground, brushes);
     }

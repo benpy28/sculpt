@@ -7,9 +7,9 @@ namespace Sculpt.Core
     public sealed class DummyConfig
     {
         /// <summary>A watched tile has to stay broken this long before the dummy heals it (3 s).</summary>
-        public int HealDelayTicks = 180;
+        public int HealDelayTicks = 180 * SimTime.Per60;
         /// <summary>After a press (refused, cancelled, or one that worked) the dummy waits this long before its next one.</summary>
-        public int RetryTicks = 45;
+        public int RetryTicks = 45 * SimTime.Per60;
         /// <summary>Also heal cracked (Damaged) tiles, not only broken ones. Off: you can practise charging through cracks.</summary>
         public bool HealDamaged = false;
         /// <summary>Knocked further than this from its post, it walks back.</summary>
@@ -74,7 +74,7 @@ namespace Sculpt.Core
             }
 
             Vec3d eye = me.Position + new Vec3d(0, PlayerMovement.EyeOf(me, mc), 0);
-            if (healing.TryGetJob(myId, out HealJob job)) { if (!away) Face(walls, job.Tile, eye); return Finish(cmd); }
+            if (healing.TryGetJob(myId, out HealJob job)) { if (!away) Face(walls, job.Tile, job.Cell, eye); return Finish(cmd); }
 
             int pick = -1, oldest = int.MaxValue;
             foreach (var kv in _brokenSince)
@@ -83,18 +83,37 @@ namespace Sculpt.Core
                 if (kv.Value < oldest || (kv.Value == oldest && kv.Key < pick)) { oldest = kv.Value; pick = kv.Key; }
             }
             if (pick < 0) { if (!away) { _yaw = PostYaw; _pitch = 0; } return Finish(cmd); }
-            if (!away) Face(walls, pick, eye);
-            if (!me.Hand.InSculptMode) { cmd.Hand.SculptToggle = true; return Finish(cmd); }
-            if (!me.Hand.CanConfirmSculpt || tick < _nextPress) return Finish(cmd);
+            int cell = CellOf(walls, pick);
+            if (!away) Face(walls, pick, cell, eye);
+            if (mc.Hand.QuickHeal)
+            {
+                if (me.Hand.InSculptMode) { cmd.Hand.SculptToggle = true; return Finish(cmd); }
+                if (!mc.Hand.CanHeal(me.Hand) || tick < _nextPress) return Finish(cmd);
+            }
+            else
+            {
+                if (!me.Hand.InSculptMode) { cmd.Hand.SculptToggle = true; return Finish(cmd); }
+                if (!me.Hand.CanConfirmSculpt || tick < _nextPress) return Finish(cmd);
+            }
             cmd.Hand.Heal = true;
             cmd.Hand.HealTile = pick;
+            cmd.Hand.HealCell = cell;
             _nextPress = tick + Config.RetryTicks;
             return Finish(cmd);
         }
 
-        private void Face(TileWalls walls, int tile, Vec3d eye)
+        /// <summary>The cell to aim a heal at: the first open cell (a hole), else the middle (a broken or cracked tile).</summary>
+        private static int CellOf(TileWalls walls, int tile)
         {
-            Aabb b = walls.BoundsOf(tile);
+            if (!walls.HasCells(tile)) return 0;
+            ulong open = walls[tile].Open;
+            for (int c = 0; c < 64; c++) if (((open >> c) & 1) != 0) return c;
+            return TileWalls.MiddleCell;
+        }
+
+        private void Face(TileWalls walls, int tile, int cell, Vec3d eye)
+        {
+            Aabb b = walls.HasCells(tile) ? walls.CellBox(tile, cell) : walls.BoundsOf(tile);
             Vec3d d = (b.Min + b.Max) * 0.5 - eye;
             _yaw = Math.Atan2(d.X, d.Z);
             double flat = Math.Sqrt(d.X * d.X + d.Z * d.Z);

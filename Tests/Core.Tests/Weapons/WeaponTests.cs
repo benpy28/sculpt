@@ -30,7 +30,7 @@ namespace Sculpt.Core.Tests.Weapons
             _tick = 1000;
             _shots = new List<WeaponShot>();
             _events = new List<MoveEvent>();
-            Run(30, default); // land and settle
+            Run(30 * SimTime.Per60, default); // land and settle
             _shots.Clear();
         }
 
@@ -74,10 +74,10 @@ namespace Sculpt.Core.Tests.Weapons
             Assert.That(pistol.DamageFactorAt(37.5), Is.EqualTo(0.85).Within(1e-9));
             Assert.That(pistol.DamageFactorAt(50), Is.EqualTo(0.7).Within(1e-9));
             Assert.That(pistol.DamageFactorAt(80), Is.EqualTo(0.7).Within(1e-9));
-            Assert.That(pump.BodyDamage * pump.Pellets, Is.EqualTo(99));
+            Assert.That(pump.BodyDamage * pump.Pellets, Is.EqualTo(84.6).Within(1e-9), "Ben 2026-11-25: ~15% less than 99");
             Assert.That(pump.HeadDamage / pump.BodyDamage, Is.EqualTo(1.5));
-            Assert.That((ar.BodyDamage, ar.HeadDamage), Is.EqualTo((25.0, 40.0)));
-            Assert.That((pistol.BodyDamage, pistol.HeadDamage), Is.EqualTo((30.0, 50.0)));
+            Assert.That((ar.BodyDamage, ar.HeadDamage), Is.EqualTo((21.5, 34.0)));
+            Assert.That((pistol.BodyDamage, pistol.HeadDamage), Is.EqualTo((25.5, 37.0)));
             Assert.That(c.MaxHealth, Is.EqualTo(150));
         }
 
@@ -91,29 +91,30 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
-        public void SmgFiresTwelveTimesASecond() => Assert.That(CountShots(Weapon.Smg, 60, _ => Hold), Is.EqualTo(12));
+        public void SmgFiresElevenTimesASecond() => Assert.That(CountShots(Weapon.Smg, 60 * SimTime.Per60, _ => Hold), Is.EqualTo(11));
 
         [Test]
         public void ArFiresFivePointFiveTimesASecondOnAverage()
         {
-            Assert.That(CountShots(Weapon.Ar, 120, _ => Hold), Is.EqualTo(11));
-            // Spacing alternates 11 and 10 ticks: the fractional rate is kept exactly.
-            for (int i = 1; i < _shots.Count; i++) Assert.That(_shots[i].Tick - _shots[i - 1].Tick, Is.InRange(10, 11));
+            Assert.That(CountShots(Weapon.Ar, 2 * SimTime.TicksPerSecond, _ => Hold), Is.EqualTo(11));
+            // Spacing alternates 22 and 21 ticks at 120 Hz (11 and 10 at 60): the fractional rate is kept exactly.
+            int lo = SimTime.TicksPerSecond * 2 / 11, hi = lo + 1;
+            for (int i = 1; i < _shots.Count; i++) Assert.That(_shots[i].Tick - _shots[i - 1].Tick, Is.InRange(lo, hi));
         }
 
         [Test]
         public void PistolIsSemiAutoAndCapsAtFivePerSecond()
         {
-            Assert.That(CountShots(Weapon.Pistol, 60, _ => Hold), Is.EqualTo(1), "holding fires once");
-            // Spam clicking every other tick: max 5 shots/s.
-            Assert.That(CountShots(Weapon.Pistol, 60, i => i % 2 == 0 ? Press : default), Is.EqualTo(5));
+            Assert.That(CountShots(Weapon.Pistol, 60 * SimTime.Per60, _ => Hold), Is.EqualTo(1), "holding fires once");
+            // Spam clicking every other tick for a second: max 5 shots/s.
+            Assert.That(CountShots(Weapon.Pistol, SimTime.TicksPerSecond, i => i % 2 == 0 ? Press : default), Is.EqualTo(5));
         }
 
         [Test]
-        public void PumpHoldsFireEveryFiftyFourTicks()
+        public void PumpHoldsFireEveryFortyFiveTicks()
         {
-            Assert.That(CountShots(Weapon.Pump, 109, _ => Hold), Is.EqualTo(3));
-            Assert.That(_shots[1].Tick - _shots[0].Tick, Is.EqualTo(54));
+            Assert.That(CountShots(Weapon.Pump, 108 * SimTime.Per60 + 1, _ => Hold), Is.EqualTo(3));
+            Assert.That(_shots[1].Tick - _shots[0].Tick, Is.EqualTo(45 * SimTime.Per60));
         }
 
         [Test]
@@ -122,11 +123,11 @@ namespace Sculpt.Core.Tests.Weapons
             Equip(Weapon.Pistol);
             Step(Press);
             int first = _shots[0].Tick;
-            Run(7, default);           // 8 ticks after the shot
-            Step(Press);               // 4 ticks early (ready at +12)
-            Run(6, default);
+            Run(8 * SimTime.Per60 - 1, default);  // 8/60 s after the shot
+            Step(Press);                          // 4/60 s early (ready at 12/60 s)
+            Run(6 * SimTime.Per60, default);
             Assert.That(_shots.Count, Is.EqualTo(2));
-            Assert.That(_shots[1].Tick, Is.EqualTo(first + 12), "fires on the first ready tick");
+            Assert.That(_shots[1].Tick, Is.EqualTo(first + 12 * SimTime.Per60), "fires on the first ready tick");
         }
 
         [Test]
@@ -135,8 +136,8 @@ namespace Sculpt.Core.Tests.Weapons
             Equip(Weapon.Pistol);
             Step(Press);
             Step(default);
-            Step(Press); // 10 ticks early: outside the 6-tick buffer
-            Run(20, default);
+            Step(Press); // 10/60 s early: outside the 6/60 s buffer
+            Run(20 * SimTime.Per60, default);
             Assert.That(_shots.Count, Is.EqualTo(1));
         }
 
@@ -150,10 +151,10 @@ namespace Sculpt.Core.Tests.Weapons
             int shot = _shots[0].Tick;
             Step(default, Key(Weapon.Smg));           // swap away at +1
             Run(_mc.Hand.Draw(Weapon.Smg), default);
-            Step(default, Key(Weapon.Pump));          // and straight back: draw ends at about +44
-            for (int i = 0; i < 80 && _shots.Count < 2; i++) Step(Hold);
+            Step(default, Key(Weapon.Pump));          // and straight back: draw ends at about +44/60 s
+            for (int i = 0; i < 80 * SimTime.Per60 && _shots.Count < 2; i++) Step(Hold);
             Assert.That(_shots.Count, Is.EqualTo(2));
-            Assert.That(_shots[1].Tick, Is.EqualTo(shot + 54), "waits out the remainder of the 54-tick cycle");
+            Assert.That(_shots[1].Tick, Is.EqualTo(shot + 45 * SimTime.Per60), "waits out the remainder of the 0.75 s cycle");
         }
 
         [Test]
@@ -162,10 +163,10 @@ namespace Sculpt.Core.Tests.Weapons
             Equip(Weapon.Pump);
             Step(Press);
             Step(default, Key(Weapon.Smg));
-            Run(60, default);                         // cycle is long over
+            Run(60 * SimTime.Per60, default);                         // cycle is long over
             Step(default, Key(Weapon.Pump));
             int drawStart = _tick;
-            for (int i = 0; i < 80 && _shots.Count < 2; i++) Step(Hold);
+            for (int i = 0; i < 80 * SimTime.Per60 && _shots.Count < 2; i++) Step(Hold);
             Assert.That(_shots[1].Tick, Is.EqualTo(drawStart + _mc.Hand.Draw(Weapon.Pump)), "draw time, no extra wait");
         }
 
@@ -176,7 +177,7 @@ namespace Sculpt.Core.Tests.Weapons
             Step(Press);
             Step(default, Key(Weapon.Smg));
             int swap = _tick;
-            for (int i = 0; i < 40 && _shots.Count < 2; i++) Step(Hold);
+            for (int i = 0; i < 40 * SimTime.Per60 && _shots.Count < 2; i++) Step(Hold);
             Assert.That(_shots[1].Weapon, Is.EqualTo(Weapon.Smg));
             Assert.That(_shots[1].Tick, Is.EqualTo(swap + _mc.Hand.Draw(Weapon.Smg)));
         }
@@ -188,10 +189,10 @@ namespace Sculpt.Core.Tests.Weapons
             Step(Press);
             int shot = _shots[0].Tick;
             Step(default, new HandInput { SculptToggle = true });
-            Run(8, default);
-            Step(default, new HandInput { SculptToggle = true }); // exit: 12 ticks for the pump
-            for (int i = 0; i < 80 && _shots.Count < 2; i++) Step(Hold);
-            Assert.That(_shots[1].Tick, Is.EqualTo(shot + 54));
+            Run(8 * SimTime.Per60, default);
+            Step(default, new HandInput { SculptToggle = true }); // exit: 12/60 s for the pump
+            for (int i = 0; i < 80 * SimTime.Per60 && _shots.Count < 2; i++) Step(Hold);
+            Assert.That(_shots[1].Tick, Is.EqualTo(shot + 45 * SimTime.Per60));
         }
 
         [Test]
@@ -200,14 +201,14 @@ namespace Sculpt.Core.Tests.Weapons
             Step(default, Key(Weapon.Ar));
             for (int i = 0; i < _mc.Hand.Draw(Weapon.Ar) - 1; i++) Step(Hold);
             Assert.That(_shots, Is.Empty, "drawing");
-            Run(30, default);
+            Run(30 * SimTime.Per60, default);
             Step(default, new HandInput { SculptToggle = true });
-            Run(20, Hold);
+            Run(20 * SimTime.Per60, Hold);
             Assert.That(_shots, Is.Empty, "sculpt mode");
             Step(default, new HandInput { SculptToggle = true });
-            Run(30, default);
-            HandRules.Disarm(ref _s.Hand, _tick, 20);
-            Run(20, Hold);
+            Run(30 * SimTime.Per60, default);
+            HandRules.Disarm(ref _s.Hand, _tick, 20 * SimTime.Per60);
+            Run(20 * SimTime.Per60, Hold);
             Assert.That(_shots, Is.Empty, "disarmed");
         }
 
@@ -216,11 +217,11 @@ namespace Sculpt.Core.Tests.Weapons
         {
             Equip(Weapon.Smg);
             var sprint = new MoveInput { MoveZ = 1, SprintHeld = true };
-            Run(40, sprint);
+            Run(40 * SimTime.Per60, sprint);
             Assert.That(_s.Sprinting, Is.True);
             var fireWhileSprint = new MoveInput { MoveZ = 1, SprintHeld = true, FireHeld = true, WantsToShoot = true };
             int start = _tick + 1;
-            for (int i = 0; i < 20 && _shots.Count == 0; i++) Step(fireWhileSprint);
+            for (int i = 0; i < 20 * SimTime.Per60 && _shots.Count == 0; i++) Step(fireWhileSprint);
             Assert.That(_shots[0].Tick - start, Is.EqualTo(_mc.SprintToAimTicks), "0.15 s sprint-to-aim");
         }
 
@@ -230,14 +231,14 @@ namespace Sculpt.Core.Tests.Weapons
         public void ArFirstShotIsExactThenSpreadBuilds()
         {
             Equip(Weapon.Ar);
-            Run(10, default); // the small swap penalty (0.4 deg) recovers in a few ticks once the gun is out
-            Run(6, Hold);
+            Run(10 * SimTime.Per60, default); // the small swap penalty (0.4 deg) recovers in a few ticks once the gun is out
+            Run(6 * SimTime.Per60, Hold);
             Assert.That(_shots[0].Spread, Is.EqualTo(0), "first shot accurate standing still");
             WeaponStats ar = _mc.Weapons.Of(Weapon.Ar);
             Assert.That(WeaponRules.PelletDir(_shots[0], ar, 0).Equals(_shots[0].Aim), Is.True);
-            Run(60, Hold);
+            Run(60 * SimTime.Per60, Hold);
             Assert.That(_shots[_shots.Count - 1].Spread, Is.GreaterThan(1.5), "sustained fire blooms");
-            Run(60, default);
+            Run(60 * SimTime.Per60, default);
             Assert.That(_s.Weapon.Bloom, Is.EqualTo(0), "recovers when you stop");
         }
 
@@ -252,7 +253,11 @@ namespace Sculpt.Core.Tests.Weapons
             Assert.That(WeaponRules.Spread(s, _mc, ar), Is.GreaterThanOrEqualTo(3));
             WeaponStats pump = _mc.Weapons.Of(Weapon.Pump);
             s.Mode = MoveMode.Air;
-            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.LessThan(pump.PatternSpread * 0.5), "pump fairly accurate in air");
+            // Balance pass 2026-11-25 (Ben): the pump goes wide sliding and in the air (+1.5 deg each), still less than the AR.
+            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.GreaterThanOrEqualTo(1.5), "pump wide in the air");
+            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.LessThan(WeaponRules.Spread(s, _mc, ar)));
+            s.Mode = MoveMode.Slide;
+            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.GreaterThanOrEqualTo(1.5), "pump wide sliding");
         }
 
         [Test]
@@ -272,12 +277,32 @@ namespace Sculpt.Core.Tests.Weapons
         public void RecoilLiftsTheAimAndRecovers()
         {
             Equip(Weapon.Ar);
-            Run(40, Hold);
+            Run(40 * SimTime.Per60, Hold);
             Assert.That(_s.Weapon.RecoilPitch, Is.GreaterThan(1));
             Assert.That(_shots[1].Aim.Y, Is.GreaterThan(_shots[0].Aim.Y), "second shot goes higher");
-            Run(90, default);
+            Run(90 * SimTime.Per60, default);
             Assert.That(_s.Weapon.RecoilPitch, Is.EqualTo(0));
             Assert.That(_s.Weapon.RecoilYaw, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void FirstShotOfABurstKicksHarderThenThePatternTakesOver()
+        {
+            // Ben 2026-11-25: a heavy, learnable first-shot kick. The first bullet goes exactly where you aimed; the
+            // aim then rises by the per-shot kick plus the first-shot extra; later shots add only the per-shot kick.
+            Equip(Weapon.Ar);
+            WeaponStats ar = _mc.Weapons.Of(Weapon.Ar);
+            Assert.That(ar.RecoilFirstShotPitch, Is.GreaterThan(0));
+            Run(40 * SimTime.Per60, Hold);
+            Assert.That(_shots.Count, Is.GreaterThanOrEqualTo(3));
+            double p0 = Math.Asin(_shots[0].Aim.Y), p1 = Math.Asin(_shots[1].Aim.Y), p2 = Math.Asin(_shots[2].Aim.Y);
+            Assert.That(p0, Is.EqualTo(0).Within(1e-9), "first shot unaffected");
+            double toDeg = 180 / Math.PI;
+            Assert.That((p1 - p0) * toDeg, Is.EqualTo(ar.RecoilPitchPerShot + ar.RecoilFirstShotPitch).Within(0.02), "first kick");
+            Assert.That((p2 - p1) * toDeg, Is.EqualTo(ar.RecoilPitchPerShot).Within(0.02), "then the normal kick");
+            // Fully recovered: the next burst gets the first-shot kick again.
+            Run(120 * SimTime.Per60, default);
+            Assert.That(_s.Weapon.Streak, Is.EqualTo(0));
         }
 
         [Test]
@@ -334,7 +359,7 @@ namespace Sculpt.Core.Tests.Weapons
             _s.Position = new Vec3d(_s.Position.X, 8.5 * B, _s.Position.Z); // 8.5 levels up: 25 damage
             _s.Mode = MoveMode.Air;
             _s.AirPeakY = _s.Position.Y;
-            Run(120, default);
+            Run(120 * SimTime.Per60, default);
             Assert.That(_s.Damage, Is.EqualTo(25));
             Assert.That(_s.Dead, Is.False);
 
@@ -343,7 +368,7 @@ namespace Sculpt.Core.Tests.Weapons
             _s.Mode = MoveMode.Air;
             _s.AirPeakY = _s.Position.Y;
             _events.Clear();
-            Run(120, default);
+            Run(120 * SimTime.Per60, default);
             Assert.That(_s.Dead, Is.True);
             Assert.That(_events.Exists(e => e.Type == MoveEventType.Died), Is.True);
         }
@@ -374,7 +399,7 @@ namespace Sculpt.Core.Tests.Weapons
         public void MotorStateWithGunsRoundTripsExactly()
         {
             Equip(Weapon.Ar);
-            Run(17, Hold);
+            Run(17 * SimTime.Per60, Hold);
             _s.Damage = 37;
             var w = new ByteWriter();
             Protocol.WriteMotor(w, _s);

@@ -22,9 +22,9 @@ namespace Sculpt.Core.Net
         /// <summary>Server switch. Off: no match logic at all (offline practice, the breach test map).</summary>
         public bool Enabled;
         public int MinPlayers = 2;
-        public int CountdownTicks = 3 * 60;
-        public int DurationTicks = 5 * 60 * 60;
-        public int ResultsTicks = 10 * 60;
+        public int CountdownTicks = (3 * 60) * SimTime.Per60;
+        public int DurationTicks = (5 * 60 * 60) * SimTime.Per60;
+        public int ResultsTicks = (10 * 60) * SimTime.Per60;
     }
 
     public struct MatchScore

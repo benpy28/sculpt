@@ -64,6 +64,10 @@ namespace Sculpt.Game.Cameras
         private float _zoom = 1f;
         // Landing dip: a short critically damped spring, so a landing has weight without hiding where you are.
         private float _dip, _dipVel;
+        // Slide lean: the view rolls a few degrees into a slide's turn (roll only: never moves the crosshair).
+        private float _lean, _leanTarget, _lastHeading;
+        private int _lastHeadingTick;
+        private bool _hadHeading;
         /// <summary>Current zoom factor (1 = none), for sensitivity scaling and the HUD.</summary>
         public float Zoom => _zoom;
         public readonly CameraShake Shake = new CameraShake();
@@ -98,7 +102,33 @@ namespace Sculpt.Game.Cameras
             // Recoil is part of the real aim (Core), so the camera follows it exactly; Shake is cosmetic roll only and never
             // moves the crosshair off the bullet's line.
             Vector2 recoil = _player.RenderRecoil;
-            rotation = Quaternion.Euler(_player.Pitch - recoil.x, _player.Yaw + recoil.y, Shake.Roll);
+            // Measured per simulation tick (velocity changes once per tick, not per frame).
+            Vector3 vh = new Vector3((float)s.Velocity.X, 0, (float)s.Velocity.Z);
+            if (s.Mode == MoveMode.Slide && vh.sqrMagnitude > 4f)
+            {
+                if (!_hadHeading || s.Tick != _lastHeadingTick)
+                {
+                    float heading = Mathf.Atan2(vh.x, vh.z) * Mathf.Rad2Deg;
+                    int ticks = s.Tick - _lastHeadingTick;
+                    if (_hadHeading && ticks > 0 && ticks < 10)
+                    {
+                        float rate = Mathf.DeltaAngle(_lastHeading, heading) / (float)(ticks * _player.Config.Dt); // deg/s, + = right
+                        _leanTarget = Mathf.Clamp(-rate * 0.023f, -6f, 6f); // a full 4.5 rad/s carve leans about 6 degrees
+                    }
+                    _lastHeading = heading;
+                    _lastHeadingTick = s.Tick;
+                    _hadHeading = true;
+                }
+            }
+            else
+            {
+                _hadHeading = false;
+                _leanTarget = 0f;
+            }
+            float leanTarget = _leanTarget;
+            if (!_settings.HeadBob) leanTarget = 0f; // same comfort switch as the head bob
+            _lean = Mathf.Lerp(_lean, leanTarget, 1f - Mathf.Exp(-10f * dt));
+            rotation = Quaternion.Euler(_player.Pitch - recoil.x, _player.Yaw + recoil.y, Shake.Roll + _lean);
             position += Shake.Offset;
 
             MovementConfig c = _player.Config;

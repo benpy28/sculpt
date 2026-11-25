@@ -40,6 +40,9 @@ namespace Sculpt.Core.Net
         public readonly TileWalls Walls;
         /// <summary>Your own charge breaks, predicted on <see cref="Walls"/> until the server confirms or refuses them.</summary>
         public readonly PredictedChargeBreaker Charges = new PredictedChargeBreaker();
+        /// <summary>Your own door presses, shown at once until the server answers.</summary>
+        public readonly PredictedDoors Doors = new PredictedDoors();
+        private readonly List<Aabb> _doorBodies = new List<Aabb>();
         /// <summary>Everyone's heals as the server reported them (null without tiles). Also runs the press checks.</summary>
         public readonly TileHealing Heals;
         /// <summary>Heal events from the server (everyone's), for the Game layer to drain (sounds, effects, red refusals).</summary>
@@ -57,8 +60,8 @@ namespace Sculpt.Core.Net
         public readonly SculptClient Sculpt;
 
         // Latency overlay: how long the server said it held our command for a tick (see SnapshotMsg.SelfHoldTenthMs).
-        private readonly int[] _holdTick = new int[64];
-        private readonly double[] _holdMs = new double[64];
+        private readonly int[] _holdTick = new int[128];
+        private readonly double[] _holdMs = new double[128];
 
         /// <summary>
         /// Milliseconds the server held this client's command for <paramref name="tick"/> (arrival to snapshot sent),
@@ -149,7 +152,7 @@ namespace Sculpt.Core.Net
         {
             Grid = grid;
             Walls = TileWalls.Find(grid);
-            if (Walls != null) Heals = new TileHealing(Walls);
+            if (Walls != null) { Heals = new TileHealing(Walls); Walls.CopyOnly = true; }
             Movement = movement;
             Config = config;
             _send = send ?? throw new ArgumentNullException(nameof(send));
@@ -203,7 +206,11 @@ namespace Sculpt.Core.Net
                         {
                             if (c.Tile >= Walls.Count) { DroppedPackets++; continue; }
                             Walls.Tick = tm.Tick;
-                            Walls.Set(c.Tile, c.To, c.Health, tm.Join ? TileCause.Server : c.Cause, c.By, c.Open);
+                            TileCause cause = tm.Join ? TileCause.Server : c.Cause;
+                            if (c.Hp != null && Walls.HasCells(c.Tile))
+                                Walls.WriteCells(c.Tile, c.To == TileState.Broken ? ulong.MaxValue : c.Open, c.Patch, c.Steel, c.Hp, cause, c.By);
+                            else Walls.Set(c.Tile, c.To, c.Health, cause, c.By);
+                            Doors.OnServerChange(Walls, c.Tile, c.To, c.Health, tm.Tick);
                         }
                         if (Walls.Changes.Count > 4096) Walls.Changes.RemoveRange(0, 2048); // nobody is draining (tests)
                         foreach (HealEvent e in tm.Heals)
@@ -224,6 +231,10 @@ namespace Sculpt.Core.Net
                     case MsgType.Match:
                         if (!Joined) return;
                         MatchProtocol.Read(ref r, Match);
+                        break;
+                    case MsgType.Reveal:
+                        if (!Joined) return;
+                        OnReveal(ref r);
                         break;
                     case MsgType.Snapshot:
                         if (!Joined) return;
@@ -253,7 +264,7 @@ namespace Sculpt.Core.Net
             Spawn = m.Spawn;
             SpawnYaw = m.SpawnYaw;
             // First guess at the lead; the server's feedback corrects it within a round trip.
-            Tick = m.ServerTick + Config.TargetLeadTicks + 6;
+            Tick = m.ServerTick + Config.TargetLeadTicks + 6 * SimTime.Per60;
             _pred = MotorState.At(m.Spawn);
             _prevPred = _pred;
             _accum = 0;
@@ -311,7 +322,7 @@ namespace Sculpt.Core.Net
             RttTicks += ((Tick - m.ServerTick - Math.Max(0, LastServerLead == Protocol.NoLead ? 0 : LastServerLead)) - RttTicks) * 0.1;
             // Our confirm for tick T is answered (Began) in the world message of server tick T, which we see about a
             // snapshot round trip after predicting T. Allow 1.5x that plus slack before giving up on it.
-            if (Sculpt != null) Sculpt.AnswerTimeoutTicks = Math.Max(20, (int)Math.Ceiling((Tick - m.ServerTick) * 1.5) + 12);
+            if (Sculpt != null) Sculpt.AnswerTimeoutTicks = Math.Max(20 * SimTime.Per60, (int)Math.Ceiling((Tick - m.ServerTick) * 1.5) + 12 * SimTime.Per60);
             AdjustClock(m.ServerTick, m.SelfLead);
             Reconcile(m.ServerTick, m.Self);
         }
@@ -475,6 +486,17 @@ namespace Sculpt.Core.Net
                 sh.ShooterId = PlayerId;
                 LocalShots[k] = sh;
             }
+            if (Walls != null)
+            {
+                // Doors: the server applies a press right after that tick's movement, so do the same here.
+                Doors.Expire(Walls, Tick, HealAnswerTimeoutTicks);
+                if (cmd.Hand.Door && !_pred.Dead)
+                {
+                    _doorBodies.Clear();
+                    _doorBodies.Add(PlayerMovement.Box(_pred.Position, Movement.HalfWidth, PlayerMovement.HeightOf(_pred, Movement)));
+                    Doors.Press(Walls, cmd.Hand.DoorTile, cmd.Hand.DoorOpen, Tick, PlayerId, _doorBodies);
+                }
+            }
             int lockUntil = Sculpt != null ? Sculpt.AfterMove(Tick, _pred, cmd) : int.MinValue;
             if (lockUntil != int.MinValue) HandRules.LockGun(ref _pred.Hand, lockUntil);
 
@@ -547,7 +569,7 @@ namespace Sculpt.Core.Net
         }
 
         /// <summary>Ticks to wait for the server's answer to a heal press before forgetting it.</summary>
-        public int HealAnswerTimeoutTicks => Math.Max(30, (int)Math.Ceiling(RttTicks * 2) + 20);
+        public int HealAnswerTimeoutTicks => Math.Max(30 * SimTime.Per60, (int)Math.Ceiling(RttTicks * 2) + 20 * SimTime.Per60);
 
         private void OnHealPressed(in InputCmd cmd)
         {
@@ -556,7 +578,7 @@ namespace Sculpt.Core.Net
             _healRefund = Heals.TryGetJob(PlayerId, out HealJob cur) && cur.Tile != cmd.Hand.HealTile ? cur.Cost : 0;
             _healPress = new HealJob
             {
-                Player = PlayerId, Tile = cmd.Hand.HealTile, Kind = kind, StartTick = cmd.Tick,
+                Player = PlayerId, Tile = cmd.Hand.HealTile, Cell = cmd.Hand.HealCell, Kind = kind, StartTick = cmd.Tick,
                 EndTick = cmd.Tick + TileHealing.TicksOf(kind, Heals.Config), Cost = TileHealing.CostOf(kind, Heals.Config),
             };
             _healPending = true;
@@ -578,6 +600,34 @@ namespace Sculpt.Core.Net
         {
             if (!_healPending) return;
             if (_healAcked ? ServerBarTick >= _healAckTick : Tick - _healPress.StartTick > HealAnswerTimeoutTicks) _healPending = false;
+        }
+
+        // ================================================================ Anti-hiding ping
+
+        private readonly Dictionary<int, RevealEntry> _reveals = new Dictionary<int, RevealEntry>();
+        private readonly List<RevealEntry> _revealScratch = new List<RevealEntry>(1);
+        /// <summary>Pings that started (not cancels), each once. The Game layer drains it (sound, banner).</summary>
+        public readonly List<RevealEntry> RevealsStarted = new List<RevealEntry>();
+
+        private void OnReveal(ref ByteReader r)
+        {
+            int tick = RevealProtocol.Read(ref r, _revealScratch);
+            foreach (RevealEntry e in _revealScratch)
+            {
+                if (e.EndTick <= tick) { _reveals.Remove(e.PlayerId); continue; }
+                _reveals[e.PlayerId] = e;
+                RevealsStarted.Add(e);
+            }
+            if (RevealsStarted.Count > 64) RevealsStarted.RemoveRange(0, 32); // nobody is draining (tests)
+        }
+
+        /// <summary>True while the server's ping shows player <paramref name="id"/> to you through walls.</summary>
+        public bool IsRevealed(int id, out RevealEntry e)
+        {
+            if (!_reveals.TryGetValue(id, out e)) return false;
+            if (e.EndTick > _serverTime) return true;
+            _reveals.Remove(id);
+            return false;
         }
 
         // ================================================================ Remote players
@@ -603,7 +653,7 @@ namespace Sculpt.Core.Net
 
         private sealed class RemoteTrack
         {
-            private const int N = 32;
+            private const int N = 32 * SimTime.Per60;
             private const double TeleportSq = 4.0 * 4.0;
             private readonly PlayerSnap[] _snaps = new PlayerSnap[N];
             private readonly int[] _ticks = new int[N];

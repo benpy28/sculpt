@@ -18,6 +18,9 @@ namespace Sculpt.Core
         Window = 4,
         /// <summary>Open on purpose (stairwells): no tiles, and it doesn't ask for columns.</summary>
         Open = 5,
+        /// <summary>A <see cref="Door"/> closed by two weak door leaves (1.5 m x 3 m each, <see cref="TileKind.Door"/>): an
+        /// easy way in that you still have to break (Ben 2026-11-25).</summary>
+        ShutDoor = 6,
     }
 
     /// <summary>What the greybox block holds (tests and the game).</summary>
@@ -36,6 +39,8 @@ namespace Sculpt.Core
         public readonly List<int> Frame = new List<int>();
         /// <summary>The clear space of every doorway (Door and WideDoor), for tests.</summary>
         public readonly List<Aabb> Doorways = new List<Aabb>();
+        /// <summary>Door leaves (two per shut door).</summary>
+        public readonly List<int> Doors = new List<int>();
         /// <summary>Rooftop bridges.</summary>
         public readonly List<Aabb> Bridges = new List<Aabb>();
         /// <summary>Outdoor hill wedges (brush indices).</summary>
@@ -188,8 +193,11 @@ namespace Sculpt.Core
         // ================================================================ The 1v1 duel map (friend demo, 2026-11-25)
 
         /// <summary>
-        /// The duel block: a central hall with a stairwell on each side, and two side buildings (each with a stairwell
-        /// and an outdoor ramp to its roof), linked to the hall's roof by bridges, with a berm in front of each spawn.
+        /// The duel block, "the divide" (Ben 2026-11-25: walls must really be in your way). A line of walls runs right
+        /// across the map between the two halves: map edge, a side building with a roof ramp, a 4.5 m compound wall, the
+        /// central keep, another compound wall, the other side building, map edge. Nothing goes round it: the ways across
+        /// are long on purpose (the keep's zig-zag ground floor, its stairs over the first floor, a side building's
+        /// stairs and a jump from its upper window, or the roofs), and every one of them is shorter through a wall.
         /// Everything comes in pairs turned 180 degrees about the map centre, so both spawns see the same map.
         /// <paramref name="size"/> is the square map's side; the centre is (size/2, size/2).
         /// </summary>
@@ -197,75 +205,131 @@ namespace Sculpt.Core
         {
             var info = new GreyboxInfo();
             double mid = size / 2;
-            double span3 = 3 * Module + Column, span2 = 2 * Module + Column; // 19.2 m and 12.9 m
+            double span5 = 5 * Module + Column, span3 = 3 * Module + Column, span2 = 2 * Module + Column; // 31.8, 19.2, 12.9 m
 
-            // ---- Central hall: 3 x 3, stairwells in the west lane (rising north) and the east lane (rising south). ----
-            var hall = new Building(mid - span3 / 2, mid - span3 / 2, 3, 3);
-            Stairwell(w, info, hall, 0, true, +1);
-            Stairwell(w, info, hall, 2, true, -1, flip: true);
-            SetTurned(hall, WallKind.WideDoor, 0, 0, 1, alongX: true);  // main doors (south and north)
-            SetTurned(hall, WallKind.Window, 0, 0, 0, alongX: true);    // windows into the stair lanes
-            SetTurned(hall, WallKind.Door, 0, 0, 1, alongX: false);     // side doors (west and east)
-            SetTurned(hall, WallKind.Door, 0, 1, 1, alongX: true);      // the middle lane: three rooms in a row
-            SetTurned(hall, WallKind.Window, 1, 0, 1, alongX: true);    // first floor windows over the main doors
-            SetTurned(hall, WallKind.Window, 1, 0, 1, alongX: false);
-            SetTurned(hall, WallKind.Window, 1, 0, 2, alongX: false);
-            SetTurned(hall, WallKind.Window, 1, 1, 1, alongX: true);    // first floor: a room at each end
-            Raise(w, info, hall, "Hall");
+            // ---- The keep: 5 x 3 modules in the middle, a stairwell in each end lane (west rising north, east rising south). ----
+            // Ground floor: the middle three lanes are a front hall, a corridor and a back hall, joined at opposite ends,
+            // so walking through zig-zags 38 m sideways for 19 m forward. One wall is the shortcut.
+            var keep = new Building(mid - span5 / 2, mid - span3 / 2, 5, 3);
+            // The upper flight runs along the outer wall, so upstairs the doors beside the stairwell open onto floor.
+            Stairwell(w, info, keep, 0, true, +1, flip: true);
+            Stairwell(w, info, keep, 4, true, -1);
+            SetTurned(keep, WallKind.Wall, 0, 2, 0, alongX: true);       // each stairwell's ground floor ends under the arrival
+            for (int i = 1; i <= 3; i++)
+            {
+                SetTurned(keep, i == 3 ? WallKind.Door : WallKind.Wall, 0, 1, i, alongX: true); // front hall -> corridor at the far end
+                SetTurned(keep, i == 2 ? WallKind.Door : WallKind.Wall, 1, 1, i, alongX: true); // upstairs: doors in the middle
+            }
+            // Doors (they open and shut, and break easily) only where you come in from outside; inside, open doorways.
+            SetTurned(keep, WallKind.ShutDoor, 0, 0, 0, alongX: true);   // outside -> your stairwell
+            SetTurned(keep, WallKind.WideDoor, 0, 0, 1, alongX: true);   // main door into the front hall
+            SetTurned(keep, WallKind.Window, 0, 0, 3, alongX: true);
+            foreach (int i in new[] { 1, 2, 3, 4 }) SetTurned(keep, WallKind.Window, 1, 0, i, alongX: true);
+            // West side (east turned): the first segment faces your own street, the other two the enemy's.
+            SetTurned(keep, WallKind.Window, 0, 0, 0, alongX: false);    // your street -> your stairwell (vault in)
+            SetTurned(keep, WallKind.ShutDoor, 0, 0, 2, alongX: false);  // their street -> the room behind their stairwell
+            SetTurned(keep, WallKind.Window, 1, 0, 0, alongX: false);
+            SetTurned(keep, WallKind.Window, 1, 0, 2, alongX: false);
+            // Between the stair lanes and the halls.
+            SetTurned(keep, WallKind.Wall, 0, 1, 0, alongX: false);      // stairwell | front hall (no windows inside)
+            SetTurned(keep, WallKind.Door, 0, 1, 2, alongX: false);      // the room behind the stairwell -> back hall
+            SetTurned(keep, WallKind.Wall, 0, 1, 1, alongX: false);
+            SetTurned(keep, WallKind.Wall, 1, 1, 1, alongX: false);      // upstairs, beside the open middle of the stairwell
+            SetTurned(keep, WallKind.Door, 1, 1, 0, alongX: false);      // upstairs, both ends of the stairwell
+            SetTurned(keep, WallKind.Door, 1, 1, 2, alongX: false);
+            Raise(w, info, keep, "Keep");
 
-            // ---- Side buildings: 2 x 3, the west one south of centre, the east one (turned) north of it. ----
-            const double streetGap = 12;
-            var west = new Building(hall.X0 - streetGap - span2, mid - span3 / 2 - 8, 2, 3);
-            Stairwell(w, info, west, 0, true, +1);
-            west.AlongZ[0, 2, 1] = WallKind.Door;      // east: across the street to the hall
-            west.AlongX[0, 0, 1] = WallKind.WideDoor;  // south, toward team 1's spawn
-            west.AlongX[0, 3, 1] = WallKind.Door;      // north
-            west.AlongX[0, 1, 1] = WallKind.Door;      // ground floor: two rooms in the east lane
-            west.AlongZ[0, 2, 0] = WallKind.Window;
-            west.AlongZ[0, 2, 2] = WallKind.Window;
-            west.AlongZ[0, 0, 1] = WallKind.Window;    // west, onto the ramp
-            west.AlongZ[1, 2, 0] = WallKind.Window;
-            west.AlongZ[1, 2, 1] = WallKind.Window;
-            west.AlongZ[1, 2, 2] = WallKind.Window;
+            // ---- Side buildings: 2 x 3, the west one beside the map's west edge, the east one turned. ----
+            // The west building is team 1's way up: its stairs start on the south side; the north side holds a room you
+            // can only reach from team 2's side (or through a wall). Upstairs, a window on the north side drops you out.
+            var west = new Building(3.45, keep.Cz(1) - 2 * Module, 2, 3);   // a column line meets the keep's
+            Stairwell(w, info, west, 0, true, +1, flip: true);
+            west.AlongX[0, 2, 0] = WallKind.Wall;     // the stairwell's ground floor ends under the arrival
+            west.AlongX[0, 2, 1] = WallKind.Wall;     // east lane: a long front room and a back room
+            west.AlongX[0, 0, 0] = WallKind.ShutDoor; // south: into the stairwell
+            west.AlongX[0, 0, 1] = WallKind.ShutDoor; // south: the front room
+            west.AlongZ[0, 1, 0] = WallKind.Wall;     // front room | stairwell
+            west.AlongZ[0, 1, 1] = WallKind.Wall;
+            west.AlongZ[0, 2, 0] = WallKind.Window;   // east, onto your street
+            west.AlongZ[0, 2, 1] = WallKind.ShutDoor; // east: the front room, from your street
+            west.AlongZ[0, 2, 2] = WallKind.ShutDoor; // east: the back room, from their street
+            west.AlongX[0, 3, 1] = WallKind.ShutDoor; // north: the back room, from their yard
+            west.AlongZ[0, 1, 2] = WallKind.Door;     // back room <-> the room under the stairs' arrival
+            west.AlongZ[1, 1, 0] = WallKind.Door;     // upstairs: a corridor along the east lane
+            west.AlongZ[1, 1, 2] = WallKind.Door;
+            west.AlongZ[1, 1, 1] = WallKind.Wall;     // beside the open middle of the stairwell
+            west.AlongX[1, 1, 1] = WallKind.Door;
+            west.AlongX[1, 2, 1] = WallKind.Door;
             west.AlongX[1, 0, 1] = WallKind.Window;
-            west.AlongX[1, 3, 1] = WallKind.Window;
-            west.AlongZ[1, 0, 1] = WallKind.Window;
+            foreach (int j in new[] { 0, 1, 2 }) west.AlongZ[1, 2, j] = WallKind.Window;
+            west.AlongX[1, 3, 1] = WallKind.Window;   // the drop into their yard
             var east = new Building(size - west.X0 - span2, size - west.Z0 - span3, 2, 3);
-            Stairwell(w, info, east, 1, true, -1, flip: true);
+            Stairwell(w, info, east, 1, true, -1);
             CopyTurned(west, east);
             Raise(w, info, west, "West");
             Raise(w, info, east, "East");
 
-            // Outdoor ramps up each side building's outer wall to its roof (9.6 m over 27 m), flush with the wall.
+            // Outdoor ramps up each side building's outer wall to its roof (9.6 m over 27 m), between the wall and the
+            // map edge, starting in the owner's half, with a 3 m landing at the top.
             double wx = west.X0 - 3, wz1 = west.Cz(3) + Column;
             Climb(w, info, new Aabb(new Vec3d(wx, 0, wz1 - 27), new Vec3d(wx + 3, west.Top, wz1)), Dir.North, TileKind.Ramp);
             Climb(w, info, new Aabb(new Vec3d(size - wx - 3, 0, size - wz1), new Vec3d(size - wx, east.Top, size - wz1 + 27)), Dir.South, TileKind.Ramp);
-            // A 3 m walkway at roof level along the far end of each side building, from the ramp's top across the roof edge.
-            Bridge(w, info, new Vec3d(wx, 0, wz1), new Vec3d(west.Cx(2) + Column, 0, wz1 + 3));
-            Bridge(w, info, new Vec3d(east.X0, 0, size - wz1 - 3), new Vec3d(size - wx, 0, size - wz1));
+            Bridge(w, info, new Vec3d(wx, 0, wz1), new Vec3d(wx + 3, 0, wz1 + 3));
+            Bridge(w, info, new Vec3d(size - wx - 3, 0, size - wz1 - 3), new Vec3d(size - wx, 0, size - wz1));
 
-            // ---- Rooftop bridges from each side building's roof to the hall's (3 m wide). ----
-            double bz = hall.Z0 + 4;
-            Bridge(w, info, new Vec3d(west.Cx(2) + Column, 0, bz), new Vec3d(hall.X0, 0, bz + 3));
-            Bridge(w, info, new Vec3d(hall.Cx(3) + Column, 0, size - bz - 3), new Vec3d(east.X0, 0, size - bz));
+            // ---- Rooftop bridges from each side building's roof to the keep's (3 m wide), over the compound walls. ----
+            double bz = keep.Cz(1) - 1.5;
+            Bridge(w, info, new Vec3d(west.Cx(2) + Column, 0, bz), new Vec3d(keep.X0, 0, bz + 3));
+            Bridge(w, info, new Vec3d(keep.Cx(5) + Column, 0, size - bz - 3), new Vec3d(east.X0, 0, size - bz));
 
-            // ---- Low tile walls in the streets (1.5 m: crouch cover you can vault), in turned pairs. ----
-            double th = w.Tiles.Config.TileThickness, ts = w.Tiles.Config.TileSize;
-            void LowWall(double x, double z, Dir along, int n)
+            // ---- Free walls, each with its turned twin. ----
+            void FreeWall(double x0, double z0, double length, bool alongX, int rows, double y0 = 0)
             {
-                info.Tiles.AddRange(w.Tiles.AddWall(new Vec3d(x, 0, z), along, n, 1));
-                if (along == Dir.East) info.Tiles.AddRange(w.Tiles.AddWall(new Vec3d(size - x - n * ts, 0, size - z - th), along, n, 1));
-                else info.Tiles.AddRange(w.Tiles.AddWall(new Vec3d(size - x - th, 0, size - z - n * ts), along, n, 1));
+                foreach (bool turned in new[] { false, true })
+                {
+                    double th = w.Tiles.Config.TileThickness;
+                    double ax = turned ? size - x0 - (alongX ? length : th) : x0;
+                    double az = turned ? size - z0 - (alongX ? th : length) : z0;
+                    info.Tiles.AddRange(StripWall(w.Tiles, new Vec3d(ax, y0, az), length, alongX, rows));
+                }
             }
-            LowWall(west.Cx(2) + Column + 4.35, hall.Z0 - 6, Dir.North, 3); // west street, south end
-            LowWall(mid - 3, hall.Z0 - 8, Dir.East, 4);                      // in front of the hall's main door
-            LowWall(west.X0 + 3.3, west.Z0 - 7, Dir.East, 3);                // in front of the west building
+            // The compound walls, 4.5 m (three tiles: too tall to mantle), from each side building to the keep.
+            FreeWall(west.Cx(2) + Column, keep.Cz(1), keep.X0 - (west.Cx(2) + Column), true, 3);
+            // Under each roof ramp, where it is 3 m up: a two-tile wall closes the gap between the building and the map
+            // edge (break it and the space under the ramp is a tunnel into their half).
+            double rampSeg = 27.0 / 16;
+            FreeWall(wx, wz1 - 27 + 5 * rampSeg + 0.3, 3, true, 2);
+            // Low walls (1.5 m: crouch cover you can vault) in the streets and in front of the keep.
+            FreeWall(mid - 6, keep.Z0 - 4, 6, true, 1);
+            FreeWall(west.Cx(2) + Column + 6, keep.Z0 - 1.5, 4.5, false, 1);
+            FreeWall(keep.Cx(5) + Column + 5.25, keep.Z0 - 5, 3, true, 1);
 
             // ---- Berms between each spawn and the block: up 3 m over 9 m, 3 m flat, down over 9 m (18.4 degrees). ----
-            const double bermZ = 7;
-            Berm(w, info, hall.X0 - 6, hall.X0 + span3 + 6, bermZ, 9, 3, 3.0);
-            Berm(w, info, size - (hall.X0 + span3 + 6), size - (hall.X0 - 6), size - bermZ - 21, 9, 3, 3.0);
+            const double bermZ = 9;
+            Berm(w, info, mid - 14, mid + 14, bermZ, 9, 3, 3.0);
+            Berm(w, info, mid - 14, mid + 14, size - bermZ - 21, 9, 3, 3.0);
             return info;
+        }
+
+        /// <summary>
+        /// A free-standing tile wall <paramref name="rows"/> tiles tall from <paramref name="corner"/> along X or Z. The
+        /// length is split into equal pieces no wider than a tile (so walls between buildings fit exactly, and a hole is
+        /// never narrower than about a tile).
+        /// </summary>
+        private static int[] StripWall(TileWalls t, Vec3d corner, double length, bool alongX, int rows)
+        {
+            double s = t.Config.TileSize, th = t.Config.TileThickness;
+            int n = (int)Math.Ceiling(length / s - 1e-9);
+            var ids = new int[n * rows];
+            for (int r = 0; r < rows; r++)
+                for (int k = 0; k < n; k++)
+                {
+                    double a0 = length * k / n, a1 = length * (k + 1) / n;
+                    Vec3d lo = alongX ? new Vec3d(corner.X + a0, corner.Y + r * s, corner.Z) : new Vec3d(corner.X, corner.Y + r * s, corner.Z + a0);
+                    Vec3d hi = alongX ? new Vec3d(corner.X + a1, corner.Y + (r + 1) * s, corner.Z + th) : new Vec3d(corner.X + th, corner.Y + (r + 1) * s, corner.Z + a1);
+                    ids[r * n + k] = t.AddTile(new Aabb(lo, hi), alongX ? Dir.North : Dir.East);
+                }
+            return ids;
         }
 
         /// <summary>
@@ -561,7 +625,7 @@ namespace Sculpt.Core
             for (int r = 0; r < 3; r++)
                 for (int k = 0; k < 4; k++)
                 {
-                    bool gap = kind == WallKind.Door ? r < 2 && (k == 1 || k == 2)
+                    bool gap = kind == WallKind.Door || kind == WallKind.ShutDoor ? r < 2 && (k == 1 || k == 2)
                         : kind == WallKind.WideDoor ? r < 2
                         : kind == WallKind.Window && r == 1 && (k == 1 || k == 2);
                     if (gap) continue;
@@ -570,6 +634,16 @@ namespace Sculpt.Core
                     int id = t.AddTile(new Aabb(lo, hi), alongX ? Dir.North : Dir.East);
                     bd.WallTiles[(storey, alongX, line, seg, r, k)] = id;
                     info.Tiles.Add(id);
+                }
+            if (kind == WallKind.ShutDoor)
+                for (int k = 1; k <= 2; k++)
+                {
+                    Vec3d lo = alongX ? new Vec3d(corner.X + k * s, corner.Y, corner.Z) : new Vec3d(corner.X, corner.Y, corner.Z + k * s);
+                    Vec3d hi = alongX ? lo + new Vec3d(s, 2 * s, th) : lo + new Vec3d(th, 2 * s, s);
+                    int id = t.AddTile(new Aabb(lo, hi), alongX ? Dir.North : Dir.East, TileKind.Door);
+                    info.Tiles.Add(id);
+                    info.Doors.Add(id);
+                    if (k == 2) t.PairDoor(id - 1, id); // the two leaves open and shut together
                 }
             if (kind == WallKind.Door || kind == WallKind.WideDoor)
             {

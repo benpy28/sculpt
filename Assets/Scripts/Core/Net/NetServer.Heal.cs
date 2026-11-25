@@ -54,7 +54,7 @@ namespace Sculpt.Core.Net
         {
             Id = p.Id,
             Alive = !p.State.Dead,
-            InSculptMode = p.State.Hand.InSculptMode,
+            InSculptMode = Movement.Hand.KeepsHealing(p.State.Hand),
             Eye = p.State.Position + new Vec3d(0, PlayerMovement.EyeOf(p.State, Movement), 0),
             Box = PlayerMovement.Box(p.State.Position, Movement.HalfWidth, PlayerMovement.HeightOf(p.State, Movement)),
         };
@@ -64,9 +64,30 @@ namespace Sculpt.Core.Net
         {
             if (Healing == null) return;
             HealerStatus s = StatusOf(p);
-            // Confirms need sculpt mode proper (entering doesn't count yet), like every other sculpt press.
-            s.InSculptMode = p.State.Hand.CanConfirmSculpt;
-            Healing.TryBegin(Grid, s, cmd.Hand.HealTile, cmd.Hand.HealReinforce ? HealKind.Reinforce : HealKind.Heal, BarOf(p.Id), Tick, HealReachSlack);
+            // Quick heal: any time you are not disarmed. With block moves on: sculpt mode proper (entering doesn't count).
+            s.InSculptMode = Movement.Hand.CanHeal(p.State.Hand);
+            Healing.TryBegin(Grid, s, cmd.Hand.HealTile, cmd.Hand.HealCell, cmd.Hand.HealReinforce ? HealKind.Reinforce : HealKind.Heal, BarOf(p.Id), Tick, HealReachSlack);
+        }
+
+        private readonly List<Aabb> _doorBodies = new List<Aabb>();
+        private readonly List<int> _doorLeaves = new List<int>();
+
+        /// <summary>
+        /// A door press, right after the player's movement on the tick it was pressed: in reach (with the same lag
+        /// slack as heals), and when shutting, nobody (alive) inside a leaf's space. Refusals change nothing (the client
+        /// puts its door back when no answer comes).
+        /// </summary>
+        private void HandleDoor(ServerPlayer p, in InputCmd cmd)
+        {
+            if (Walls == null || !DoorRules.IsLeaf(Walls, cmd.Hand.DoorTile)) return;
+            Vec3d eye = p.State.Position + new Vec3d(0, PlayerMovement.EyeOf(p.State, Movement), 0);
+            if (DoorRules.DistanceTo(Walls.BoundsOf(cmd.Hand.DoorTile), eye) > Walls.Config.DoorReach + HealReachSlack) return;
+            _doorBodies.Clear();
+            foreach (ServerPlayer o in _players)
+                if (!o.State.Dead) _doorBodies.Add(PlayerMovement.Box(o.State.Position, Movement.HalfWidth, PlayerMovement.HeightOf(o.State, Movement)));
+            if (!DoorRules.CanSet(Walls, cmd.Hand.DoorTile, cmd.Hand.DoorOpen, _doorBodies, _doorLeaves)) return;
+            Walls.Tick = Tick;
+            DoorRules.Set(Walls, cmd.Hand.DoorTile, cmd.Hand.DoorOpen, TileCause.Door, p.Id, _doorLeaves);
         }
 
         /// <summary>After everyone moved and fought: finish or cancel heals.</summary>
@@ -92,6 +113,7 @@ namespace Sculpt.Core.Net
             {
                 victim.LastHurtBy = attacker.Id; // a fall soon after still credits them (OnKilled)
                 victim.LastHurtTick = Tick;
+                NotePingHurt(attacker, victim);
             }
             if (attacker != null && attacker != victim && attacker.Team != victim.Team && dealt > 0 && Walls != null)
                 BarOf(attacker.Id).GainForDamage(dealt, Walls.Config.BarPer10Damage);
@@ -114,7 +136,7 @@ namespace Sculpt.Core.Net
             _healSend.Clear();
             if (Healing == null) return _healSend;
             foreach (HealJob j in Healing.Jobs)
-                _healSend.Add(new HealEvent { Type = HealEventType.Began, Player = j.Player, Tile = j.Tile, Kind = j.Kind, Tick = Tick, EndTick = j.EndTick });
+                _healSend.Add(new HealEvent { Type = HealEventType.Began, Player = j.Player, Tile = j.Tile, Cell = j.Cell, Kind = j.Kind, Tick = Tick, EndTick = j.EndTick });
             _healSend.Sort((a, b) => a.Player.CompareTo(b.Player));
             return _healSend;
         }
