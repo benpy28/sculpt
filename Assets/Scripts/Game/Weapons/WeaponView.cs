@@ -12,7 +12,7 @@ namespace Sculpt.Game.Weapons
 {
     /// <summary>
     /// Everything you see and hear of guns. Local shots come straight from prediction (same tick you clicked):
-    /// muzzle flash, heavy viewmodel kick, camera roll, sound, tracers and impacts traced on your own copy of the world.
+    /// heavy viewmodel kick, camera roll, sound, tracers and impacts traced on your own copy of the world.
     /// Other players' shots come from the server's combat message. Hit markers, kills and damage taken are only shown
     /// when the server confirms them (never guessed), and feed the combat HUD.
     /// Frame order: <see cref="PreCamera"/> (consume events, springs, shake) then the camera, then <see cref="PostCamera"/>.
@@ -51,16 +51,14 @@ namespace Sculpt.Game.Weapons
         private bool _punchHitDone = true;
         /// <summary>0..1 how far the gun is pushed aside by a punch this frame.</summary>
         private float _punchAside;
-        private Material _vmMat, _lineMat, _flashMat, _puffMat;
-        private LineBatch _lines, _flashLines;
+        private Material _vmMat, _lineMat, _puffMat;
+        private LineBatch _lines;
         private ParticleSystem _puffs, _sparks;
 
         private struct Tracer { public Vector3 A, B; public float Born, Life; public Color Colour; public float Width; }
-        private struct Flash { public Vector3 At, Fwd; public float Born; public float Size; public bool Local; }
         private struct PendingLocal { public WeaponShot Shot; public List<Vector3> Ends; }
 
         private readonly List<Tracer> _tracers = new List<Tracer>();
-        private readonly List<Flash> _flashes = new List<Flash>();
         private readonly List<PendingLocal> _pendingLocal = new List<PendingLocal>();
         private readonly List<HitTarget> _targets = new List<HitTarget>();
         private readonly List<int> _ids = new List<int>();
@@ -79,8 +77,6 @@ namespace Sculpt.Game.Weapons
         private float _rollVel;
 
         private static readonly Color TracerColour = new Color(1f, 0.86f, 0.55f, 0.9f);
-        private static readonly Color FlashCore = new Color(1f, 0.93f, 0.7f, 1f);
-        private static readonly Color FlashOuter = new Color(1f, 0.62f, 0.22f, 0.85f);
 
         /// <summary>Viewmodel feel per gun: kick back (m/s impulse), kick up (deg/s impulse), spring stiffness, damping,
         /// camera roll impulse (deg/s) and FOV punch (deg). Heavier guns kick harder and settle slower.</summary>
@@ -109,17 +105,12 @@ namespace Sculpt.Game.Weapons
             _lineMat = new Material(overlay) { name = "Tracers" };
             _lineMat.SetFloat("_ZTest", (float)UnityEngine.Rendering.CompareFunction.LessEqual);
             _lineMat.renderQueue = 3020;
-            _flashMat = new Material(overlay) { name = "Muzzle flash (own)" };
-            _flashMat.SetFloat("_ZTest", (float)UnityEngine.Rendering.CompareFunction.Always);
-            _flashMat.renderQueue = 3150;
             _puffMat = new Material(overlay) { name = "Impact puffs" };
             _puffMat.SetFloat("_Soft", 1f);
             _puffMat.renderQueue = 3015;
 
             _lines = new LineBatch("Tracers", _lineMat);
             _lines.Object.transform.SetParent(transform, false);
-            _flashLines = new LineBatch("Own muzzle flash", _flashMat);
-            _flashLines.Object.transform.SetParent(transform, false);
 
             _vmRoot = new GameObject("Viewmodel").transform;
             _vmRoot.SetParent(rig.Camera.transform, false);
@@ -257,7 +248,6 @@ namespace Sculpt.Game.Weapons
             {
                 GunModel g = _guns[(int)p.Shot.Weapon];
                 Vector3 muzzle = g.Root.activeInHierarchy ? g.Muzzle.position : p.Shot.Origin.ToUnity() + p.Shot.Aim.ToUnity() * 0.6f;
-                _flashes.Add(new Flash { At = muzzle, Fwd = p.Shot.Aim.ToUnity(), Born = Time.time, Size = p.Shot.Weapon == Weapon.Pump ? 0.22f : 0.13f, Local = true });
                 bool pellets = p.Ends.Count > 1;
                 foreach (Vector3 end in p.Ends)
                     AddTracer(muzzle, end, pellets ? 0.012f : 0.018f, pellets ? 0.05f : 0.07f);
@@ -297,7 +287,6 @@ namespace Sculpt.Game.Weapons
             _kickRotVel += new Vector3(-380f, Random.Range(-40f, 40f), Random.Range(-50f, 50f));
             _rollVel += (Random.value < 0.5f ? -1f : 1f) * 110f;
             _fp.Shake.FovPunch = Mathf.Max(_fp.Shake.FovPunch, 3.2f);
-            _flashes.Add(new Flash { At = _launcher.Muzzle.position, Fwd = _rig.Camera.transform.forward, Born = Time.time, Size = 0.3f, Local = true });
         }
 
         private void OnRemoteShot(in CombatEvent e, float now)
@@ -307,7 +296,6 @@ namespace Sculpt.Game.Weapons
             Vector3 fwd = shot.Aim.ToUnity();
             Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
             Vector3 muzzle = eye + fwd * 0.65f + right * 0.2f - Vector3.up * 0.18f;
-            _flashes.Add(new Flash { At = muzzle, Fwd = fwd, Born = now, Size = shot.Weapon == Weapon.Pump ? 0.3f : 0.2f });
             GunAudio.Play(GunAudio.Shot(shot.Weapon), muzzle, 1f, Random.Range(0.96f, 1.04f), true);
             if (shot.Weapon == Weapon.Pump) StartCoroutineRack(muzzle, now);
             var ends = new List<Vector3>();
@@ -473,7 +461,6 @@ namespace Sculpt.Game.Weapons
             }
 
             _lines.Begin(cam);
-            _flashLines.Begin(cam);
             _tracers.RemoveAll(t => now - t.Born > t.Life);
             foreach (Tracer t in _tracers)
             {
@@ -485,21 +472,7 @@ namespace Sculpt.Game.Weapons
                 Color c = new Color(t.Colour.r, t.Colour.g, t.Colour.b, t.Colour.a * k);
                 _lines.Add(a, b, c, t.Width);
             }
-            _flashes.RemoveAll(f => now - f.Born > 0.045f);
-            foreach (Flash f in _flashes)
-            {
-                LineBatch lb = f.Local ? _flashLines : _lines;
-                float s = f.Size * Random.Range(0.85f, 1.15f);
-                Vector3 up = Vector3.Cross(f.Fwd, Vector3.right).normalized;
-                if (up.sqrMagnitude < 0.5f) up = Vector3.up;
-                Vector3 side = Vector3.Cross(up, f.Fwd).normalized;
-                lb.Add(f.At, f.At + f.Fwd * s * 1.8f, FlashOuter, s * 0.9f);
-                lb.Add(f.At - f.Fwd * s * 0.1f, f.At + f.Fwd * s * 0.9f, FlashCore, s * 0.5f);
-                lb.Add(f.At - side * s * 0.6f, f.At + side * s * 0.6f, FlashOuter, s * 0.25f);
-                lb.Add(f.At - up * s * 0.6f, f.At + up * s * 0.6f, FlashOuter, s * 0.25f);
-            }
             _lines.End();
-            _flashLines.End();
 
             Arrows.RemoveAll(a => now - a.Time > 1.4f);
         }
