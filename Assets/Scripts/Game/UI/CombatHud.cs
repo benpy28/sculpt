@@ -279,25 +279,43 @@ namespace Sculpt.Game.UI
 
         private void DrawHitMarker(float cx, float cy)
         {
+            // Sharp, not soft: the marker pops in oversized and snaps to size in ~50 ms, holds full strength for most of
+            // its life, then cuts out quickly. A dark outline keeps it readable on bright walls and sky.
             float now = Time.time;
-            bool kill = now - _view.KillMarkTime < 0.45f;
+            bool kill = now - _view.KillMarkTime < KillLife;
             float age = kill ? now - _view.KillMarkTime : now - _view.HitTime;
-            float life = kill ? 0.45f : 0.22f;
+            float life = kill ? KillLife : HitLife;
             if (age > life) return;
-            float a = 1f - age / life;
-            bool head = now - _view.HeadHitTime < 0.22f;
+            float u = age / life;
+            float a = u < 0.6f ? 1f : 1f - (u - 0.6f) / 0.4f;
+            float pop = 1f + (kill ? 0.55f : 0.35f) * Mathf.Exp(-age * 60f);
+            bool head = now - _view.HeadHitTime < HitLife;
             Color c = kill ? Red : head ? Amber : Color.white;
-            float inner = kill ? 10f : 8f, outer = kill ? 22f : head ? 18f : 15f, th = kill ? 2.2f : 1.5f;
+            float inner = (kill ? 9f : 7f) * pop, outer = (kill ? 24f : head ? 18f : 15f) * pop, th = kill ? 2.4f : head ? 1.8f : 1.5f;
             var col = new Color(c.r, c.g, c.b, a);
-            for (int k = 0; k < 4; k++)
+            var dark = new Color(0f, 0f, 0f, a * 0.55f);
+            Vector2 ctr = new Vector2(cx, cy);
+            for (int pass = 0; pass < 2; pass++)
+                for (int k = 0; k < 4; k++)
+                {
+                    float ang = (45f + 90f * k) * Mathf.Deg2Rad;
+                    Vector2 d = new Vector2(Mathf.Sin(ang), Mathf.Cos(ang));
+                    float t = pass == 0 ? th + 1f : th;
+                    Vector2 n = new Vector2(d.y, -d.x) * t;
+                    float grow = pass == 0 ? 1f : 0f;
+                    Vector2 p0 = ctr + d * (inner - grow), p1 = ctr + d * (outer + grow);
+                    HudDraw.Quad(p0 + n, p1 + n, p1 - n, p0 - n, pass == 0 ? dark : col);
+                }
+            if (kill)
             {
-                float ang = (45f + 90f * k) * Mathf.Deg2Rad;
-                Vector2 d = new Vector2(Mathf.Sin(ang), Mathf.Cos(ang));
-                Vector2 n = new Vector2(d.y, -d.x) * th;
-                Vector2 p0 = new Vector2(cx, cy) + d * inner, p1 = new Vector2(cx, cy) + d * outer;
-                HudDraw.Quad(p0 + n, p1 + n, p1 - n, p0 - n, col);
+                // A thin ring snapping outward from the X: the kill reads at a glance, even mid-slide.
+                float r = 16f + 26f * Mathf.Sqrt(Mathf.Clamp01(age / 0.22f));
+                float ra = Mathf.Clamp01(1f - age / 0.22f);
+                if (ra > 0f) HudDraw.Arc(cx, cy, r, 2f, 0, 360, new Color(Red.r, Red.g, Red.b, 0.8f * ra));
             }
         }
+
+        private const float HitLife = 0.2f, KillLife = 0.5f;
 
         private void DrawHurt(float w, float h)
         {

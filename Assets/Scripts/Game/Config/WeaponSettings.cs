@@ -38,6 +38,7 @@ namespace Sculpt.Game.Config
             public float patternSpread;
             [Header("Recoil (degrees, moves the aim)")]
             public float recoilPitchPerShot;
+            [Tooltip("Extra pitch on the first shot of a burst. -1 keeps the Core default.")] public float recoilFirstShotPitch = -1;
             public float recoilYawPerShot;
             public float recoilMaxPitch = 10;
             public float recoilRecoveryPerSecond;
@@ -51,7 +52,7 @@ namespace Sculpt.Game.Config
                     fireRate = (float)(SimTime.TicksPerSecond * 1000.0 / s.FireIntervalMilliTicks), automatic = s.Automatic, fireBufferTicks = s.FireBufferTicks / SimTime.Per60,
                     baseSpread = (float)s.BaseSpread, moveSpread = (float)s.MoveSpread, crouchFactor = (float)s.CrouchFactor, slideSpread = (float)s.SlideSpread,
                     airSpread = (float)s.AirSpread, bloomPerShot = (float)s.BloomPerShot, bloomMax = (float)s.BloomMax, bloomRecoveryPerSecond = (float)s.BloomRecoveryPerSecond,
-                    bloomRecoveryDelayTicks = s.BloomRecoveryDelayTicks / SimTime.Per60, patternSpread = (float)s.PatternSpread, recoilPitchPerShot = (float)s.RecoilPitchPerShot,
+                    bloomRecoveryDelayTicks = s.BloomRecoveryDelayTicks / SimTime.Per60, patternSpread = (float)s.PatternSpread, recoilPitchPerShot = (float)s.RecoilPitchPerShot, recoilFirstShotPitch = (float)s.RecoilFirstShotPitch,
                     recoilYawPerShot = (float)s.RecoilYawPerShot, recoilMaxPitch = (float)s.RecoilMaxPitch, recoilRecoveryPerSecond = (float)s.RecoilRecoveryPerSecond,
                     recoilRecoveryDelayTicks = s.RecoilRecoveryDelayTicks / SimTime.Per60,
                 };
@@ -87,6 +88,7 @@ namespace Sculpt.Game.Config
                 s.BloomRecoveryDelayTicks = bloomRecoveryDelayTicks * SimTime.Per60;
                 s.PatternSpread = patternSpread;
                 s.RecoilPitchPerShot = recoilPitchPerShot;
+                if (recoilFirstShotPitch >= 0) s.RecoilFirstShotPitch = recoilFirstShotPitch;
                 s.RecoilYawPerShot = recoilYawPerShot;
                 s.RecoilMaxPitch = recoilMaxPitch;
                 s.RecoilRecoveryPerSecond = recoilRecoveryPerSecond;

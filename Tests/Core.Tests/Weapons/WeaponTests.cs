@@ -286,6 +286,26 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
+        public void FirstShotOfABurstKicksHarderThenThePatternTakesOver()
+        {
+            // Ben 2026-11-25: a heavy, learnable first-shot kick. The first bullet goes exactly where you aimed; the
+            // aim then rises by the per-shot kick plus the first-shot extra; later shots add only the per-shot kick.
+            Equip(Weapon.Ar);
+            WeaponStats ar = _mc.Weapons.Of(Weapon.Ar);
+            Assert.That(ar.RecoilFirstShotPitch, Is.GreaterThan(0));
+            Run(40 * SimTime.Per60, Hold);
+            Assert.That(_shots.Count, Is.GreaterThanOrEqualTo(3));
+            double p0 = Math.Asin(_shots[0].Aim.Y), p1 = Math.Asin(_shots[1].Aim.Y), p2 = Math.Asin(_shots[2].Aim.Y);
+            Assert.That(p0, Is.EqualTo(0).Within(1e-9), "first shot unaffected");
+            double toDeg = 180 / Math.PI;
+            Assert.That((p1 - p0) * toDeg, Is.EqualTo(ar.RecoilPitchPerShot + ar.RecoilFirstShotPitch).Within(0.02), "first kick");
+            Assert.That((p2 - p1) * toDeg, Is.EqualTo(ar.RecoilPitchPerShot).Within(0.02), "then the normal kick");
+            // Fully recovered: the next burst gets the first-shot kick again.
+            Run(120 * SimTime.Per60, default);
+            Assert.That(_s.Weapon.Streak, Is.EqualTo(0));
+        }
+
+        [Test]
         public void PelletsAreDeterministicAndPumpPatternIsFixed()
         {
             WeaponStats pump = _mc.Weapons.Of(Weapon.Pump);

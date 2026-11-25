@@ -168,7 +168,8 @@ namespace Sculpt.Core
             w.ShotCount++;
             w.LastShotTick = tick;
             w.Bloom = Math.Min(st.BloomMax, w.Bloom + st.BloomPerShot);
-            w.RecoilPitch = Math.Min(st.RecoilMaxPitch, w.RecoilPitch + st.RecoilPitchPerShot);
+            double kick = st.RecoilPitchPerShot + (w.Streak == 0 ? st.RecoilFirstShotPitch : 0);
+            w.RecoilPitch = Math.Min(st.RecoilMaxPitch, w.RecoilPitch + kick);
             w.RecoilYaw += st.RecoilYawPerShot * YawPattern[w.Streak % YawPattern.Length];
             w.Streak++;
         }
