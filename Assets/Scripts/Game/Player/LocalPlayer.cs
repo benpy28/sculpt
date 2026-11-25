@@ -426,6 +426,9 @@ namespace Sculpt.Game.Player
             }
         }
 
+        /// <summary>Turn to face the way your spawn faces (a new match moved you back there).</summary>
+        public void FaceSpawnNow() => FaceSpawn();
+
         private void StopShowcase()
         {
             ShowcaseRun r = _showcase;

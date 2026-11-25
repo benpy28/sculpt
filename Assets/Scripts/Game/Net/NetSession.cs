@@ -31,6 +31,12 @@ namespace Sculpt.Game.Net
         /// <summary>The grid the local client draws and predicts on. Replaced with the client (see ClientChanged).</summary>
         public SubGrid ClientGrid { get; private set; }
         public SculptConfig SculptConfig => _sculptConfig;
+        /// <summary>Run the match (most kills in 5 minutes) on the local server while hosting. Offline it is always off.</summary>
+        public bool MatchWhenHosting;
+        /// <summary>Seconds spent trying to join without a welcome (the menu shows a hint after a few).</summary>
+        public float JoinWaitSeconds { get; private set; }
+        /// <summary>Why the last join failed, in plain words (empty if it didn't).</summary>
+        public string JoinError { get; private set; } = "";
 
         /// <summary>Simulated bad network on the local player's link (one way each).</summary>
         public readonly LinkConditions SimUp = new LinkConditions();
@@ -82,6 +88,7 @@ namespace Sculpt.Game.Net
         {
             ShutdownFishNet();
             CreateLocalServer();
+            Server.MatchConfig.Enabled = false;
             Mode = NetMode.Offline;
             Status = "Offline (local server)";
         }
@@ -94,6 +101,7 @@ namespace Sculpt.Game.Net
             if (_fish.StartServer(port))
             {
                 Mode = NetMode.Host;
+                Server.MatchConfig.Enabled = MatchWhenHosting;
                 Status = $"Hosting on port {port}";
                 Debug.Log($"[SCULPT] Hosting on UDP port {port}.");
             }
@@ -107,6 +115,8 @@ namespace Sculpt.Game.Net
             ServerSculpt = null;
             JoinAddress = address;
             Port = port;
+            JoinWaitSeconds = 0;
+            JoinError = "";
             NewLocalLinks();
             NewClient();
             EnsureFishNet();
@@ -180,9 +190,11 @@ namespace Sculpt.Game.Net
             };
             _fish.ServerReceived += (id, data, reliable) => Server?.Receive(id, data, 0, data.Length);
             _fish.ClientConnected += () => { if (Mode == NetMode.Client) Status = $"Connected to {JoinAddress}:{Port}"; };
+            _fish.ServerClientConnected += id => { if (Server != null && Mode == NetMode.Host) Status = $"Hosting on port {Port}: {Server.Players.Count} player(s)"; };
             _fish.ClientDisconnected += () =>
             {
                 if (Mode != NetMode.Client) return;
+                if (!Client.Joined && JoinError.Length == 0) JoinError = $"Couldn't reach {JoinAddress}:{Port}.";
                 _pendingOffline = true; // never tear FishNet down inside its own callback
             };
             // Received packets go through the simulated downlink, so fake latency applies to real traffic too.
@@ -207,10 +219,17 @@ namespace Sculpt.Game.Net
             {
                 _pendingOffline = false;
                 Debug.Log("[SCULPT] Disconnected from server; back to offline.");
+                bool joined = Client.Joined;
                 StartOffline();
-                Status = "Disconnected (offline now)";
+                Status = joined ? "Disconnected (offline now)" : "Join failed (offline now)";
+                if (joined && JoinError.Length == 0) JoinError = "The host left or the connection dropped.";
             }
             _fish?.PumpIncoming();
+            if (Mode == NetMode.Client && !Client.Joined)
+            {
+                JoinWaitSeconds += (float)dt;
+                if (Client.JoinError.Length > 0 && JoinError.Length == 0) { JoinError = Client.JoinError; _pendingOffline = true; }
+            }
             DeliverUp();
 
             if (Server != null)

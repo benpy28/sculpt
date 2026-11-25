@@ -33,6 +33,35 @@ namespace Sculpt.Game.Bootstrap
 
         public enum MapKind { Arena, MovementCourse }
 
+        // ---- What the next scene load starts (the main menu picks it, then reloads the scene) ----
+        public enum Launch { Menu, Offline, Host, Join }
+        public enum MapChoice { Duel, Breach }
+        public static Launch NextLaunch = Launch.Menu;
+        public static MapChoice NextMap = MapChoice.Duel;
+        public static string NextAddress = "";
+        private static bool _commandLineDone;
+
+        /// <summary>Reloads the game with a new map and start (menu buttons). Everything is rebuilt from code.</summary>
+        public static void Relaunch(Launch launch, MapChoice map, string address = "")
+        {
+            NextLaunch = launch;
+            NextMap = map;
+            NextAddress = address ?? "";
+            UnityEngine.SceneManagement.SceneManager.LoadScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+        }
+
+        public static MapChoice CurrentMap { get; private set; }
+
+        /// <summary>Each Play press starts at the menu, even with domain reload off.</summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetLaunch()
+        {
+            NextLaunch = Launch.Menu;
+            NextMap = MapChoice.Duel;
+            NextAddress = "";
+            _commandLineDone = false;
+        }
+
         [Tooltip("Arena: the seeded 5v5 test arena. Movement Course: the M2 movement test map.")]
         [SerializeField] private MapKind map = MapKind.Arena;
         [SerializeField] private int mapSeed = 1;
@@ -73,7 +102,19 @@ namespace Sculpt.Game.Bootstrap
             BreachMapInfo breachInfo = null;
             BrushWorld brushes = null;
             Func<SubGrid, ITerrain> terrain = null;
-            if (breachMap)
+            if (!_commandLineDone) ReadLaunchArgs();
+            CurrentMap = NextMap;
+            if (NextMap == MapChoice.Duel)
+            {
+                // The 1v1 friend demo map (Ben 2026-11-25).
+                build = DuelMap.BuildGround;
+                _grid = DuelMap.BuildGround();
+                brushes = DuelMap.BuildBrushes(out breachInfo, breach);
+                terrain = g => DuelMap.Terrain(g, DuelMap.BuildBrushes(out _, breach));
+                spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
+                yaw = breachInfo.SpawnYaw;
+            }
+            else if (breachMap)
             {
                 build = BreachMap.BuildGround;
                 _grid = BreachMap.BuildGround();
@@ -107,7 +148,7 @@ namespace Sculpt.Game.Bootstrap
                 BreachMapInfo bi = breachInfo;
                 var dummy = new DummyConfig();
                 breachSettings.ApplyTo(dummy);
-                bool withDummy = breachSettings.practiceDummy;
+                bool withDummy = breachSettings.practiceDummy && bi.Room != null;
                 setup = server =>
                 {
                     foreach (GroundItem g in bi.ItemSpawns) server.SpawnItem(g.Kind, g.Count, g.Position);
@@ -116,6 +157,7 @@ namespace Sculpt.Game.Bootstrap
                 };
             }
             _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup);
+            _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
 
             _world = new GameObject("World").AddComponent<WorldView>();
             _world.Init(_grid, sculptConfig, mapInfo);
@@ -138,7 +180,7 @@ namespace Sculpt.Game.Bootstrap
 
             _player = new GameObject("Local Player").AddComponent<LocalPlayer>();
             _player.Init(_session, movement, movementSettings, _input, client);
-            if (breachInfo != null) _player.SetCourse(breachInfo.Course);
+            if (breachInfo?.Course != null) _player.SetCourse(breachInfo.Course);
             _world.TrackPlayers(_player, _session);
 
             new GameObject("Remote Players").AddComponent<RemotePlayersView>().Init(_session, movement);
@@ -165,8 +207,17 @@ namespace Sculpt.Game.Bootstrap
             gameObject.AddComponent<CombatHud>().Init(_player, _session, _weapons, _rig.Camera);
             gameObject.AddComponent<FeelHud>().Init(_player, client);
             gameObject.AddComponent<SettingsMenu>().Init(_player, client, _input);
+            gameObject.AddComponent<MatchHud>().Init(_player, _session);
+            var menu = gameObject.AddComponent<MainMenu>();
+            menu.Init(_player, _session);
 
-            ApplyCommandLine();
+            switch (NextLaunch)
+            {
+                case Launch.Host: _session.StartHost(FishNetTransport.DefaultPort); break;
+                case Launch.Join: JoinAddress(NextAddress); break;
+                case Launch.Menu: menu.Open(); break;
+            }
+            ApplyCommandLine(); // sim ping/loss/jitter, and a non-default -port
 
             Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {(breachMap ? "Breach" : map.ToString())} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
         }
@@ -220,7 +271,32 @@ namespace Sculpt.Game.Bootstrap
             };
         }
 
-        /// <summary>-host, -connect address[:port], -port N, -simping ms, -simloss percent, -simjitter ms.</summary>
+        /// <summary>Joins "address" or "address:port".</summary>
+        private void JoinAddress(string text)
+        {
+            string addr = (text ?? "").Trim();
+            ushort port = FishNetTransport.DefaultPort;
+            int colon = addr.LastIndexOf(':');
+            if (colon > 0 && ushort.TryParse(addr.Substring(colon + 1), out ushort cp)) { port = cp; addr = addr.Substring(0, colon); }
+            if (addr.Length > 0) _session.Join(addr, port);
+        }
+
+        /// <summary>First boot only: -host / -connect address[:port] / -breach skip the menu.</summary>
+        private static void ReadLaunchArgs()
+        {
+            _commandLineDone = true;
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length; i++)
+            {
+                string a = args[i].ToLowerInvariant();
+                if (a == "-host") NextLaunch = Launch.Host;
+                else if (a == "-connect" && i + 1 < args.Length) { NextLaunch = Launch.Join; NextAddress = args[i + 1]; }
+                else if (a == "-offline") NextLaunch = Launch.Offline;
+                else if (a == "-breach") NextMap = MapChoice.Breach;
+            }
+        }
+
+        /// <summary>-port N, -simping ms, -simloss percent, -simjitter ms (host and join come from ReadLaunchArgs).</summary>
         private void ApplyCommandLine()
         {
             string[] args = Environment.GetCommandLineArgs();
@@ -241,13 +317,8 @@ namespace Sculpt.Game.Bootstrap
                 else if (a == "-simjitter" && next != null && double.TryParse(next, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double jit))
                 { _session.SimUp.JitterMs = jit; _session.SimDown.JitterMs = jit; }
             }
-            if (connect != null)
-            {
-                int colon = connect.LastIndexOf(':');
-                if (colon > 0 && ushort.TryParse(connect.Substring(colon + 1), out ushort cp)) { port = cp; connect = connect.Substring(0, colon); }
-                _session.Join(connect, port);
-            }
-            else if (host) _session.StartHost(port);
+            if (host && port != FishNetTransport.DefaultPort) _session.StartHost(port);
+            if (connect != null && port != FishNetTransport.DefaultPort && connect.LastIndexOf(':') < 0) _session.Join(connect, port);
         }
 
         private void OnDestroy()

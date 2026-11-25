@@ -80,6 +80,8 @@ namespace Sculpt.Core.Net
         public int LastSnapshotTick { get; private set; } = int.MinValue;
         /// <summary>The match as the server last told it (phase, timer, scores).</summary>
         public readonly MatchState Match = new MatchState();
+        /// <summary>Set when the server can't be joined (a different game build); empty otherwise.</summary>
+        public string JoinError { get; private set; } = "";
         /// <summary>Smoothed estimate of the server's tick right now (for timers).</summary>
         public double ServerTimeEstimate => _serverTime;
         public int SnapshotsReceived { get; private set; }
@@ -223,7 +225,11 @@ namespace Sculpt.Core.Net
 
         private void OnWelcome(in WelcomeMsg m)
         {
-            if (m.ProtocolVersion != Protocol.Version) throw new NetFormatException($"Protocol {m.ProtocolVersion}, expected {Protocol.Version}.");
+            if (m.ProtocolVersion != Protocol.Version)
+            {
+                JoinError = m.ProtocolVersion > Protocol.Version ? "The host runs a newer build of the game. Use the same build on both PCs." : "The host runs an older build of the game. Use the same build on both PCs.";
+                throw new NetFormatException($"Protocol {m.ProtocolVersion}, expected {Protocol.Version}.");
+            }
             Joined = true;
             Match.Phase = MatchPhase.Off;
             Match.Scores.Clear();
