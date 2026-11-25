@@ -49,6 +49,10 @@ namespace Sculpt.Core.Net
 
         /// <summary>Kills and deaths since joining (dev HUD).</summary>
         public int Kills, Deaths;
+        /// <summary>Kills and deaths in the current match (only while it is Playing).</summary>
+        public int MatchKills, MatchDeaths;
+        /// <summary>Respawn on the next tick (a new match).</summary>
+        internal bool ForceRespawn;
 
         public int MissedInputs;   // ticks stepped with a repeated command
         public int LateInputs;     // commands that arrived after their tick was simulated
@@ -173,6 +177,8 @@ namespace Sculpt.Core.Net
                 SpawnYaw = spawnYaw,
             });
             Send(connectionId, _w.ToArray(), true);
+            _matchDirty = true;
+            SendMatchTo(p);
             if (Sculpt != null) SendJoinState(p);
             SendTileJoinState(p);
             SendItems(p.ConnectionId);
@@ -184,6 +190,7 @@ namespace Sculpt.Core.Net
             if (!_byConn.TryGetValue(connectionId, out var p)) return;
             _byConn.Remove(connectionId);
             _players.Remove(p);
+            _matchDirty = true;
             Healing?.Cancel(p.Id, HealResult.Stopped, null, Tick);
             _dummies.Remove(p.Id);
             _ownBars.Remove(p.Id);
@@ -311,6 +318,7 @@ namespace Sculpt.Core.Net
         public void Step(List<MoveEvent> events = null)
         {
             Tick++;
+            StepMatch();
             _combat.Clear();
             ItemActions.Clear();
             if (Walls != null) Walls.Tick = Tick;
@@ -351,6 +359,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryCrouch) { cmd.Move.CrouchPressed = true; p.CarryCrouch = false; }
                 if (p.CarryFire) { cmd.Move.FirePressed = true; p.CarryFire = false; }
                 if (p.CarryRespawn) { cmd.Respawn = true; p.CarryRespawn = false; }
+                if (p.ForceRespawn) { cmd.Respawn = true; p.ForceRespawn = false; }
                 if (p.CarryWarp) { cmd.Warp = true; p.CarryWarp = false; }
                 if (p.CarryToggle) { cmd.Hand.SculptToggle = true; p.CarryToggle = false; }
                 if (p.CarryReload) { cmd.Hand.Reload = true; p.CarryReload = false; }
@@ -415,6 +424,7 @@ namespace Sculpt.Core.Net
             SendCombat();
             SendTiles();
             if (Items.Version != _itemsSentVersion) { _itemsSentVersion = Items.Version; SendItems(-1); }
+            SendMatch();
             if (Config.SnapshotEveryTicks <= 1 || Tick % Config.SnapshotEveryTicks == 0)
                 SendSnapshots();
         }

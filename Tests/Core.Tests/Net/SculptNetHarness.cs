@@ -86,6 +86,13 @@ namespace Sculpt.Core.Tests.Net
 
         public static Vec3d FeetIn(double tx, double tz) => new Vec3d((tx + 0.5) * B, 0, (tz + 0.5) * B);
 
+        public void Remove(Peer p)
+        {
+            Server.RemovePlayer(p.ConnectionId);
+            Peers.Remove(p);
+            _byConn.Remove(p.ConnectionId);
+        }
+
         public Peer AddClient(Vec3d spawn, int team = 1, LinkConditions up = null, LinkConditions down = null, double frameMs = 1000.0 / 144.0, int seed = 1)
         {
             var p = new Peer

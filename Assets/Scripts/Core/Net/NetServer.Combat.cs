@@ -205,6 +205,7 @@ namespace Sculpt.Core.Net
             victim.Deaths++;
             ServerPlayer k = killer != 0 && killer != victim.Id ? FindById(killer) : null;
             if (k != null) k.Kills++;
+            OnMatchKill(victim, k);
             victim.Body.Position = ParkedBody;
             victim.Body.Kick = Vec3d.Zero;
             _combat.Add(new CombatEvent { Type = CombatEventType.Kill, Attacker = killer, Victim = victim.Id, Source = source, HeadPellets = (byte)(headshot ? 1 : 0) });
