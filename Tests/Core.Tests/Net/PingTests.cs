@@ -67,6 +67,7 @@ namespace Sculpt.Core.Tests.Net
         {
             var h = Duel();
             Match(h.Server);
+            h.Server.Ping.StopRange = 0; // single reveals (repeats are tested below)
             var a = h.AddClient(Spawn(1), team: 1);
             var b = h.AddClient(Spawn(2), team: 2, seed: 2);
             Assert.That((Spawn(1) - Spawn(2)).Length, Is.GreaterThan(10), "the spawns are far apart");
@@ -99,6 +100,46 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(h.Server.PingsFired, Is.EqualTo(1), "the next quiet spell starts when the reveal ends");
             RunUntilTick(h, ea.EndTick + quiet + 3);
             Assert.That(h.Server.PingsFired, Is.EqualTo(2), "and pings again");
+        }
+
+        [Test]
+        public void OnceFired_ItKeepsPingingEveryThreeSeconds_UntilTheyAreWithin30m()
+        {
+            var h = Duel();
+            Match(h.Server);
+            var a = h.AddClient(Spawn(1), team: 1);
+            var b = h.AddClient(Spawn(2), team: 2, seed: 2);
+            double apart = (Spawn(1) - Spawn(2)).Length;
+            Assert.That(apart, Is.GreaterThan(30), "the spawns are more than 30 m apart");
+            int start = RunToPlaying(h);
+            int quiet = SimTime.SecondsToTicks(10), reveal = SimTime.SecondsToTicks(3);
+            int ida = a.ServerSide.Id, idb = b.ServerSide.Id;
+
+            RunUntilTick(h, start + quiet + 3);
+            Assert.That(h.Server.PingsFired, Is.EqualTo(1));
+            // Still far apart: a fresh reveal each time one ends, with no gap.
+            for (int k = 1; k <= 4; k++)
+            {
+                RunUntilTick(h, start + quiet + k * reveal + 3);
+                Assert.That(h.Server.PingsFired, Is.EqualTo(1 + k), "repeats every 3 s");
+                Assert.That(h.Server.IsRevealed(ida, idb), "no gap between repeats");
+            }
+            h.RunSeconds(0.1);
+            Assert.That(a.Client.IsRevealed(idb, out _), "the client sees them all along");
+            Assert.That(a.Client.RevealsStarted.Count, Is.EqualTo(5), "one message per repeat (each is a ping you hear)");
+
+            // Within the stop range (as if they had walked up): over at once, and the quiet clock starts again.
+            h.Server.Ping.StopRange = apart + 1;
+            h.RunSeconds(0.1);
+            Assert.That(h.Server.IsRevealed(ida, idb), Is.False, "within 30 m: it stops");
+            Assert.That(a.Client.IsRevealed(idb, out _), Is.False, "and the clients are told");
+            Assert.That(b.Client.IsRevealed(ida, out _), Is.False);
+            int fired = h.Server.PingsFired;
+            h.Server.Ping.StopRange = 30;
+            h.RunSeconds(9.5);
+            Assert.That(h.Server.PingsFired, Is.EqualTo(fired), "the next one needs another 10 quiet seconds");
+            h.RunSeconds(0.7);
+            Assert.That(h.Server.PingsFired, Is.EqualTo(fired + 1));
         }
 
         [Test]

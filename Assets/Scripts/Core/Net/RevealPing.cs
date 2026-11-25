@@ -16,6 +16,11 @@ namespace Sculpt.Core
         public double RevealSeconds = 3;
         /// <summary>Being this close counts as contact (you can hear each other), metres. 0: distance never counts.</summary>
         public double ContactRange = 10;
+        /// <summary>
+        /// Once a ping has fired it repeats (a fresh reveal each time one ends) until the two are within this distance
+        /// of each other or one hurts the other (Ben 2026-11-25), metres. 0: a single reveal, no repeats.
+        /// </summary>
+        public double StopRange = 30;
 
         public int QuietTicks => System.Math.Max(1, SimTime.SecondsToTicks(QuietSeconds));
         public int RevealTicks => System.Math.Max(1, SimTime.SecondsToTicks(RevealSeconds));
@@ -84,6 +89,7 @@ namespace Sculpt.Core.Net
             public int LastContact;   // tick of the last contact (or of the last reveal's end)
             public int RevealEnd;     // tick the current reveal ends; at or before now: none
             public bool Hurt;         // damage between them this tick
+            public bool Hunting;      // a ping has fired and keeps repeating until they close in or fight
         }
 
         private readonly Dictionary<long, PingPair> _pingPairs = new Dictionary<long, PingPair>();
@@ -154,12 +160,35 @@ namespace Sculpt.Core.Net
             {
                 // Nothing to find (dead, or no match being played): the clock starts again from now.
                 pair.LastContact = Tick;
+                pair.Hunting = false;
                 if (revealing) { pair.RevealEnd = Tick; SendReveal(a, b, Tick); SendReveal(b, a, Tick); }
                 return;
             }
-            if (revealing) return; // a running reveal plays out; the next quiet spell starts when it ends
+            if (pair.Hunting)
+            {
+                // Repeats until they close in or fight; then it's over and the quiet clock starts from now.
+                double stop = cfg.StopRange;
+                bool closed = stop <= 0 || hurt || (b.State.Position - a.State.Position).LengthSquared <= stop * stop;
+                if (closed)
+                {
+                    pair.Hunting = false;
+                    pair.LastContact = stop <= 0 ? System.Math.Max(Tick, pair.RevealEnd) : Tick;
+                    if (revealing && stop > 0) { pair.RevealEnd = Tick; SendReveal(a, b, Tick); SendReveal(b, a, Tick); }
+                    return;
+                }
+                if (revealing) return;
+                Fire(pair, a, b, cfg);
+                return;
+            }
+            if (revealing) return;
             if (hurt || InContact(a, b, cfg)) { pair.LastContact = Tick; return; }
             if (Tick - pair.LastContact < cfg.QuietTicks) return;
+            Fire(pair, a, b, cfg);
+        }
+
+        private void Fire(PingPair pair, ServerPlayer a, ServerPlayer b, PingConfig cfg)
+        {
+            pair.Hunting = true;
             pair.RevealEnd = Tick + cfg.RevealTicks;
             pair.LastContact = pair.RevealEnd;
             PingsFired++;

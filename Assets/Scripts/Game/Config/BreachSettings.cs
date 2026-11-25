@@ -192,6 +192,8 @@ namespace Sculpt.Game.Config
         [Range(0.5f, 10f)] public float pingRevealSeconds = 3f;
         [Tooltip("Being this close counts as contact (you can hear each other), metres. 0: only damage and sight count.")]
         [Range(0f, 40f)] public float pingContactRange = 10f;
+        [Tooltip("Once it fires, the ping repeats every reveal until you are within this distance of each other or one hurts the other, metres. 0: one reveal, no repeats.")]
+        [Range(0f, 100f)] public float pingStopRange = 30f;
 
         public void ApplyTo(DummyConfig d)
         {
@@ -315,6 +317,7 @@ namespace Sculpt.Game.Config
             b.Ping.QuietSeconds = pingQuietSeconds;
             b.Ping.RevealSeconds = pingRevealSeconds;
             b.Ping.ContactRange = pingContactRange;
+            b.Ping.StopRange = pingStopRange;
         }
     }
 }
