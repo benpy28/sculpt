@@ -233,6 +233,7 @@ namespace Sculpt.Core.Net
             // ---- Move (and, when not fighting, look where it walks).
             Vec3d wish = Vec3d.Zero;
             bool sprint = false, jump = false, crouch = false, punch = false;
+            int openDoor = -1;
             if (_engaged || (recentlySeen && tick - _lastSeenTick < 36 * SimTime.Per60))
                 wish = FightMove(server, s, tick, dist, ref jump);
             else
@@ -260,14 +261,25 @@ namespace Sculpt.Core.Net
                     wantPitch = 0;
                     gain = 0.12;
                 }
-                // A shut door on the way: face it and punch it open (one punch breaks a leaf).
-                if (wish.LengthSquared > 0.01 && DoorAhead(server.Grid, s, wish, mc, out Vec3d door))
+                // A shut door on the way: face it and open it like a person would (interact). If it won't open (someone
+                // in the doorway, or it keeps shutting), punch it down: one punch breaks a leaf.
+                if (wish.LengthSquared > 0.01 && DoorAhead(server.Grid, s, wish, mc, out Vec3d door, out int leaf))
                 {
                     Vec3d d = door - eye;
                     wantYaw = Math.Atan2(d.X, d.Z);
                     wantPitch = Math.Atan2(d.Y, d.WithY(0).Length) * 180 / Math.PI;
                     gain = 0.25;
-                    if (Math.Abs(Wrap(wantYaw - _yaw)) < 0.2 && tick - _punchTick > 30 * SimTime.Per60) { punch = true; _punchTick = tick; }
+                    if (Math.Abs(Wrap(wantYaw - _yaw)) < 0.2 && tick - _punchTick > 30 * SimTime.Per60)
+                    {
+                        _punchTick = tick;
+                        if (leaf == _doorLeaf && _doorTries >= 2) punch = true;
+                        else
+                        {
+                            _doorTries = leaf == _doorLeaf ? _doorTries + 1 : 1;
+                            _doorLeaf = leaf;
+                            openDoor = leaf;
+                        }
+                    }
                 }
                 Unstick(s, tick, wish, ref jump);
             }
@@ -284,6 +296,7 @@ namespace Sculpt.Core.Net
             WeaponsConfig wc = mc.Weapons;
             Hand(ref cmd, s, tick, dist, recentlySeen);
             if (punch) cmd.Hand.Punch = true;
+            if (openDoor >= 0) { cmd.Hand.Door = true; cmd.Hand.DoorTile = openDoor; cmd.Hand.DoorOpen = true; }
             bool fire = false;
             if (_engaged && tick >= _fireOkTick && s.Hand.HasGun && !s.Hand.InSculptMode)
             {
@@ -499,10 +512,11 @@ namespace Sculpt.Core.Net
             return h.Hit;
         }
 
-        /// <summary>An unbroken door leaf right in front along <paramref name="wish"/> (its middle, to punch at).</summary>
-        private bool DoorAhead(ITerrain t, in MotorState s, Vec3d wish, MovementConfig mc, out Vec3d at)
+        /// <summary>A shut door leaf right in front along <paramref name="wish"/> (its middle, to face).</summary>
+        private bool DoorAhead(ITerrain t, in MotorState s, Vec3d wish, MovementConfig mc, out Vec3d at, out int leaf)
         {
             at = default;
+            leaf = -1;
             TileWalls walls = TileWalls.Find(t);
             if (walls == null) return false;
             Vec3d d = wish.WithY(0).Normalized;
@@ -513,8 +527,9 @@ namespace Sculpt.Core.Net
             foreach (int i in near)
             {
                 WallTile tile = walls[i];
-                if (tile.Kind != TileKind.Door || tile.State == TileState.Broken) continue;
+                if (tile.Kind != TileKind.Door || TileWalls.Gone(tile.State)) continue;
                 Aabb b = walls.BoundsOf(i);
+                leaf = i;
                 at = new Vec3d((b.Min.X + b.Max.X) / 2, s.Position.Y + PlayerMovement.EyeOf(s, mc) - 0.1, (b.Min.Z + b.Max.Z) / 2);
                 return true;
             }
@@ -523,6 +538,7 @@ namespace Sculpt.Core.Net
 
         private List<int> _doorNear;
         private int _punchTick = int.MinValue / 2;
+        private int _doorLeaf = -1, _doorTries;
 
         private Vec3d RoamGoal(Vec3d from)
         {

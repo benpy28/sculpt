@@ -84,7 +84,12 @@ namespace Sculpt.Game.Player
         public string InteractKeyName => UI.SculptHud.Key(_input.Interact);
         public string AimKeyName => UI.SculptHud.Key(_input.Aim);
         public string FireKeyName => UI.SculptHud.Key(_input.Fire);
-        private bool _pickupLatch, _dropLatch, _holdForDrop;
+        private bool _pickupLatch, _dropLatch, _holdForDrop, _doorLatch, _doorOpen;
+        private int _doorTile;
+        /// <summary>The door leaf under the crosshair within reach (open or shut), or -1: interact opens or shuts it.</summary>
+        public int DoorTarget { get; private set; } = -1;
+        /// <summary>Is <see cref="DoorTarget"/> open now (in your view)?</summary>
+        public bool DoorTargetOpen => DoorTarget >= 0 && Net.Walls != null && DoorRules.IsOpen(Net.Walls, DoorTarget);
         private int _pickupId;
         private float _holdStart;
 
@@ -241,6 +246,7 @@ namespace Sculpt.Game.Player
         private void UpdateItems()
         {
             PickTarget = -1;
+            DoorTarget = -1;
             if (!Net.Joined || State.Dead) { _holdForDrop = false; DropHold = 0; return; }
             int i = ItemRules.FindTarget(Net.Items, Net.Grid, SimEye, LookDir, _cfg.Items);
             if (i >= 0)
@@ -248,12 +254,21 @@ namespace Sculpt.Game.Player
                 PickTarget = i;
                 PickPlan = ItemRules.Plan(State, Net.Items[i], Net.PlayerId, Net.Tick, _cfg.Items);
             }
+            else if (Net.Walls != null) DoorTarget = DoorRules.FindTarget(Net.Walls, Net.Grid, SimEye, LookDir, Net.Walls.Config.DoorReach);
             bool active = CursorLocked && !InputBlocked;
             if (active && _input.Interact.WasPressedThisFrame())
             {
                 if (PickTarget >= 0)
                 {
                     if (PickPlan.Allowed) { _pickupLatch = true; _pickupId = Net.Items[PickTarget].Id; }
+                    _holdForDrop = false;
+                }
+                else if (DoorTarget >= 0)
+                {
+                    // Doors: one press opens a shut door or shuts an open one (yours shows at once; the server decides).
+                    _doorLatch = true;
+                    _doorTile = DoorTarget;
+                    _doorOpen = !DoorTargetOpen;
                     _holdForDrop = false;
                 }
                 else { _holdForDrop = true; _holdStart = Time.unscaledTime; }
@@ -397,6 +412,7 @@ namespace Sculpt.Game.Player
             {
                 SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0, Reload = _reloadLatch && active,
                 Pickup = _pickupLatch && active, PickId = _pickupId, Drop = _dropLatch && active, Punch = _punchLatch && active,
+                Door = _doorLatch && active, DoorTile = _doorTile, DoorOpen = _doorOpen,
             };
             if (_healWant && (!active || (!QuickHeal && !InSculptMode) || Time.unscaledTime - _healWantTime > 0.25f)) _healWant = false;
             if (_healWant && _cfg.Hand.CanHeal(h0))
@@ -411,6 +427,7 @@ namespace Sculpt.Game.Player
             _punchLatch = false;
             _pickupLatch = false;
             _dropLatch = false;
+            _doorLatch = false;
             bool respawn = _respawnLatch;
             bool confirm = _confirmLatch && active;
             SculptAction action = _confirmAction;

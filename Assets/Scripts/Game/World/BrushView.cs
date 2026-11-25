@@ -140,6 +140,13 @@ namespace Sculpt.Game.World
                 if (_tiles.HasCells(c.Tile)) { _dirty.Add(BlockOf(_tiles.World[_tiles[c.Tile].Brush])); DirtyNeighbours(c.Tile); }
                 if (c.Cause == TileCause.Server || c.Cause == TileCause.Built) continue;
                 WallTile ct = _tiles[c.Tile];
+                if (c.Cause == TileCause.Door)
+                {
+                    // One sound per door (the two leaves change together).
+                    int partner = _tiles.DoorPartner(c.Tile);
+                    if (partner < 0 || c.Tile < partner) PlayDoor(_tiles.BoundsOf(c.Tile), c.To == TileState.DoorOpen);
+                    continue;
+                }
                 if (_tiles.HasCells(c.Tile))
                 {
                     // Blast holes: chunks and dust from exactly the cells that went.
@@ -200,11 +207,56 @@ namespace Sculpt.Game.World
             mesh.RecalculateBounds();
         }
 
+        /// <summary>
+        /// An open door leaf has slid into the frame on its hinge side: drawn as a 12 cm strip of timber there, inside
+        /// the leaf's own box (it has no collision, so it must never be wide enough to hide anyone).
+        /// </summary>
+        private void AddOpenLeaf(MeshBits m, int id, Aabb b)
+        {
+            const double strip = 0.12;
+            bool alongX = b.Max.X - b.Min.X > b.Max.Z - b.Min.Z;
+            int partner = _tiles.DoorPartner(id);
+            Vec3d c = (b.Min + b.Max) * 0.5;
+            bool hingeLow = true; // the side away from the other leaf
+            if (partner >= 0)
+            {
+                Vec3d pc = (_tiles.BoundsOf(partner).Min + _tiles.BoundsOf(partner).Max) * 0.5;
+                hingeLow = alongX ? pc.X > c.X : pc.Z > c.Z;
+            }
+            Vec3d lo = b.Min, hi = b.Max;
+            if (alongX) { if (hingeLow) hi = new Vec3d(lo.X + strip, hi.Y, hi.Z); else lo = new Vec3d(hi.X - strip, lo.Y, lo.Z); }
+            else { if (hingeLow) hi = new Vec3d(hi.X, hi.Y, lo.Z + strip); else lo = new Vec3d(lo.X, lo.Y, hi.Z - strip); }
+            _surface = Rough;
+            AddBox(m, lo.ToUnity(), hi.ToUnity(), Wood);
+        }
+
+        private static AudioClip _doorOpen, _doorShut;
+
+        /// <summary>A wooden slide and a clack (open), or a slide and a heavier knock (shut). Generated, nothing licensed.</summary>
+        private static void PlayDoor(Aabb b, bool open)
+        {
+            if (_doorOpen == null)
+            {
+                AudioClip Make(string name, float knockAt, float knockGain, float pitch) => Audio.Synth.Make(name, 0.32f, false, (t, i) =>
+                {
+                    float slide = t < knockAt ? Audio.Synth.Noise(i, 0x51u) * 0.18f * Mathf.Sin(Mathf.PI * t / knockAt) : 0f;
+                    float k = t - knockAt;
+                    float knock = k >= 0 ? Mathf.Exp(-k * 38f) * (Mathf.Sin(2 * Mathf.PI * 140f * pitch * k) * 0.8f + Audio.Synth.Noise(i, 0x77u) * 0.35f) * knockGain : 0f;
+                    return slide + knock;
+                });
+                _doorOpen = Make("Door Open", 0.16f, 0.5f, 1.25f);
+                _doorShut = Make("Door Shut", 0.13f, 0.9f, 0.9f);
+            }
+            Vec3d c = (b.Min + b.Max) * 0.5;
+            Audio.Synth.Play(open ? _doorOpen : _doorShut, c.ToUnity(), 0.8f, 1f, true, 2f, 35f);
+        }
+
         private void AddTile(MeshBits m, int id, in WallTile t)
         {
             if (_tiles.HasCells(id)) { AddCelledTile(m, id, t); return; } // walls and floors: by cell (BrushView.Cells)
             if (t.State == TileState.Broken) return;
             Brush shape = _tiles.World[t.Brush];
+            if (t.State == TileState.DoorOpen) { AddOpenLeaf(m, id, shape.Bounds); return; }
             bool damaged = t.State == TileState.Damaged;
             _surface = Rough;
             switch (t.Kind)

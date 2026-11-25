@@ -23,9 +23,9 @@ namespace Sculpt.Core.Net
         internal readonly double[] ArriveMs;
         internal readonly int[] ArriveTick;
         internal int NewestReceived = int.MinValue;
-        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch, CarryHeal, CarryHealReinforce;
+        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch, CarryHeal, CarryHealReinforce, CarryDoor, CarryDoorOpen;
         internal byte CarryWeapon;
-        internal int CarryPickId, CarryHealTile, CarryHealCell;
+        internal int CarryPickId, CarryHealTile, CarryHealCell, CarryDoorTile;
         internal InputCmd CarrySculptCmd;
 
         // Sculpt confirm bookkeeping (client sequence numbers echoed in world events).
@@ -277,6 +277,7 @@ namespace Sculpt.Core.Net
                         if (c.Hand.WeaponKey != 0) p.CarryWeapon = c.Hand.WeaponKey;
                         if (c.Hand.Pickup) { p.CarryPickup = true; p.CarryPickId = c.Hand.PickId; }
                         if (c.Hand.Drop) p.CarryDrop = true;
+                        if (c.Hand.Door) { p.CarryDoor = true; p.CarryDoorTile = c.Hand.DoorTile; p.CarryDoorOpen = c.Hand.DoorOpen; }
                         if (c.Hand.Punch) p.CarryPunch = true;
                         if (c.Hand.Heal) { p.CarryHeal = true; p.CarryHealTile = c.Hand.HealTile; p.CarryHealCell = c.Hand.HealCell; p.CarryHealReinforce = c.Hand.HealReinforce; }
                         if (c.HasSculpt) { p.CarrySculpt = true; p.CarrySculptCmd = c; }
@@ -388,6 +389,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryWeapon != 0) { if (cmd.Hand.WeaponKey == 0) cmd.Hand.WeaponKey = p.CarryWeapon; p.CarryWeapon = 0; }
                 if (p.CarryPickup) { if (!cmd.Hand.Pickup) { cmd.Hand.Pickup = true; cmd.Hand.PickId = p.CarryPickId; } p.CarryPickup = false; }
                 if (p.CarryDrop) { cmd.Hand.Drop = true; p.CarryDrop = false; }
+                if (p.CarryDoor) { if (!cmd.Hand.Door) { cmd.Hand.Door = true; cmd.Hand.DoorTile = p.CarryDoorTile; cmd.Hand.DoorOpen = p.CarryDoorOpen; } p.CarryDoor = false; }
                 if (p.CarryPunch) { cmd.Hand.Punch = true; p.CarryPunch = false; }
                 if (p.CarryHeal) { if (!cmd.Hand.Heal) { cmd.Hand.Heal = true; cmd.Hand.HealTile = p.CarryHealTile; cmd.Hand.HealCell = p.CarryHealCell; cmd.Hand.HealReinforce = p.CarryHealReinforce; } p.CarryHeal = false; }
                 if (p.CarrySculpt)
@@ -414,6 +416,7 @@ namespace Sculpt.Core.Net
                 if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
                 if (!p.State.Dead && (cmd.Hand.Pickup || cmd.Hand.Drop)) HandleItems(p, cmd);
                 if (cmd.Hand.Heal) HandleHeal(p, cmd);
+                if (cmd.Hand.Door && !p.State.Dead) HandleDoor(p, cmd);
                 if (p.DeferredLock != int.MinValue)
                 {
                     HandRules.LockGun(ref p.State.Hand, p.DeferredLock);
