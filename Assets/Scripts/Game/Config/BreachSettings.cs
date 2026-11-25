@@ -141,11 +141,13 @@ namespace Sculpt.Game.Config
         [Tooltip("Ben: half an unreinforced wall (two punches on a spot open it; four on reinforced).")]
         [Min(0)] public int punchTileDamage = 50;
 
-        [Header("Charge (run through Damaged or Patched tiles)")]
+        [Header("Charge (sprint through wall that has been hit; reinforced always stops you)")]
         [Tooltip("Share of top sprint speed you need to break a cracked tile by running into it.")]
         [Range(0.3f, 1.5f)] public float chargeSpeedFraction = 0.8f;
         [Tooltip("Share of your horizontal speed kept when you charge through.")]
         [Range(0.3f, 1f)] public float chargeKeep = 0.85f;
+        [Tooltip("Share of the wall in your way that must have been hit (0.4: one AR bullet at chest height lets a sprint through).")]
+        [Range(0.05f, 1f)] public float chargeHitShare = 0.4f;
         [Tooltip("You must hit the wall within this many degrees of head-on.")]
         [Range(10f, 89f)] public float chargeMaxAngleDegrees = 60f;
 
@@ -285,6 +287,7 @@ namespace Sculpt.Game.Config
             b.PunchTileDamage = punchTileDamage;
             b.ChargeSpeedFraction = chargeSpeedFraction;
             b.ChargeKeep = chargeKeep;
+            b.ChargeHitShare = chargeHitShare;
             b.ChargeMaxAngleDegrees = chargeMaxAngleDegrees;
             b.HealSeconds = healSeconds;
             b.ReinforceSeconds = reinforceSeconds;

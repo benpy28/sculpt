@@ -120,10 +120,11 @@ namespace Sculpt.Core.Tests.World
         {
             CompositeTerrain t = Arena(out TileWalls w);
             int lo = Tile(w, LaneX, 0.75);
-            Crack(w, lo);
+            // Only the top of a standing player's path has been hit: not enough of it, nothing breaks.
+            w.Damage(Tile(w, LaneX, 2.25), 10, new Vec3d(LaneX, 1.85, 12), TileCause.Bullet, 1, 0.25);
             MotorState s = Settled(t, new Vec3d(LaneX, 0, 2));
             Go(t, ref s, 150 * SimTime.Per60, k => Run(0), new ServerChargeBreaker(), out _, out _);
-            Assert.That(w[lo].State, Is.EqualTo(TileState.Damaged), "the intact tile above stops a standing charge, so nothing breaks");
+            Assert.That(Opened(w, lo), Is.False, "a wall barely touched in your way stops a charge");
             Assert.That(s.Position.Z, Is.LessThan(12));
 
             t = Arena(out w);
@@ -136,6 +137,29 @@ namespace Sculpt.Core.Tests.World
             Assert.That(s.Position.Z, Is.GreaterThan(12.5));
             Assert.That(before, Is.GreaterThanOrEqualTo(0.8 * Mc.SprintSpeed), "above the charge threshold");
             Assert.That(s.Crouched, Is.True, "went through at slide height");
+        }
+
+        [Test]
+        public void OneArBulletAtChestHeight_LetsASprintThrough()
+        {
+            // Ben 2026-11-25: "sprint through low health walls". One AR bullet where you will hit the wall is enough.
+            CompositeTerrain t = Arena(out TileWalls w);
+            Vec3d chest = new Vec3d(LaneX, 1.1, 12);
+            w.Damage(Tile(w, LaneX, 1.1), w.Config.ArTileDamage, chest, TileCause.Bullet, 1, w.Config.ArHitRadius);
+            Assert.That(Opened(w, Tile(w, LaneX, 1.1)), Is.False, "one bullet only cracks it");
+            MotorState s = Settled(t, new Vec3d(LaneX, 0, 2));
+            Go(t, ref s, 150 * SimTime.Per60, k => Run(0), new ServerChargeBreaker { By = 1 }, out double before, out double after);
+            Assert.That(after, Is.GreaterThan(0), "charged");
+            Assert.That(s.Position.Z, Is.GreaterThan(13), "and ran on through");
+            Assert.That(after, Is.GreaterThan(before * 0.8), "keeping most of the speed");
+
+            // The same bullet a metre to the side of your path: not enough of the wall in your way was hit.
+            t = Arena(out w);
+            w.Damage(Tile(w, LaneX + 1.2, 1.1), w.Config.ArTileDamage, new Vec3d(LaneX + 1.2, 1.1, 12), TileCause.Bullet, 1, w.Config.ArHitRadius);
+            s = Settled(t, new Vec3d(LaneX, 0, 2));
+            Go(t, ref s, 150 * SimTime.Per60, k => Run(0), new ServerChargeBreaker { By = 1 }, out _, out double after2);
+            Assert.That(after2, Is.EqualTo(-1));
+            Assert.That(s.Position.Z, Is.LessThan(12));
         }
 
         [Test]

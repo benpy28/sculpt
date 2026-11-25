@@ -116,6 +116,9 @@ namespace Sculpt.Core
         public double ChargeSpeedFraction = 0.8;
         /// <summary>Share of horizontal speed kept when you charge through (Ben: "keeps most speed").</summary>
         public double ChargeKeep = 0.85;
+        /// <summary>A charge bursts through when at least this share of the wall in your way has been hit (and none of it
+        /// is reinforced). 0.4: one AR bullet at chest height lets a sprinting player through, any hit a sliding one.</summary>
+        public double ChargeHitShare = 0.4;
         /// <summary>You must hit the wall within this many degrees of head-on (a glancing scrape along it never breaks it).</summary>
         public double ChargeMaxAngleDegrees = 60;
 

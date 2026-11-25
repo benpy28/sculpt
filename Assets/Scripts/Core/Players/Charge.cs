@@ -54,6 +54,7 @@ namespace Sculpt.Core
             near.Sort(); // fixed order: same breaks on every machine
             double minCos = Math.Cos(c.ChargeMaxAngleDegrees * Math.PI / 180);
             bool charged = false;
+            int pathCells = 0, hitCells = 0;
             foreach (int t in near)
             {
                 WallTile tile = w[t];
@@ -67,12 +68,19 @@ namespace Sculpt.Core
                     hit.Add(new ChargeCut { Tile = t, Cells = ulong.MaxValue });
                     continue;
                 }
-                // By cell (Ben 2026-11-25: damage by area): every standing cell in your way must be cracked or patched.
+                // By cell (Ben 2026-11-25: "sprint through low health walls"): no reinforced cell in your way, and enough
+                // of the wall in your way has been hit (one AR bullet at chest height is enough standing, any hit when
+                // sliding). Then all of it in your way bursts.
                 if (!BrushWorld.Overlaps(w.ShapeOf(t), swept)) continue;
                 ulong cells = w.CellsTouching(t, swept);
                 if (cells == 0) continue;
                 for (int k = 0; k < 64; k++)
-                    if (((cells >> k) & 1) != 0 && !w.CellWeak(t, k)) return false; // a solid wall stops you
+                {
+                    if (((cells >> k) & 1) == 0) continue;
+                    if (w.CellReinforced(t, k)) return false; // reinforced wall always stops you
+                    pathCells++;
+                    if (w.CellWeak(t, k)) hitCells++;
+                }
                 if (!HeadOn(tile, dir, minCos)) return false; // a glancing scrape: the wall wins
                 // The hole is a cell wider than you on every side, so its cut corners never catch you on the way through.
                 double m = Brush.CellsPerSide > 0 ? w.Config.TileSize / Brush.CellsPerSide : 0.2;
@@ -80,6 +88,7 @@ namespace Sculpt.Core
                 hit.Add(new ChargeCut { Tile = t, Cells = cells });
                 AddMargin(w, t, wide, hit);
             }
+            if (pathCells > 0 && hitCells < c.ChargeHitShare * pathCells) return false; // a sound wall stops you
             if (hit.Count == 0 && !charged) return false;
             if (hit.Count > 0) breaker.Break(w, hit, tick);
             s.Velocity = new Vec3d(s.Velocity.X * c.ChargeKeep, s.Velocity.Y, s.Velocity.Z * c.ChargeKeep);
@@ -88,8 +97,8 @@ namespace Sculpt.Core
             return true;
         }
 
-        /// <summary>The margin round a charge hole: the weak cells of this tile and its neighbours inside the widened box
-        /// (strong ones stay: they never stop you, they are beside your path).</summary>
+        /// <summary>The margin round a charge hole: the cells of this tile and its neighbours inside the widened box, except
+        /// reinforced ones (they stay: they never stop you, they are beside your path).</summary>
         private static void AddMargin(TileWalls w, int tile, Aabb wide, List<ChargeCut> hit)
         {
             for (int d = -1; d < 4; d++)
@@ -98,7 +107,7 @@ namespace Sculpt.Core
                 if (u < 0 || w[u].Kind != TileKind.Wall || w[u].State == TileState.Broken || !w.HasCells(u)) continue;
                 ulong extra = w.CellsTouching(u, wide), weak = 0;
                 for (int k = 0; k < 64; k++)
-                    if (((extra >> k) & 1) != 0 && w.CellWeak(u, k)) weak |= 1ul << k;
+                    if (((extra >> k) & 1) != 0 && !w.CellReinforced(u, k)) weak |= 1ul << k;
                 if (weak != 0) hit.Add(new ChargeCut { Tile = u, Cells = weak });
             }
         }
