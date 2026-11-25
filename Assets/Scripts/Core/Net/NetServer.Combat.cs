@@ -200,9 +200,17 @@ namespace Sculpt.Core.Net
             if (killed) OnKilled(victim, thrower, DamageSource.Throw, false);
         }
 
+        /// <summary>How long after an enemy last hurt you a death with no killer still counts as their kill (8 s).</summary>
+        public const int KillCreditTicks = 8 * 60;
+
         private void OnKilled(ServerPlayer victim, int killer, DamageSource source, bool headshot)
         {
             victim.Deaths++;
+            // A death with no killer (a fall, your own blast) goes to the last enemy who hurt you within KillCreditTicks
+            // (Ben's play-test: fell on 10 health after a fight and nobody got the kill). Otherwise it is just a death.
+            if ((killer == 0 || killer == victim.Id) && victim.LastHurtBy != 0 && Tick - victim.LastHurtTick <= KillCreditTicks)
+                killer = victim.LastHurtBy;
+            victim.LastHurtBy = 0;
             ServerPlayer k = killer != 0 && killer != victim.Id ? FindById(killer) : null;
             if (k != null) k.Kills++;
             OnMatchKill(victim, k);

@@ -136,6 +136,34 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
+        public void AFallSoonAfterBeingHurt_CountsAsTheEnemysKill_ALateFallIsJustADeath()
+        {
+            foreach (bool recent in new[] { true, false })
+            {
+                var brushes = DuelMap.BuildBrushes(out BreachMapInfo info);
+                Aabb hall = info.Block.Buildings[0];
+                var roofEdge = new Vec3d(hall.Min.X + 1.0, hall.Max.Y, hall.Min.Z + 2.5); // over a roofed corner, clear of the stairwell and the bridge
+                var h = new NetHarness(() => DuelMap.Terrain(DuelMap.BuildGround(), DuelMap.BuildBrushes(out _)), info.TeamSpawns[0][0]);
+                h.Server.MatchConfig.Enabled = true;
+                h.Server.MatchConfig.CountdownTicks = 30;
+                var a = h.AddClient(spawn: info.TeamSpawns[0][0]);
+                var b = h.AddClient(spawn: roofEdge, team: 2, seed: 2);
+                h.RunSeconds(1.0);
+                Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Playing));
+                // b stands on the roof edge (the countdown respawned it at its spawn: put it back) nearly dead.
+                b.ServerSide.State = MotorState.At(roofEdge);
+                b.ServerSide.Body.Position = roofEdge;
+                b.ServerSide.State.Damage = h.Server.Movement.Weapons.MaxHealth - 2; // a roof fall does a few points
+                b.ServerSide.LastHurtBy = a.ServerSide.Id;
+                b.ServerSide.LastHurtTick = recent ? h.Server.Tick : h.Server.Tick - NetServer.KillCreditTicks - 60;
+                b.Script = t => new MoveInput { Yaw = -Math.PI / 2, MoveZ = 1 }; // west, off the edge
+                h.RunSeconds(2.0);
+                Assert.That(b.ServerSide.MatchDeaths, Is.EqualTo(1), $"the fall killed it (at {b.ServerSide.State.Position}, damage {b.ServerSide.State.Damage}, dead {b.ServerSide.State.Dead})");
+                Assert.That(a.ServerSide.MatchKills, Is.EqualTo(recent ? 1 : 0), recent ? "credited to the enemy who hurt it" : "too long ago: just a death");
+            }
+        }
+
+        [Test]
         public void MatchOffByDefault_NothingChangesForOfflinePractice()
         {
             var h = Arena();

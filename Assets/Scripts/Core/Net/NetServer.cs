@@ -53,6 +53,8 @@ namespace Sculpt.Core.Net
         public int MatchKills, MatchDeaths;
         /// <summary>Respawn on the next tick (a new match).</summary>
         internal bool ForceRespawn;
+        /// <summary>The last enemy who hurt this player, and when (kill credit for falls).</summary>
+        public int LastHurtBy, LastHurtTick;
 
         public int MissedInputs;   // ticks stepped with a repeated command
         public int LateInputs;     // commands that arrived after their tick was simulated
