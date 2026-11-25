@@ -83,7 +83,10 @@ Shader "SCULPT/Greybox"
             }
 
             // Running-bond brick on a vertical face: per-brick tone, worn bevel and mortar joints.
-            half3 Brick(float3 p, float3 n, half3 c)
+            // fw = how many metres one pixel covers here. Mortar joints are 7 mm, so from a few metres away they are
+            // thinner than a pixel and the pattern turns into moire; the joints and per-brick tones fade into their
+            // average as a pixel grows toward half a brick course.
+            half3 Brick(float3 p, float3 n, half3 c, float fw)
             {
                 bool alongX = n.z > n.x;
                 float2 uv = alongX ? p.xy : p.zy;
@@ -92,13 +95,16 @@ Shader "SCULPT/Greybox"
                 float col = floor(u);
                 float fx = frac(u) * _BrickW, fy = frac(uv.y / _BrickH) * _BrickH;
                 float edge = min(min(fx, _BrickW - fx), min(fy, _BrickH - fy));
-                float inBrick = smoothstep(_Mortar * 0.5, _Mortar, edge);
+                float inBrick = smoothstep(_Mortar * 0.5 - fw * 0.5, _Mortar + fw * 0.5, edge);
                 float tone = 1.0 + (Hash3(float3(col, row, alongX ? 1.0 : 7.0)) - 0.5) * 0.18;
                 float bevel = lerp(0.86, 1.0, smoothstep(_Mortar, _Mortar * 2.5, edge));
                 half3 brick = c * tone * bevel;
                 half lum = dot(c, half3(0.3, 0.5, 0.2));
                 half3 mortar = lerp(c, lum.xxx * 1.25, 0.75);
-                return lerp(mortar, brick, inBrick);
+                float mortarShare = saturate(1.5 * _Mortar * (1.0 / _BrickH + 1.0 / _BrickW));
+                half3 average = lerp(c * 0.97, mortar, mortarShare);
+                float fade = saturate((fw - _BrickH * 0.12) / (_BrickH * 0.38));
+                return lerp(lerp(mortar, brick, inBrick), average, fade);
             }
 
             Varyings vert(Attributes i)
@@ -126,6 +132,8 @@ Shader "SCULPT/Greybox"
                 float3 p = i.positionWS;
                 half3 c = i.color.rgb;
                 float surface = i.color.a;
+                // Pixel footprint in metres, taken outside the branches below (derivatives need uniform control flow).
+                float fw = max(max(fwidth(p.x), fwidth(p.y)), fwidth(p.z));
                 if (surface > 0.75)
                 {
                     // Unbreakable greybox: seams on the two axes that lie in the face.
@@ -142,8 +150,9 @@ Shader "SCULPT/Greybox"
                     // Breakable: no seams. Slow variation over a few metres so neighbouring tiles never read as
                     // identical squares, plus fine grain.
                     float macro = 1.0 + (ValueNoise(p * 0.37) + ValueNoise(p * 1.1) * 0.5) * _Macro * 1.4;
-                    float grain = 1.0 + ValueNoise(p * 31.0) * _Noise * 1.6;
-                    if (surface < 0.25 && n.y < 0.5) c = Brick(p, n, c);
+                    // Fine grain (about 3 cm) fades out once a pixel is bigger than it, or it shimmers.
+                    float grain = 1.0 + ValueNoise(p * 31.0) * _Noise * 1.6 * saturate(1.0 - (fw - 0.01) / 0.02);
+                    if (surface < 0.25 && n.y < 0.5) c = Brick(p, n, c, fw);
                     c *= macro * grain;
                 }
                 c = MixFog(c, i.fogFactor);
