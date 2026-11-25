@@ -219,7 +219,7 @@ namespace Sculpt.Game.Bootstrap
             }
             ApplyCommandLine(); // sim ping/loss/jitter, and a non-default -port
 
-            Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {(breachMap ? "Breach" : map.ToString())} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
+            Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {(NextMap == MapChoice.Duel ? "1v1 duel" : breachMap ? "Breach" : map.ToString())} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
         }
 
         private void Update()

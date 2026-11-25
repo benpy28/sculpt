@@ -62,6 +62,8 @@ namespace Sculpt.Game.Cameras
         private float _bobAmount;
         private float _fovKick;
         private float _zoom = 1f;
+        // Landing dip: a short critically damped spring, so a landing has weight without hiding where you are.
+        private float _dip, _dipVel;
         /// <summary>Current zoom factor (1 = none), for sensitivity scaling and the HUD.</summary>
         public float Zoom => _zoom;
         public readonly CameraShake Shake = new CameraShake();
@@ -85,7 +87,14 @@ namespace Sculpt.Game.Cameras
             if (walking) _bobPhase += dt * speed * 1.7f;
             float bob = Mathf.Sin(_bobPhase * 2f) * 0.012f * _bobAmount; // minimal: 1.2 cm
 
-            position = _player.RenderFeet + new Vector3(0, _eye + bob, 0);
+            foreach (MoveEvent e in _player.Events)
+                if (e.Type == MoveEventType.Landed && e.Amount > 0.25)
+                    _dipVel -= Mathf.Min(0.9f, 0.25f + 0.22f * (float)e.Amount); // m/s: about 2-5 cm of dip
+            const float w = 22f; // spring rate: back in ~0.15 s
+            _dipVel += (-w * w * _dip - 2f * w * _dipVel) * dt;
+            _dip = Mathf.Clamp(_dip + _dipVel * dt, -0.08f, 0.02f);
+
+            position = _player.RenderFeet + new Vector3(0, _eye + bob + _dip, 0);
             // Recoil is part of the real aim (Core), so the camera follows it exactly; Shake is cosmetic roll only and never
             // moves the crosshair off the bullet's line.
             Vector2 recoil = _player.RenderRecoil;

@@ -36,6 +36,7 @@ namespace Sculpt.Game.UI
             MatchState m = _session.Client.Match;
             // A new match puts you back at your spawn: face the way the spawn faces.
             if (m.Phase == MatchPhase.Countdown && _lastPhase != MatchPhase.Countdown) _player.FaceSpawnNow();
+            if (m.Phase != _lastPhase) Debug.Log($"[SCULPT] Match: {m.Phase}" + (m.Phase == MatchPhase.Ended ? $" (you {m.ScoreOf(_session.Client.PlayerId).Kills} kills, leader {m.Leader()})" : ""));
             _lastPhase = m.Phase;
         }
 

@@ -11,14 +11,14 @@ namespace Sculpt.Game.Config
     public sealed class MovementSettings : ScriptableObject
     {
         [Header("Speeds (m/s)")]
-        public float runSpeed = 6f;
-        public float sprintSpeed = 8.5f;
+        public float runSpeed = 6.4f;
+        public float sprintSpeed = 9.2f;
         public float crouchSpeed = 3f;
 
         [Header("Acceleration (m/s^2)")]
         public float groundAccel = 60f;
         public float groundDecel = 50f;
-        public float overspeedDecel = 30f;
+        public float overspeedDecel = 20f;
         [Range(0, 1)] public float airAccelFraction = 0.15f;
 
         [Header("Jump and gravity")]
@@ -29,13 +29,13 @@ namespace Sculpt.Game.Config
         public int jumpBufferTicks = 6;
 
         [Header("Slide")]
-        public float slideBoostSpeed = 10f;
-        public float slideFriction = 7f;
-        public float slideMaxSpeed = 14f;
+        public float slideBoostSpeed = 11f;
+        public float slideFriction = 6f;
+        public float slideMaxSpeed = 15f;
         public float slideEndSpeed = 3f;
         public float slideMinStartSpeed = 5f;
         public float slideTurnRate = 1.6f;
-        public int slideBoostCooldownTicks = 90;
+        public int slideBoostCooldownTicks = 72;
         public int slideLandWindowTicks = 9;
         public float slideLandMinSpeed = 5f;
 
@@ -69,7 +69,7 @@ namespace Sculpt.Game.Config
         [Header("Momentum: air and hops")]
         public float airNudgeTurnRate = 0.6f;
         public float airBrakeDecel = 3f;
-        public float airSoftCapSpeed = 14f;
+        public float airSoftCapSpeed = 15f;
         public float airSoftCapDecel = 4f;
         [Range(0, 1)] public float slideHopKeep = 0.95f;
         public int slideHopChainTicks = 60;
