@@ -195,6 +195,7 @@ namespace Sculpt.Core.Net
             _matchDirty = true;
             Healing?.Cancel(p.Id, HealResult.Stopped, null, Tick);
             _dummies.Remove(p.Id);
+            _brains.Remove(p.Id);
             _ownBars.Remove(p.Id);
             if (Sculpt != null)
             {
