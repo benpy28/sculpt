@@ -147,12 +147,16 @@ namespace Sculpt.Core
             int axis = dir < 2 ? b.CellA1 : b.CellA2;
             Vec3d p = cb.Center;
             p = WithAx(p, axis, dir % 2 == 0 ? Ax(cb.Max, axis) + 0.04 : Ax(cb.Min, axis) - 0.04);
-            int r = World.BoxOverlapsSolid(new Aabb(p - new Vec3d(0.02, 0.02, 0.02), p + new Vec3d(0.02, 0.02, 0.02))) ? BeyondSolid : BeyondAir;
+            var probe = new Aabb(p - new Vec3d(0.02, 0.02, 0.02), p + new Vec3d(0.02, 0.02, 0.02));
+            int r = World.BoxOverlapsSolid(probe) || (Outside != null && Outside.BoxOverlapsSolid(probe)) ? BeyondSolid : BeyondAir;
             _beyond[key] = r;
             return r;
         }
 
         private readonly Dictionary<long, int> _beyond = new Dictionary<long, int>();
+
+        /// <summary>The rest of the world (the ground under the buildings), also solid past a tile grid's edge.</summary>
+        public ITerrain Outside;
 
         /// <summary>Is the cell part of a 2 x 2 block (any of the four around it) where every cell passes the test?</summary>
         private bool InBlock(int tile, int cell, Func<int, int, bool> test)
@@ -185,146 +189,6 @@ namespace Sculpt.Core
         }
 
         // ------------------------------------------------------------------ breaking
-
-        /// <summary>
-        /// Tile <paramref name="tile"/> has just been broken by a hit at <paramref name="at"/>: blow out the cells within
-        /// <paramref name="radius"/> (rough edge), keeping the rules in the class summary, then write every tile that
-        /// changed. The broken tile itself keeps what is left of it as a cracked tile with health for what is left.
-        /// </summary>
-        private void Blast(int tile, Vec3d at, double radius, TileCause cause, int by)
-        {
-            EnsureEdges();
-            _beyond.Clear();
-            var work = new Dictionary<int, ulong>();
-            ulong W(int u) => work.TryGetValue(u, out ulong m) ? m : OpenCells(u);
-            bool Open(int u, int c) => u == BeyondAir || (u >= 0 && ((W(u) >> c) & 1) != 0);
-
-            // The tiles the disc can reach, through the grid edges.
-            var region = new List<int>();
-            var seen = new HashSet<int> { tile };
-            var queue = new Queue<int>();
-            queue.Enqueue(tile);
-            double reach = radius + Config.BlastJitter + 0.3;
-            while (queue.Count > 0 && region.Count < 128)
-            {
-                int u = queue.Dequeue();
-                region.Add(u);
-                for (int dir = 0; dir < 4; dir++)
-                {
-                    int v = _edge[u * 4 + dir];
-                    if (v < 0 || !seen.Add(v)) continue;
-                    if ((BoundsOf(v).ClosestPoint(at) - at).Length <= reach) queue.Enqueue(v);
-                }
-            }
-            region.Sort();
-            bool CanLose(int u) => u == tile || (_tiles[u].State != TileState.Broken && _tiles[u].State != TileState.Reinforced);
-
-            int minCells = MinHoleCells(tile);
-            var blow = new HashSet<long>();
-            for (int attempt = 0; attempt < 8; attempt++)
-            {
-                double r = radius + attempt * 0.12;
-                var cand = new HashSet<long>();
-                foreach (int u in region)
-                {
-                    if (!CanLose(u)) continue;
-                    Brush b = World[_tiles[u].Brush];
-                    int thin = ThinAxis(b);
-                    double half = (Ax(b.Bounds.Max, thin) - Ax(b.Bounds.Min, thin)) * 0.5;
-                    ulong open = W(u);
-                    for (int c = 0; c < Cells; c++)
-                    {
-                        if (((open >> c) & 1) != 0) continue;
-                        Vec3d cc = b.CellBox(c).Center;
-                        // Distance in the face, plus how far the hit is off the face (a blast in front of a wall).
-                        double d1 = Ax(cc, b.CellA1) - Ax(at, b.CellA1), d2 = Ax(cc, b.CellA2) - Ax(at, b.CellA2);
-                        double dn = Math.Max(0, Math.Abs(Ax(cc, thin) - Ax(at, thin)) - half);
-                        double reachHere = r + Rough(cc) * Config.BlastJitter;
-                        if (d1 * d1 + d2 * d2 + dn * dn <= reachHere * reachHere) cand.Add((long)u * 64 + c);
-                    }
-                }
-                bool InCand(int u, int c) => u == BeyondAir || (u >= 0 && (cand.Contains((long)u * 64 + c) || ((W(u) >> c) & 1) != 0));
-                blow.Clear();
-                Func<int, int, bool> inCand = InCand;
-                foreach (long k in cand)
-                    if (InBlock((int)(k / 64), (int)(k % 64), inCand)) blow.Add(k);
-                if (blow.Count >= minCells) break;
-                if (blow.Count > 0 && TouchesOpening(blow, Open)) break;
-            }
-            foreach (long k in blow)
-            {
-                int u = (int)(k / 64), c = (int)(k % 64);
-                work[u] = W(u) | (1ul << c);
-            }
-
-            // Tidy it up: no slivers, no slits, no pixel holes (see Regularise). The ring of tiles around the disc is
-            // checked too, since a 2 x 2 block can straddle a tile border.
-            var tidy = new List<int>(region);
-            foreach (int u in region)
-                for (int dir = 0; dir < 4; dir++)
-                {
-                    int v = _edge[u * 4 + dir];
-                    if (v >= 0 && !tidy.Contains(v)) tidy.Add(v);
-                }
-            tidy.Sort();
-            // A tile with too little left goes whole, which can leave thin bits beside it: tidy again until stable.
-            for (int round = 0; round < 16; round++)
-            {
-                Regularise(work, tidy, u => CanLose(u) && (u == tile || _tiles[u].State != TileState.Broken), u => u != tile && _tiles[u].State == TileState.Broken, true);
-                bool more = false;
-                foreach (int u in tidy)
-                {
-                    if (!work.TryGetValue(u, out ulong m) || m == Brush.AllCells) continue;
-                    int left = Cells - PopCount(m);
-                    if (left > 0 && left >= Config.BreakBelowFraction * Cells) continue;
-                    work[u] = Brush.AllCells;
-                    more = true;
-                }
-                if (!more) break;
-            }
-
-            // Write it: each changed tile keeps health for the share of it that is left.
-            bool wroteTile = false;
-            foreach (int u in tidy)
-            {
-                if (!work.TryGetValue(u, out ulong m)) continue;
-                ulong old = OpenCells(u);
-                if (m == old && u != tile) continue;
-                WallTile t = _tiles[u];
-                int solid = Cells - PopCount(m);
-                if (solid == 0 || solid < Config.BreakBelowFraction * Cells)
-                {
-                    Set(u, TileState.Broken, 0, cause, by);
-                    if (u == tile) wroteTile = true;
-                    continue;
-                }
-                if (u == tile)
-                {
-                    TileState st = t.State == TileState.Intact || t.State == TileState.Damaged ? TileState.Damaged : t.State;
-                    int h = Math.Max(1, (int)Math.Round(Config.MaxHealthOf(st) * Config.DamagedBelowFraction * solid / Cells));
-                    Set(u, st, h, cause, by, m);
-                    wroteTile = true;
-                }
-                else
-                {
-                    int oldSolid = Math.Max(1, Cells - PopCount(old));
-                    int h = Math.Max(1, (int)Math.Round(t.Health * (double)solid / oldSolid));
-                    TileState st = t.State;
-                    if ((st == TileState.Intact || st == TileState.Damaged) && h < Config.IntactHealth * Config.DamagedBelowFraction) st = TileState.Damaged;
-                    Set(u, st, h, cause, by, m);
-                }
-            }
-            if (!wroteTile)
-            {
-                // The disc took nothing new from the tile (its cells were already open around the hit): it still took a
-                // breaking hit, so it is left cracked with health for what is left of it.
-                WallTile t = _tiles[tile];
-                int solid = Cells - PopCount(t.Open);
-                TileState st = t.State == TileState.Intact || t.State == TileState.Damaged ? TileState.Damaged : t.State;
-                Set(tile, st, Math.Max(1, (int)Math.Round(Config.MaxHealthOf(st) * Config.DamagedBelowFraction * solid / Cells)), cause, by, t.Open);
-            }
-        }
-
         private bool TouchesOpening(HashSet<long> blow, Func<int, int, bool> open)
         {
             foreach (long k in blow)
@@ -366,11 +230,11 @@ namespace Sculpt.Core
                 foreach (int u in region)
                 {
                     if (!Partial(u)) continue;
-                    ulong m = W(u);
+                    ulong m = W(u), lk = LockOf(u);
                     for (int c = 0; c < Cells; c++)
                     {
                         bool open = ((m >> c) & 1) != 0;
-                        if (open || InBlock(u, c, solidF)) continue;
+                        if (open || ((lk >> c) & 1) != 0 || InBlock(u, c, solidF)) continue;
                         m |= 1ul << c;
                         work[u] = m;
                         changed = true;
@@ -407,7 +271,8 @@ namespace Sculpt.Core
                         int bi = (c % N) & ~1, bj = (c / N) & ~1;
                         ulong block = (1ul << (bi + N * bj)) | (1ul << (bi + 1 + N * bj)) | (1ul << (bi + N * (bj + 1))) | (1ul << (bi + 1 + N * (bj + 1)));
                         int opens = PopCount(W(u) & block);
-                        bool toOpen = opens > 2 || (opens == 2 && tieOpen);
+                        // A block with a locked (just filled) cell snaps to standing.
+                        bool toOpen = (LockOf(u) & block) == 0 && (opens > 2 || (opens == 2 && tieOpen));
                         work[u] = toOpen ? W(u) | block : W(u) & ~block;
                         snapped = true;
                         if (!Partial(u)) break;
@@ -458,33 +323,21 @@ namespace Sculpt.Core
         // ------------------------------------------------------------------ filling
 
         /// <summary>
-        /// The cells that would fill in around <paramref name="tile"/> if it came back whole now (openings next to it
-        /// that would be too thin or too small): a heal checks nobody is standing in them.
+        /// Cells came back (a heal, a reinforce, a rebuild): <paramref name="work"/> holds the open masks the changed
+        /// tiles will have. Openings near them that are now thinner than a 2 x 2 block or smaller than a minimum hole
+        /// (and not part of a broken tile or open air) fill in too: their masks are added to <paramref name="work"/>.
+        /// Cells in <paramref name="locked"/> (what was just filled) stay standing. Changes nothing itself.
         /// </summary>
-        public void CellsFilledByRestoring(int tile, List<Aabb> into)
+        private void PlanFill(Dictionary<int, ulong> work, Dictionary<int, ulong> locked)
         {
-            into.Clear();
-            if (!HasCells(tile)) return;
-            FillSmallHoles(tile, TileCause.Server, 0, into);
-        }
-
-        /// <summary>
-        /// After cells came back at <paramref name="tile"/>: openings near it that are now thinner than a 2 x 2 block or
-        /// smaller than a minimum hole (and not part of a broken tile or open air) fill in. With <paramref name="dryRun"/>
-        /// nothing changes: the cells that would fill go into it, as if the tile were already whole.
-        /// </summary>
-        private void FillSmallHoles(int tile, TileCause cause, int by, List<Aabb> dryRun)
-        {
-            if (_filling || !HasCells(tile)) return;
             EnsureEdges();
             _beyond.Clear();
-            var work = new Dictionary<int, ulong>();
-            if (dryRun != null) work[tile] = 0;
-            bool Broken(int u) => u >= 0 && (dryRun == null || u != tile) && _tiles[u].State == TileState.Broken;
-
             var region = new List<int>();
-            var seen = new HashSet<int> { tile };
-            var frontier = new List<int> { tile };
+            var seen = new HashSet<int>();
+            var frontier = new List<int>();
+            var start = new List<int>(work.Keys);
+            start.Sort();
+            foreach (int u in start) if (seen.Add(u)) { region.Add(u); frontier.Add(u); }
             for (int depth = 0; depth < 3; depth++)
             {
                 var next = new List<int>();
@@ -497,33 +350,67 @@ namespace Sculpt.Core
                 frontier = next;
             }
             region.Sort();
+            // A tile counts as broken (anchoring the openings beside it) if it is broken now and stays all open.
+            bool Broken(int u) => u >= 0 && (work.TryGetValue(u, out ulong m) ? m == Brush.AllCells : _tiles[u].State == TileState.Broken);
+            _lock = locked;
+            try { Regularise(work, region, u => !Broken(u), Broken, false); }
+            finally { _lock = null; }
+        }
 
-            Regularise(work, region, u => u != tile && !Broken(u) && _tiles[u].State != TileState.Reinforced, Broken, false);
+        /// <summary>Cells a tidy may not change (a heal's filled cells), or null.</summary>
+        private Dictionary<int, ulong> _lock;
 
+        private ulong LockOf(int u) => _lock != null && _lock.TryGetValue(u, out ulong m) ? m : 0ul;
+
+        /// <summary>
+        /// After a rebuild or a state write brought cells back at <paramref name="tile"/>: openings near it that became
+        /// too thin or too small fill in (as plain wall for a rebuild, else as the tile's material).
+        /// </summary>
+        private void FillSmallHoles(int tile, TileCause cause, int by)
+        {
+            if (_filling || !HasCells(tile)) return;
+            var work = new Dictionary<int, ulong> { [tile] = OpenCells(tile) };
+            var locked = new Dictionary<int, ulong> { [tile] = ~OpenCells(tile) };
+            PlanFill(work, locked);
+            WriteFilled(work, cause, by, cause == TileCause.Heal ? HealKind.Heal : cause == TileCause.Reinforce ? (HealKind?)HealKind.Reinforce : null);
+        }
+
+        /// <summary>
+        /// Writes the masks of <paramref name="work"/>: cells that closed come back as patch (heal), steel (reinforce) or
+        /// plain wall (null), cells that opened lose their health. Fills never chain.
+        /// </summary>
+        private void WriteFilled(Dictionary<int, ulong> work, TileCause cause, int by, HealKind? kind, Dictionary<int, ulong> extra = null)
+        {
             var keys = new List<int>(work.Keys);
+            if (extra != null) foreach (int u in extra.Keys) if (!work.ContainsKey(u)) keys.Add(u);
             keys.Sort();
-            if (dryRun != null)
-            {
-                foreach (int u in keys)
-                {
-                    if (u == tile) continue;
-                    ulong filled = OpenCells(u) & ~work[u];
-                    for (int c = 0; c < Cells; c++)
-                        if (((filled >> c) & 1) != 0) dryRun.Add(CellBox(u, c));
-                }
-                return;
-            }
             _filling = true;
+            BeginShapes();
             try
             {
+                var hp = new byte[Cells];
                 foreach (int u in keys)
                 {
+                    ulong was = OpenCells(u), now = work.TryGetValue(u, out ulong wm) ? wm : was;
+                    ulong ex = extra != null && extra.TryGetValue(u, out ulong em) ? em : 0;
+                    if (was == now && ex == 0) continue;
                     WallTile t = _tiles[u];
-                    if (t.State == TileState.Broken || work[u] == t.Open) continue;
-                    Set(u, t.State, t.Health, cause, by, work[u]);
+                    ulong closed = (was & ~now) | (ex & ~now);
+                    ulong patch = t.Patch, steel = t.Steel;
+                    for (int c = 0; c < Cells; c++) hp[c] = _hp[u * Cells + c];
+                    for (int c = 0; c < Cells; c++)
+                    {
+                        ulong bit = 1ul << c;
+                        if ((closed & bit) == 0) continue;
+                        bool p = kind == HealKind.Heal, s = kind == HealKind.Reinforce;
+                        patch = p ? patch | bit : patch & ~bit;
+                        steel = s ? steel | bit : steel & ~bit;
+                        hp[c] = (byte)Config.MaxCellHealth(p, s);
+                    }
+                    WriteCells(u, now, patch, steel, hp, cause, by);
                 }
             }
-            finally { _filling = false; }
+            finally { _filling = false; EndShapes(); }
         }
     }
 }

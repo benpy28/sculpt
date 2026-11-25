@@ -38,6 +38,9 @@ namespace Sculpt.Core.Tests.World
             throw new InvalidOperationException("no tile there");
         }
 
+        /// <summary>A charge opens the cells in your way (a body-sized hole), not necessarily the whole tile.</summary>
+        private static bool Opened(TileWalls w, int tile) => w[tile].State == TileState.Broken || w[tile].Holed;
+
         private static void Crack(TileWalls w, int tile, TileState state = TileState.Damaged) =>
             w.Set(tile, state, state == TileState.Patched ? w.Config.PatchedHealth : 40, TileCause.Bullet);
 
@@ -84,8 +87,8 @@ namespace Sculpt.Core.Tests.World
             Crack(w, hi, TileState.Patched);
             MotorState s = Settled(t, new Vec3d(LaneX, 0, 2));
             Go(t, ref s, 150, k => Run(0), new ServerChargeBreaker { By = 1 }, out double before, out double after);
-            Assert.That(w[lo].State, Is.EqualTo(TileState.Broken));
-            Assert.That(w[hi].State, Is.EqualTo(TileState.Broken));
+            Assert.That(Opened(w, lo), Is.True);
+            Assert.That(Opened(w, hi), Is.True);
             Assert.That(s.Position.Z, Is.GreaterThan(13), "ran on through");
             Assert.That(before, Is.GreaterThanOrEqualTo(0.8 * Mc.SprintSpeed));
             Assert.That(after, Is.GreaterThan(before * 0.8), "most of the speed kept");
@@ -129,7 +132,7 @@ namespace Sculpt.Core.Tests.World
             s = Settled(t, new Vec3d(LaneX, 0, 4));
             // Sprint up, then slide the last few metres into the wall.
             Go(t, ref s, 150, k => k < 40 ? Run(0) : Run(0, true, k == 40, true), new ServerChargeBreaker(), out double before, out _);
-            Assert.That(w[lo].State, Is.EqualTo(TileState.Broken), "a sliding player fits through one tile");
+            Assert.That(Opened(w, lo), Is.True, "a sliding player fits through one tile");
             Assert.That(s.Position.Z, Is.GreaterThan(12.5));
             Assert.That(before, Is.GreaterThanOrEqualTo(0.8 * Mc.SprintSpeed), "above the charge threshold");
             Assert.That(s.Crouched, Is.True, "went through at slide height");
@@ -158,7 +161,7 @@ namespace Sculpt.Core.Tests.World
             // 70 degrees off head-on (yaw from north toward east).
             Go(t, ref s, 120, k => Run(70 * Math.PI / 180), new ServerChargeBreaker(), out _, out double after);
             Assert.That(after, Is.EqualTo(-1));
-            for (int k = 0; k < w.Count; k++) Assert.That(w[k].State, Is.Not.EqualTo(TileState.Broken));
+            for (int k = 0; k < w.Count; k++) Assert.That(Opened(w, k), Is.False);
         }
 
         [Test]
@@ -178,11 +181,12 @@ namespace Sculpt.Core.Tests.World
                 int ct = s.ChargeTick;
                 NetSim.Simulate(t, Mc, Nc, ref s, c, s.Position, null, null, null, null, breaker);
                 if (s.ChargeTick == ct) continue;
+                int pending = breaker.PendingCount;
                 // Replay the same tick from the same start (as reconciliation does): the tile is already broken locally.
                 MotorState again = before;
                 NetSim.Simulate(t, Mc, Nc, ref again, c, again.Position, null, null, null, null, breaker);
                 Assert.That(Protocol.SameMotor(again, s), Is.True, "bit-identical");
-                Assert.That(breaker.PendingCount, Is.EqualTo(2), "no double record");
+                Assert.That(breaker.PendingCount, Is.EqualTo(pending), "no double record");
                 return;
             }
             Assert.Fail("never charged");
@@ -196,18 +200,18 @@ namespace Sculpt.Core.Tests.World
             Crack(w, a);
             Crack(w, b, TileState.Patched);
             var p = new PredictedChargeBreaker();
-            p.Break(w, a, 100);
-            p.Break(w, b, 140);
-            Assert.That(w[a].State, Is.EqualTo(TileState.Broken));
-            Assert.That(w[b].State, Is.EqualTo(TileState.Broken));
+            p.Break(w, new[] { new ChargeCut { Tile = a, Cells = ulong.MaxValue } }, 100);
+            p.Break(w, new[] { new ChargeCut { Tile = b, Cells = ulong.MaxValue } }, 140);
+            Assert.That(Opened(w, a), Is.True);
+            Assert.That(Opened(w, b), Is.True);
             p.OnServerState(w, 120, 100);   // server charged on 100: a confirmed; b not yet known
-            Assert.That(w[a].State, Is.EqualTo(TileState.Broken));
-            Assert.That(p.PendingCount, Is.EqualTo(1));
+            Assert.That(Opened(w, a), Is.True);
+            Assert.That(p.PendingCount, Is.GreaterThan(0), "b (and the tiles beside it) still wait");
             p.OnServerState(w, 141, 100);   // server state past 140 without a charge there: refused
             Assert.That(w[b].State, Is.EqualTo(TileState.Patched));
             Assert.That(w[b].Health, Is.EqualTo(w.Config.PatchedHealth));
             Assert.That(p.PendingCount, Is.EqualTo(0));
-            Assert.That(w[a].State, Is.EqualTo(TileState.Broken));
+            Assert.That(Opened(w, a), Is.True);
         }
 
         [Test]
@@ -257,11 +261,11 @@ namespace Sculpt.Core.Tests.World
             int before = a.Client.Corrections;
             a.Script = (p, t) => new SculptTickInput { Move = new MoveInput { MoveZ = 1, SprintHeld = true } };
             h.RunSeconds(2.5);
-            Assert.That(sw[lo].State, Is.EqualTo(TileState.Broken));
-            Assert.That(sw[hi].State, Is.EqualTo(TileState.Broken));
+            Assert.That(Opened(sw, lo), Is.True);
+            Assert.That(Opened(sw, hi), Is.True);
             Assert.That(a.ServerSide.State.Position.Z, Is.GreaterThan(13));
             Assert.That(a.Client.Corrections, Is.EqualTo(before), "the charge is predicted exactly");
-            Assert.That(a.Client.Walls[lo].State, Is.EqualTo(TileState.Broken));
+            Assert.That(a.Client.Walls[lo].Open, Is.EqualTo(sw[lo].Open), "the client's copy matches the server's");
             Assert.That(a.Client.Charges.PendingCount, Is.EqualTo(0), "the server confirmed it");
         }
 

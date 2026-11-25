@@ -105,6 +105,8 @@ namespace Sculpt.Core
         /// <summary>Sculpt press on a wall tile: heal it (or reinforce it with <see cref="HealReinforce"/>). The server checks it.</summary>
         public bool Heal;
         public int HealTile;
+        /// <summary>The cell of <see cref="HealTile"/> aimed at (walls and floors heal by area round it), 0..63.</summary>
+        public int HealCell;
         public bool HealReinforce;
     }
 
@@ -123,6 +125,21 @@ namespace Sculpt.Core
         /// <summary>The launcher is heavy: a long draw (0.6 s), so it is a commitment, never a quick swap up close.</summary>
         public int LauncherDrawTicks = 36;
         public int LauncherExitTicks = 18;
+
+        /// <summary>
+        /// Heal with one press, no sculpt mode (Ben 2026-11-25: "no heal menu"; Q heals what you aim at, Alt + Q
+        /// reinforces). Off only while the parked block moves are on (they need sculpt mode).
+        /// </summary>
+        public bool QuickHeal = true;
+        /// <summary>A quick heal press keeps the gun from firing this long (the heal is a short commitment, not free).</summary>
+        public double HealLockSeconds = 0.2;
+        public int HealLockTicks => SimTime.SecondsToTicks(HealLockSeconds);
+
+        /// <summary>Can this hand heal right now (quick heal: anything but disarmed; else sculpt mode proper)?</summary>
+        public bool CanHeal(in HandState h) => QuickHeal ? h.Mode != HandMode.Disarmed : h.CanConfirmSculpt;
+
+        /// <summary>Does a running heal keep going (quick heal: until disarmed; else while in sculpt mode)?</summary>
+        public bool KeepsHealing(in HandState h) => QuickHeal ? h.Mode != HandMode.Disarmed : h.InSculptMode;
 
         public int Draw(Weapon w) => DrawTicks[(int)w];
         public int Exit(Weapon w) => ExitTicks[(int)w];

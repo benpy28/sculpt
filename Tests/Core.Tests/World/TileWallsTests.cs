@@ -224,17 +224,18 @@ namespace Sculpt.Core.Tests
         [Test]
         public void HitsToBreakAnIntactTileArePerGunAndExact()
         {
-            Assert.That(ShotsToBreak(Weapon.Ar, TileState.Intact), Is.EqualTo(8), "13 x 8 = 104");
-            Assert.That(ShotsToBreak(Weapon.Smg, TileState.Intact), Is.EqualTo(15), "7 x 15 = 105");
-            Assert.That(ShotsToBreak(Weapon.Pistol, TileState.Intact), Is.EqualTo(6), "17 x 6 = 102");
-            Assert.That(ShotsToBreak(Weapon.Pump, TileState.Intact), Is.EqualTo(2), "9 pellets x 6 = 54 per point-blank shot");
+            Assert.That(ShotsToBreak(Weapon.Ar, TileState.Intact), Is.EqualTo(2), "Ben 2026-11-25: the AR two-taps a wall (50 x 2)");
+            Assert.That(ShotsToBreak(Weapon.Smg, TileState.Intact), Is.EqualTo(4), "25 x 4");
+            Assert.That(ShotsToBreak(Weapon.Pistol, TileState.Intact), Is.EqualTo(3), "34 x 3 = 102");
+            Assert.That(ShotsToBreak(Weapon.Pump, TileState.Intact), Is.EqualTo(1), "Ben: the pump one-shots a wall (9 pellets x 14 = 126)");
         }
 
         [Test]
         public void PatchedTilesBreakFasterAndReinforcedSlower()
         {
-            Assert.That(ShotsToBreak(Weapon.Ar, TileState.Patched), Is.EqualTo(4), "50 health");
-            Assert.That(ShotsToBreak(Weapon.Ar, TileState.Reinforced), Is.EqualTo(16), "200 health");
+            Assert.That(ShotsToBreak(Weapon.Ar, TileState.Patched), Is.EqualTo(1), "50 health");
+            Assert.That(ShotsToBreak(Weapon.Ar, TileState.Reinforced), Is.EqualTo(4), "200 health");
+            Assert.That(ShotsToBreak(Weapon.Pump, TileState.Reinforced), Is.EqualTo(2), "Ben: no one-shot on reinforced");
         }
 
         [Test]
@@ -374,28 +375,29 @@ namespace Sculpt.Core.Tests
             };
             TileWalls server = h.Server.Walls;
             Assert.That(server, Is.Not.Null);
-            h.RunSeconds(0.7 + 3 * 20 / 60.0 + 0.15); // 3 shots out, plus the 40 ms trip
-            Assert.That(server[0].State, Is.EqualTo(TileState.Damaged), "3 pistol rounds: 49 left");
-            Assert.That(server[0].Health, Is.EqualTo(49));
+            h.RunSeconds(0.7 + 1 * 20 / 60.0 + 0.15); // 1 shot out, plus the 40 ms trip
+            Assert.That(server[0].Holed, Is.False, "1 pistol round cracks it");
+            Assert.That(server.CellHealth(0, server.CellAt(0, target)), Is.EqualTo(100 - 34), "round where it hit");
             h.RunSeconds(3 * 20 / 60.0 + 0.3);
-            Assert.That(server[0].State, Is.EqualTo(TileState.Broken), "6 rounds break it");
-            for (int i = 1; i < server.Count; i++) Assert.That(server[i].State, Is.EqualTo(TileState.Intact), "only the aimed tile");
+            Assert.That(server[0].Holed, Is.True, "3 rounds on the spot open it");
+            for (int i = 1; i < server.Count; i++) Assert.That(server[i].State, Is.EqualTo(TileState.Intact), "only round the aimed spot");
 
             TileWalls mine = a.Client.Walls;
             Assert.That(mine, Is.Not.SameAs(server), "each side has its own copy");
-            Assert.That(mine[0].State, Is.EqualTo(TileState.Broken), "the shooter's copy follows the server");
-            Assert.That(a.Client.Grid.BoxOverlapsSolid(new Aabb(new Vec3d(6.5, 0.5, 12.05), new Vec3d(7.0, 1.0, 12.25))), Is.False, "and its collision too");
+            Assert.That(mine[0].Open, Is.EqualTo(server[0].Open), "the shooter's copy follows the server");
+            Assert.That(a.Client.Grid.BoxOverlapsSolid(new Aabb(new Vec3d(6.65, 0.65, 12.05), new Vec3d(6.85, 0.85, 12.25))), Is.False, "and its collision too");
             bool sawBreak = false, sawCrack = false;
             foreach (TileChange c in mine.Changes)
             {
-                if (c.Tile == 0 && c.To == TileState.Broken && c.Cause == TileCause.Bullet && c.By == a.ServerSide.Id) sawBreak = true;
-                if (c.Tile == 0 && c.To == TileState.Damaged && c.From == TileState.Intact) sawCrack = true;
+                if (c.Tile == 0 && c.Open != 0 && c.Cause == TileCause.Bullet && c.By == a.ServerSide.Id) sawBreak = true;
+                if (c.Tile == 0 && c.Open == 0 && c.Hp != null && c.Hp[server.CellAt(0, target)] < 100) sawCrack = true;
             }
             Assert.That(sawBreak && sawCrack, Is.True, "the client's change list carries cause, shooter and the old state for effects");
 
             var late = h.AddClient(new Vec3d(20, 0, 5), team: 2);
             h.RunSeconds(0.3);
-            Assert.That(late.Client.Walls[0].State, Is.EqualTo(TileState.Broken), "a late joiner gets the changed tiles");
+            Assert.That(late.Client.Walls[0].Open, Is.EqualTo(server[0].Open), "a late joiner gets the changed tiles");
+            Assert.That(late.Client.Walls.CellHealths(0), Is.EqualTo(server.CellHealths(0)), "cell by cell");
             Assert.That(late.Client.Walls[1].State, Is.EqualTo(TileState.Intact));
             foreach (TileChange c in late.Client.Walls.Changes) Assert.That(c.Cause, Is.EqualTo(TileCause.Server), "join state is not a fresh break (no debris)");
         }

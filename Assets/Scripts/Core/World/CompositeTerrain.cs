@@ -13,6 +13,8 @@ namespace Sculpt.Core
         {
             A = a;
             B = b;
+            // The wall cells look past their tile grid's edge to tell a floor from a doorway: the ground counts.
+            if (b is BrushWorld bw) bw.Tiles.Outside = a;
         }
 
         public bool BoxOverlapsSolid(Aabb box) => A.BoxOverlapsSolid(box) || B.BoxOverlapsSolid(box);

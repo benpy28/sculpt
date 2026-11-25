@@ -156,7 +156,7 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
-        public void TileUnderTheCrosshair_TakesHalfOrAQuarterReinforced()
+        public void TileUnderTheCrosshair_TakesHalf()
         {
             CompositeTerrain t = Arena(out TileWalls w);
             var eye = new Vec3d(9, 1.62, 10.5);
@@ -165,7 +165,7 @@ namespace Sculpt.Core.Tests.World
             Assert.That(w.BoundsOf(tile).Min.Y, Is.EqualTo(1.5).Within(1e-9), "the row at eye height");
             Assert.That(PunchRules.TileDamage(TileState.Intact, w.Config), Is.EqualTo(50));
             Assert.That(PunchRules.TileDamage(TileState.Patched, w.Config), Is.EqualTo(50));
-            Assert.That(PunchRules.TileDamage(TileState.Reinforced, w.Config), Is.EqualTo(25));
+            Assert.That(PunchRules.TileDamage(TileState.Reinforced, w.Config), Is.EqualTo(50), "reinforced wall just has more health (four punches)");
             PunchRules.Resolve(t, w, Swing(new Vec3d(9, 1.62, 9.5), new Vec3d(0, 0, 1)), Pc, null, 1, false, out int far);
             Assert.That(far, Is.EqualTo(-1), "2.5 m away is out of reach");
         }

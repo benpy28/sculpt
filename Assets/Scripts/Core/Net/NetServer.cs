@@ -25,7 +25,7 @@ namespace Sculpt.Core.Net
         internal int NewestReceived = int.MinValue;
         internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch, CarryHeal, CarryHealReinforce;
         internal byte CarryWeapon;
-        internal int CarryPickId, CarryHealTile;
+        internal int CarryPickId, CarryHealTile, CarryHealCell;
         internal InputCmd CarrySculptCmd;
 
         // Sculpt confirm bookkeeping (client sequence numbers echoed in world events).
@@ -278,7 +278,7 @@ namespace Sculpt.Core.Net
                         if (c.Hand.Pickup) { p.CarryPickup = true; p.CarryPickId = c.Hand.PickId; }
                         if (c.Hand.Drop) p.CarryDrop = true;
                         if (c.Hand.Punch) p.CarryPunch = true;
-                        if (c.Hand.Heal) { p.CarryHeal = true; p.CarryHealTile = c.Hand.HealTile; p.CarryHealReinforce = c.Hand.HealReinforce; }
+                        if (c.Hand.Heal) { p.CarryHeal = true; p.CarryHealTile = c.Hand.HealTile; p.CarryHealCell = c.Hand.HealCell; p.CarryHealReinforce = c.Hand.HealReinforce; }
                         if (c.HasSculpt) { p.CarrySculpt = true; p.CarrySculptCmd = c; }
                         // Mark so redundant copies are not counted again.
                         p.Ring[idx] = c;
@@ -389,7 +389,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryPickup) { if (!cmd.Hand.Pickup) { cmd.Hand.Pickup = true; cmd.Hand.PickId = p.CarryPickId; } p.CarryPickup = false; }
                 if (p.CarryDrop) { cmd.Hand.Drop = true; p.CarryDrop = false; }
                 if (p.CarryPunch) { cmd.Hand.Punch = true; p.CarryPunch = false; }
-                if (p.CarryHeal) { if (!cmd.Hand.Heal) { cmd.Hand.Heal = true; cmd.Hand.HealTile = p.CarryHealTile; cmd.Hand.HealReinforce = p.CarryHealReinforce; } p.CarryHeal = false; }
+                if (p.CarryHeal) { if (!cmd.Hand.Heal) { cmd.Hand.Heal = true; cmd.Hand.HealTile = p.CarryHealTile; cmd.Hand.HealCell = p.CarryHealCell; cmd.Hand.HealReinforce = p.CarryHealReinforce; } p.CarryHeal = false; }
                 if (p.CarrySculpt)
                 {
                     if (!cmd.HasSculpt) { cmd.HasSculpt = true; cmd.SculptSeq = p.CarrySculptCmd.SculptSeq; cmd.Sculpt = p.CarrySculptCmd.Sculpt; }

@@ -149,7 +149,7 @@ namespace Sculpt.Core.Net
         {
             Grid = grid;
             Walls = TileWalls.Find(grid);
-            if (Walls != null) Heals = new TileHealing(Walls);
+            if (Walls != null) { Heals = new TileHealing(Walls); Walls.CopyOnly = true; }
             Movement = movement;
             Config = config;
             _send = send ?? throw new ArgumentNullException(nameof(send));
@@ -203,7 +203,10 @@ namespace Sculpt.Core.Net
                         {
                             if (c.Tile >= Walls.Count) { DroppedPackets++; continue; }
                             Walls.Tick = tm.Tick;
-                            Walls.Set(c.Tile, c.To, c.Health, tm.Join ? TileCause.Server : c.Cause, c.By, c.Open);
+                            TileCause cause = tm.Join ? TileCause.Server : c.Cause;
+                            if (c.Hp != null && Walls.HasCells(c.Tile))
+                                Walls.WriteCells(c.Tile, c.To == TileState.Broken ? ulong.MaxValue : c.Open, c.Patch, c.Steel, c.Hp, cause, c.By);
+                            else Walls.Set(c.Tile, c.To, c.Health, cause, c.By);
                         }
                         if (Walls.Changes.Count > 4096) Walls.Changes.RemoveRange(0, 2048); // nobody is draining (tests)
                         foreach (HealEvent e in tm.Heals)
@@ -556,7 +559,7 @@ namespace Sculpt.Core.Net
             _healRefund = Heals.TryGetJob(PlayerId, out HealJob cur) && cur.Tile != cmd.Hand.HealTile ? cur.Cost : 0;
             _healPress = new HealJob
             {
-                Player = PlayerId, Tile = cmd.Hand.HealTile, Kind = kind, StartTick = cmd.Tick,
+                Player = PlayerId, Tile = cmd.Hand.HealTile, Cell = cmd.Hand.HealCell, Kind = kind, StartTick = cmd.Tick,
                 EndTick = cmd.Tick + TileHealing.TicksOf(kind, Heals.Config), Cost = TileHealing.CostOf(kind, Heals.Config),
             };
             _healPending = true;
