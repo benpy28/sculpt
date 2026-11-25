@@ -255,7 +255,7 @@ namespace Sculpt.Core.Net
             // A quick heal press takes the gun out of action for a moment (predicted like a punch; the heal itself is
             // the server's).
             if (cmd.Hand.Heal && mc.Hand.QuickHeal && mc.Hand.CanHeal(s.Hand))
-                s.ShootReadyTick = Math.Max(s.ShootReadyTick, cmd.Tick + mc.Hand.HealLockTicks);
+                s.ShootReadyTick = Math.Max(s.ShootReadyTick, s.Tick + 1 + mc.Hand.HealLockTicks); // motor clock: s.Tick steps to this tick in the movement below
 
             ChargeRules.Step(grid, mc, ref s, cmd.Tick, charge, events); // breaks the tile before this tick's movement reaches it
             List<MoveEvent> ev = events ?? (_scratch ??= new List<MoveEvent>());

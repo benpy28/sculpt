@@ -215,8 +215,20 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
+        public void SlideFromASprintCarriesOnAtTheSameSpeed()
+        {
+            // Ben 2026-11-25: "starting a slide ... should just continue at the speed you were going".
+            StartSlideFromSprint();
+            Assert.That(_s.Mode, Is.EqualTo(MoveMode.Slide));
+            Assert.That(_s.HorizontalSpeed, Is.LessThanOrEqualTo(_c.SprintSpeed + 1e-6), "no kick when the slide starts");
+            Assert.That(_s.HorizontalSpeed, Is.GreaterThan(_c.SprintSpeed - 0.1), "and no sudden loss either");
+            Assert.That(_events.Any(e => e.Type == MoveEventType.SlideStarted && e.Value == 1), Is.False);
+        }
+
+        [Test]
         public void SlideBoostsToTenThenDecaysOverAboutOneSecond()
         {
+            _c.SlideEntryBoost = true; // parked: off in the game (Ben 2026-11-25)
             StartSlideFromSprint();
             Assert.That(_s.Mode, Is.EqualTo(MoveMode.Slide));
             Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.SlideBoostSpeed - _c.SlideFriction / SimTime.TicksPerSecond).Within(1e-6));
@@ -328,6 +340,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void DownhillSlideHasNoCooldown()
         {
+            _c.SlideEntryBoost = true; // parked: off in the game (Ben 2026-11-25)
             BuildDownhill();
             Place(0, 7 * B, 5);
             // Use the flat boost first, on the plateau.

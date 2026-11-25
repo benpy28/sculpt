@@ -64,7 +64,7 @@ namespace Sculpt.Core
             if (s.Hand.Mode == HandMode.Disarmed || s.Hand.InSculptMode || s.Mode == MoveMode.Mantle) return;
             s.PunchTick = tick;
             s.PunchBufferTick = int.MinValue / 2;
-            s.ShootReadyTick = Math.Max(s.ShootReadyTick, tick + c.TotalTicks);
+            s.ShootReadyTick = Math.Max(s.ShootReadyTick, s.Tick + c.TotalTicks); // on the motor's own clock (CanShoot reads s.Tick, which restarts at a respawn)
         }
 
         /// <summary>What a punch hit: the nearest player within reach (centre ray or the forgiving ring), else the terrain

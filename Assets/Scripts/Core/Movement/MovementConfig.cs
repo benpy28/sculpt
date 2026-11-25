@@ -35,6 +35,9 @@ namespace Sculpt.Core
         public double CrouchEye = 0.95;
 
         // Slide
+        /// <summary>Ben 2026-11-25: a slide carries on at the speed you were going (no sudden kick when it starts).
+        /// On: the old entry boost up to SlideBoostSpeed, kept for its tests.</summary>
+        public bool SlideEntryBoost = false;
         public double SlideBoostSpeed = 13.0;       // was 11
         public double SlideFriction = 4.5;          // was 6: 13 -> 4 m/s in 2 s on flat ground
         public double SlideMaxSpeed = 18.0;         // was 15

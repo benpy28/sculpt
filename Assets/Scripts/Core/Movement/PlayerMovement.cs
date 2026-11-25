@@ -201,7 +201,7 @@ namespace Sculpt.Core
             Vec3d vh = Horizontal(s.Velocity);
             bool downhill = IsDownhill(vh, s.GroundNormal);
             bool boosted = false;
-            if (allowBoost && (downhill || s.Tick - s.LastSlideBoostTick >= c.SlideBoostCooldownTicks))
+            if (allowBoost && c.SlideEntryBoost && (downhill || s.Tick - s.LastSlideBoostTick >= c.SlideBoostCooldownTicks))
             {
                 double sp = vh.Length;
                 if (sp < c.SlideBoostSpeed && sp > 1e-6)

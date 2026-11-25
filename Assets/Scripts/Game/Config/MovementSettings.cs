@@ -30,6 +30,8 @@ namespace Sculpt.Game.Config
         public int jumpBufferTicks = 6;
 
         [Header("Slide")]
+        [Tooltip("Off: a slide carries on at your speed (Ben). On: starting a slide kicks you up to Slide Boost Speed.")]
+        public bool slideEntryBoost = false;
         public float slideBoostSpeed = 13f;
         public float slideFriction = 4.5f;
         public float slideMaxSpeed = 18f;
@@ -99,6 +101,7 @@ namespace Sculpt.Game.Config
             c.MaxFallSpeed = maxFallSpeed;
             c.CoyoteTicks = coyoteTicks * SimTime.Per60;
             c.JumpBufferTicks = jumpBufferTicks * SimTime.Per60;
+            c.SlideEntryBoost = slideEntryBoost;
             c.SlideBoostSpeed = slideBoostSpeed;
             c.SlideFriction = slideFriction;
             c.SlideMaxSpeed = slideMaxSpeed;

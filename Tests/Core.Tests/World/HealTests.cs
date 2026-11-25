@@ -514,20 +514,22 @@ namespace Sculpt.Core.Tests
             // Ben 2026-11-25: no heal menu. One press heals what you aim at; the gun is out of action only briefly.
             var h = Arena();
             var a = h.AddClient(new Vec3d(9.75, 0, 9), up: SculptNetHarness.Lag(40), down: SculptNetHarness.Lag(40));
-            int start = -1, pressTick = -1, readyAtPress = -1;
+            int start = -1, pressTick = -1, readyAtPress = -1, motorAtPress = -1;
             a.Script = (p, t) =>
             {
                 if (start < 0) start = t;
                 var i = new SculptTickInput();
                 if (t == start + 30) { i.Hand.Heal = true; i.Hand.HealTile = 2; i.Hand.HealCell = 9; pressTick = t; }
-                if (t == start + 31) readyAtPress = p.Client.Predicted.ShootReadyTick;
+                if (t == start + 31) { readyAtPress = p.Client.Predicted.ShootReadyTick; motorAtPress = p.Client.Predicted.Tick; }
                 return i;
             };
             h.RunSeconds(1.5);
             Assert.That(a.ServerSide.State.Hand.InSculptMode, Is.False, "never in sculpt mode");
             Assert.That(h.Server.Walls[2].State, Is.EqualTo(TileState.Patched), "the broken tile (a hole smaller than a person) heals whole");
             Assert.That(a.Client.Walls[2].State, Is.EqualTo(TileState.Patched));
-            Assert.That(readyAtPress, Is.EqualTo(pressTick + new MovementConfig().Hand.HealLockTicks), "the gun waits 0.2 s after the press (predicted)");
+            Assert.That(pressTick, Is.GreaterThan(0));
+            // On the motor's own clock (it restarts at a respawn; the command tick is the server's): 0.2 s from the press tick.
+            Assert.That(readyAtPress - motorAtPress, Is.EqualTo(new MovementConfig().Hand.HealLockTicks), "the gun waits 0.2 s after the press (predicted)");
         }
 
         [Test]

@@ -237,8 +237,11 @@ namespace Sculpt.Core
         /// </summary>
         private bool Reboost(in MotorState s)
         {
-            bool ready = s.Tick + 2 - s.LastSlideBoostTick >= _m.SlideBoostCooldownTicks;
-            if (s.Mode == MoveMode.Slide && s.GroundNormal.Y > 0.999 && ready && s.HorizontalSpeed < _m.SlideBoostSpeed - 0.8 &&
+            // With no entry boost (Ben 2026-11-25) a re-slide only gets you back to a sprint: do it once the slide has
+            // bled well below sprint speed.
+            bool ready = !_m.SlideEntryBoost || s.Tick + 2 - s.LastSlideBoostTick >= _m.SlideBoostCooldownTicks;
+            double below = _m.SlideEntryBoost ? _m.SlideBoostSpeed - 0.8 : _m.SprintSpeed - 0.4;
+            if (s.Mode == MoveMode.Slide && s.GroundNormal.Y > 0.999 && ready && s.HorizontalSpeed < below &&
                 s.HorizontalSpeed > _m.SlideMinStartSpeed)
                 return true;
             if (s.Mode == MoveMode.Ground && !s.Sprinting) return true; // the stand-up tick: become a sprint first

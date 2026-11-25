@@ -72,6 +72,31 @@ namespace Sculpt.Core.Tests.World
             Assert.That(shots[0].Tick, Is.EqualTo(t0 + Pc.TotalTicks), "not a tick earlier");
         }
 
+        [Test]
+        public void AfterARespawnLateInAMatch_APunchLocksTheGunForOnlyThePunch()
+        {
+            // Ben 2026-11-25: "can't shoot for a while". A respawn restarts the motor's own tick at 0 while commands
+            // carry the server's tick; the punch (and the quick-heal lock) used the command tick, so after dying a
+            // few minutes in, one punch locked the gun for minutes.
+            CompositeTerrain t = Arena(out _);
+            MotorState s = Settled(t, new Vec3d(20, 0, 4));
+            s = DrawnPump(t, s);
+            int serverTick = 120 * 180; // three minutes in
+            var shots = new List<WeaponShot>();
+            int t0 = -1, firstShot = -1;
+            for (int k = 0; k < Pc.TotalTicks + 60 * SimTime.Per60; k++)
+            {
+                var c = InputCmd.Quantize(Cmd(k == 0, k > 0));
+                c.Tick = serverTick + k;
+                if (k == 0) t0 = c.Tick;
+                shots.Clear();
+                NetSim.Simulate(t, Mc, Nc, ref s, c, s.Position, null, shots, null, null);
+                if (shots.Count > 0 && firstShot < 0) firstShot = c.Tick;
+            }
+            Assert.That(firstShot, Is.GreaterThan(0), "fires once the punch is over");
+            Assert.That(firstShot - t0, Is.EqualTo(Pc.TotalTicks));
+        }
+
         private static MotorState DrawnPump(ITerrain t, MotorState s)
         {
             Run(t, ref s, Mc.Hand.Draw(Item.Pump) + 2, k => Cmd(false));

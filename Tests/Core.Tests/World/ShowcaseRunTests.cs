@@ -51,7 +51,7 @@ namespace Sculpt.Core.Tests
             Assert.That(events.Any(e => e.Type == MoveEventType.Braked), Is.True);
             Assert.That(events.Any(e => e.Type == MoveEventType.SlideCarve), Is.True);
             Assert.That(events.Count(e => e.Type == MoveEventType.SlideLandSuccess), Is.GreaterThanOrEqualTo(6));
-            Assert.That(events.Count(e => e.Type == MoveEventType.SlideStarted && e.Value == 1), Is.GreaterThanOrEqualTo(3), "slide re-boosts");
+            Assert.That(events.Count(e => e.Type == MoveEventType.SlideStarted && e.Value == 1), Is.Zero, "no slide entry boost (Ben 2026-11-25)");
         }
 
         [Test]

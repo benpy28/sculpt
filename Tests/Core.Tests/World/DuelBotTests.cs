@@ -133,10 +133,10 @@ namespace Sculpt.Core.Tests
         [Test]
         public void TwoBots_FindEachOther_MoveAroundTheMap_AndTradeKills_NeverShootingWhatTheyCouldNotSee()
         {
-            // Seeds 1 and 2: whether two bots happen to fight their way upstairs inside 150 s depends on the seeds (checked
-            // over five seed pairs at 60 and at 120 Hz: some pairs stay on the ground floor at either rate). This pair
-            // climbs at both rates, so the check stays about the stairs movement, not about luck.
-            var m = new BotMatch(BotLevel.Normal, BotLevel.Normal, 1, 2);
+            // Seeds 5 and 4: whether two bots meet often and fight their way upstairs inside 150 s depends on the seeds.
+            // Over ten pairs on duel map v2 (no slide boost, punch fix), nine had 3+ kills and all but one climbed; this
+            // pair climbs and fights, so the check stays about the movement and the fight, not about luck.
+            var m = new BotMatch(BotLevel.Normal, BotLevel.Normal, 5, 4);
             m.Run(150);
             TestContext.WriteLine($"A {m.A.Kills} kills / {m.A.Deaths} deaths, moved {m.MovedA:0} m; B {m.B.Kills} / {m.B.Deaths}, moved {m.MovedB:0} m; fires {m.Fires}, without sight {m.FiresWithoutSight}, highest feet {m.HighestFeet:0.0} m");
             Assert.That(m.HighestFeet, Is.GreaterThan(4.6), "they really climb stairs or ramps to an upper floor (the movement, not just the nav graph)");
