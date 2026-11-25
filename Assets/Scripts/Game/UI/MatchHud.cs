@@ -18,6 +18,9 @@ namespace Sculpt.Game.UI
         private Material _gl;
         private string _ipLine;
         private MatchPhase _lastPhase;
+        // Texts shown every frame are rebuilt only when their number changes (a string per frame is garbage per frame).
+        private int _timeSecs = -1, _youKills = -1, _themKills = -1;
+        private string _timeText = "", _youText = "", _themText = "";
 
         public void Init(LocalPlayer player, NetSession session)
         {
@@ -53,6 +56,7 @@ namespace Sculpt.Game.UI
             if (!net.Joined) return;
             MatchState m = net.Match;
             if (m.Phase == MatchPhase.Off) return;
+            if (Event.current.type != EventType.Repaint) return; // draw-only: nothing here reacts to input events
             float w = Screen.width, h = Screen.height;
             float s = Mathf.Max(0.75f, h / 1080f);
 
@@ -62,7 +66,6 @@ namespace Sculpt.Game.UI
 
             // Panel under the compass: time, your kills, their kills.
             float pw = 300 * s, ph = 46 * s, px = w / 2 - pw / 2, py = h - 70 * s - ph;
-            if (Event.current.type == EventType.Repaint)
             {
                 _gl.SetPass(0);
                 GL.PushMatrix();
@@ -77,11 +80,14 @@ namespace Sculpt.Game.UI
             }
             Rect panel = HudDraw.ToGui(px, py, pw, ph);
             int secs = m.Phase == MatchPhase.Playing ? SecondsLeft(m) : m.Phase == MatchPhase.Countdown ? 5 * 60 : 0;
-            string time = m.Phase == MatchPhase.Waiting ? "--:--" : $"{secs / 60}:{secs % 60:00}";
+            if (secs != _timeSecs) { _timeSecs = secs; _timeText = $"{secs / 60}:{secs % 60:00}"; }
+            if (me.Kills != _youKills) { _youKills = me.Kills; _youText = $"YOU  {me.Kills}"; }
+            if (hasThem && them.Kills != _themKills) { _themKills = them.Kills; _themText = $"{them.Kills}  THEM"; }
+            string time = m.Phase == MatchPhase.Waiting ? "--:--" : _timeText;
             Color timeColor = m.Phase == MatchPhase.Playing && secs <= 30 ? HudDraw.Amber : HudDraw.Text;
             HudDraw.Label(new Rect(panel.x, panel.y, panel.width, panel.height), time, Mathf.RoundToInt(24 * s), timeColor, TextAnchor.MiddleCenter, true);
-            HudDraw.Label(new Rect(panel.x + 14 * s, panel.y, 100 * s, panel.height), $"YOU  {me.Kills}", Mathf.RoundToInt(18 * s), TeamColor(net.Team), TextAnchor.MiddleLeft, true);
-            HudDraw.Label(new Rect(panel.xMax - 114 * s, panel.y, 100 * s, panel.height), hasThem ? $"{them.Kills}  THEM" : "-  THEM", Mathf.RoundToInt(18 * s), TeamColor(hasThem ? them.Team : 3 - net.Team), TextAnchor.MiddleRight, true);
+            HudDraw.Label(new Rect(panel.x + 14 * s, panel.y, 100 * s, panel.height), _youText, Mathf.RoundToInt(18 * s), TeamColor(net.Team), TextAnchor.MiddleLeft, true);
+            HudDraw.Label(new Rect(panel.xMax - 114 * s, panel.y, 100 * s, panel.height), hasThem ? _themText : "-  THEM", Mathf.RoundToInt(18 * s), TeamColor(hasThem ? them.Team : 3 - net.Team), TextAnchor.MiddleRight, true);
 
             Rect mid = new Rect(w / 2 - 330 * s, h * 0.38f - 70 * s, 660 * s, 140 * s);
             switch (m.Phase)
@@ -97,7 +103,7 @@ namespace Sculpt.Game.UI
                 case MatchPhase.Countdown:
                 {
                     int c = Mathf.Max(1, SecondsLeft(m));
-                    HudDraw.Label(new Rect(mid.x, mid.y, mid.width, mid.height), c.ToString(), Mathf.RoundToInt(96 * s), HudDraw.Text, TextAnchor.MiddleCenter, true);
+                    HudDraw.Label(new Rect(mid.x, mid.y, mid.width, mid.height), HudDraw.Num(c), Mathf.RoundToInt(96 * s), HudDraw.Text, TextAnchor.MiddleCenter, true);
                     HudDraw.Label(new Rect(mid.x, mid.yMax, mid.width, 34 * s), "Most kills in 5 minutes wins", Mathf.RoundToInt(20 * s), HudDraw.Dim, TextAnchor.MiddleCenter);
                     break;
                 }

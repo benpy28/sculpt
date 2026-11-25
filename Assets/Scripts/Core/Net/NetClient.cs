@@ -56,6 +56,20 @@ namespace Sculpt.Core.Net
         /// <summary>Optional: networked sculpting on a sub-cell grid (prediction, server ops, windups, flights).</summary>
         public readonly SculptClient Sculpt;
 
+        // Latency overlay: how long the server said it held our command for a tick (see SnapshotMsg.SelfHoldTenthMs).
+        private readonly int[] _holdTick = new int[64];
+        private readonly double[] _holdMs = new double[64];
+
+        /// <summary>
+        /// Milliseconds the server held this client's command for <paramref name="tick"/> (arrival to snapshot sent),
+        /// or a negative number when it did not say (no server clock, a guessed command, or the snapshot is too old).
+        /// </summary>
+        public double ServerHoldMs(int tick)
+        {
+            int i = tick & (_holdTick.Length - 1);
+            return _holdTick[i] == tick ? _holdMs[i] : -1;
+        }
+
         public bool Joined { get; private set; }
         public int PlayerId { get; private set; }
         public int Team { get; private set; }
@@ -156,6 +170,7 @@ namespace Sculpt.Core.Net
         private void ClearHistory()
         {
             for (int i = 0; i < _histTick.Length; i++) _histTick[i] = int.MinValue;
+            for (int i = 0; i < _holdTick.Length; i++) _holdTick[i] = int.MinValue;
         }
 
         // ================================================================ Receiving
@@ -188,7 +203,7 @@ namespace Sculpt.Core.Net
                         {
                             if (c.Tile >= Walls.Count) { DroppedPackets++; continue; }
                             Walls.Tick = tm.Tick;
-                            Walls.Set(c.Tile, c.To, c.Health, tm.Join ? TileCause.Server : c.Cause, c.By);
+                            Walls.Set(c.Tile, c.To, c.Health, tm.Join ? TileCause.Server : c.Cause, c.By, c.Open);
                         }
                         if (Walls.Changes.Count > 4096) Walls.Changes.RemoveRange(0, 2048); // nobody is draining (tests)
                         foreach (HealEvent e in tm.Heals)
@@ -284,6 +299,12 @@ namespace Sculpt.Core.Net
 
             if (!m.HasSelf) return;
             LastInputWasRealOnServer = m.SelfInputWasReal;
+            if (m.SelfHoldTenthMs != Protocol.NoHold)
+            {
+                int hi = m.ServerTick & (_holdTick.Length - 1);
+                _holdTick[hi] = m.ServerTick;
+                _holdMs[hi] = m.SelfHoldTenthMs / 10.0;
+            }
             Sculpt?.OnSelfBar(m.ServerTick, m.SelfBar);
             ServerBarTick = m.ServerTick;
             ServerBar = m.SelfBar;
@@ -316,7 +337,7 @@ namespace Sculpt.Core.Net
                 _clockHoldUntilServerTick = serverTick + rtt + Config.LeadWindowTicks + rtt + 4;
                 return;
             }
-            const int deadband = 2;
+            int deadband = Math.Max(0, Config.ClockDeadbandTicks);
             double d = 0;
             if (err < 0) d = -err * Config.ClockGainPerTick;                    // too close: speed up
             else if (err > deadband) d = -(err - deadband) * Config.ClockGainPerTick; // too early: slow down

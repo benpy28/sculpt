@@ -117,13 +117,40 @@ namespace Sculpt.Core
         /// <summary>Grenades out of the bag, and back out of sculpt mode (tuning, Claude 2026-11-21).</summary>
         public int GrenadeDrawTicks = 12;
         public int GrenadeExitTicks = 6;
+        /// <summary>C4 (and its detonator) out of the bag and back out of sculpt mode.</summary>
+        public int C4DrawTicks = 12;
+        public int C4ExitTicks = 6;
+        /// <summary>The launcher is heavy: a long draw (0.6 s), so it is a commitment, never a quick swap up close.</summary>
+        public int LauncherDrawTicks = 36;
+        public int LauncherExitTicks = 18;
 
         public int Draw(Weapon w) => DrawTicks[(int)w];
         public int Exit(Weapon w) => ExitTicks[(int)w];
 
         /// <summary>Draw time of any item; empty hands are ready at once.</summary>
-        public int Draw(Item i) => Items.IsGun(i) ? Draw(Items.GunOf(i)) : i == Item.Grenade ? GrenadeDrawTicks : 0;
-        public int Exit(Item i) => Items.IsGun(i) ? Exit(Items.GunOf(i)) : i == Item.Grenade ? GrenadeExitTicks : 0;
+        public int Draw(Item i)
+        {
+            if (Items.IsGun(i)) return Draw(Items.GunOf(i));
+            switch (i)
+            {
+                case Item.Grenade: return GrenadeDrawTicks;
+                case Item.C4: return C4DrawTicks;
+                case Item.Launcher: return LauncherDrawTicks;
+                default: return 0;
+            }
+        }
+
+        public int Exit(Item i)
+        {
+            if (Items.IsGun(i)) return Exit(Items.GunOf(i));
+            switch (i)
+            {
+                case Item.Grenade: return GrenadeExitTicks;
+                case Item.C4: return C4ExitTicks;
+                case Item.Launcher: return LauncherExitTicks;
+                default: return 0;
+            }
+        }
     }
 
     public static class HandRules

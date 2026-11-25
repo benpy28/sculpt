@@ -31,6 +31,8 @@
     <Reference Include="$(UnityManaged)UnityEngine\UnityEngine*.dll" />
     <Reference Include="$(UnityManaged)Newtonsoft.Json.dll" />
     <Reference Include="$(ScriptAssemblies)Unity.InputSystem.dll" />
+    <Reference Include="$(ScriptAssemblies)Unity.RenderPipelines.Core.Runtime.dll" />
+    <Reference Include="$(ScriptAssemblies)Unity.RenderPipelines.Universal.Runtime.dll" />
     <Reference Include="$(ScriptAssemblies)Unity.Mathematics.dll" />
     <Reference Include="$(ScriptAssemblies)UnityEngine.UI.dll" />
     <Reference Include="$(ScriptAssemblies)Unity.Burst.dll" />

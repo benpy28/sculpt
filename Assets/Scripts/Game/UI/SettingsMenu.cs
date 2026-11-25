@@ -278,6 +278,8 @@ namespace Sculpt.Game.UI
             _settings.SpeedFovKick = Toggle("FOV kick at high speed", _settings.SpeedFovKick);
             _settings.SpeedLines = Toggle("Speed lines", _settings.SpeedLines);
             GUILayout.Space(6);
+            VideoSettingsPanel.Draw(_header, _label, _value);
+            GUILayout.Space(6);
             GUILayout.Label("Audio", _header);
             _settings.MasterVolume = Slider("Master volume", _settings.MasterVolume, 0f, 1f, "0%", 100f);
             _settings.AmbienceVolume = Slider("Ambience (wind, birds)", _settings.AmbienceVolume, 0f, 1f, "0%", 100f);

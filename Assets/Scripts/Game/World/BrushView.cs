@@ -17,8 +17,10 @@ namespace Sculpt.Game.World
     /// the wall brick, so breakable still reads apart from the unbreakable greybox) with the same state looks on their
     /// top and bottom faces; stairs keep their yellow noses. Frame tiles stay dark steel: they only ever go together
     /// with the tiles around them.
+    /// Wall-break visuals (BrushView.Rims.cs): breakable tiles have no seams and wear world-space brick, so a wall reads as
+    /// one wall; bullets leave chips; holes get rough rims and rounded corners (all visual, see the rules there).
     /// </summary>
-    public sealed class BrushView : MonoBehaviour
+    public sealed partial class BrushView : MonoBehaviour
     {
         private const float BlockSize = 16f;
         private const double StepRise = 0.15;
@@ -32,13 +34,14 @@ namespace Sculpt.Game.World
         public static readonly Color Ground = new Color(0.46f, 0.52f, 0.38f);
         public static readonly Color Marker = new Color(0.20f, 0.85f, 0.45f);
         public static readonly Color Brick = new Color(0.72f, 0.42f, 0.30f);
-        public static readonly Color BrickDamaged = new Color(0.62f, 0.36f, 0.26f);
+        // Only a little darker than Brick: cracks and spalls carry the damaged look, a big colour step would draw the grid.
+        public static readonly Color BrickDamaged = new Color(0.66f, 0.385f, 0.275f);
         public static readonly Color PatchCement = new Color(0.80f, 0.78f, 0.72f);
         public static readonly Color SteelBand = new Color(0.80f, 0.84f, 0.87f);
         public static readonly Color Crack = new Color(0.10f, 0.08f, 0.07f);
         /// <summary>Breakable floors, stairs and ramps (step 8).</summary>
         public static readonly Color Clay = new Color(0.78f, 0.56f, 0.42f);
-        public static readonly Color ClayDamaged = new Color(0.66f, 0.47f, 0.35f);
+        public static readonly Color ClayDamaged = new Color(0.71f, 0.51f, 0.38f);
         public static readonly Color ClayRamp = new Color(0.84f, 0.64f, 0.50f);
 
         /// <summary>The colour debris from a tile in this state takes.</summary>
@@ -59,7 +62,10 @@ namespace Sculpt.Game.World
 
         private readonly List<GameObject> _blocks = new List<GameObject>();
         private Material _mat;
+        private Material _groundMat;
         private bool _linear;
+        /// <summary>While building hills: where their yellow edge lines go (the greybox mesh, not the meadow one).</summary>
+        private MeshBits _stripeSink;
 
         // Tiles: the client's copy, which block each tile is drawn in, and the look each block was last built with.
         private TileWalls _tiles;
@@ -99,6 +105,7 @@ namespace Sculpt.Game.World
             }
             if (_debris == null) _debris = new GameObject("Tile Debris").AddComponent<TileDebris>();
             _debris.transform.SetParent(transform, false);
+            BindRims();
         }
 
         /// <summary>What a tile looks like, as a number: state, plus a crack level from its health.</summary>
@@ -119,9 +126,23 @@ namespace Sculpt.Game.World
             if (_tiles == null || _mat == null) return;
             foreach (TileChange c in _tiles.Changes)
             {
+                ulong before = _openFx[c.Tile];
+                ulong after = c.To == TileState.Broken ? Brush.AllCells : c.Open;
+                _openFx[c.Tile] = after;
+                // Bullet marks go when the tile breaks, loses cells or is healed (a join snapshot counts too).
+                if ((c.From != c.To && c.To != TileState.Damaged) || (after & ~before) != 0 || c.Cause == TileCause.Heal || c.Cause == TileCause.Reinforce)
+                    _marks?.ClearTile(c.Tile);
                 if (c.Cause == TileCause.Server || c.Cause == TileCause.Built) continue;
-                Aabb b = _tiles.BoundsOf(c.Tile);
                 WallTile ct = _tiles[c.Tile];
+                if (_tiles.HasCells(c.Tile))
+                {
+                    // Blast holes: chunks and dust from exactly the cells that went.
+                    CellDebris(c.Tile, before, after, c.From);
+                    if (c.To == TileState.Damaged && c.From == TileState.Intact && after == before)
+                        _debris.Burst(_tiles.BoundsOf(c.Tile), ct.Facing, ct.Kind == TileKind.Wall ? BrickDamaged : ClayDamaged, 5, false);
+                    continue;
+                }
+                Aabb b = _tiles.BoundsOf(c.Tile);
                 Dir facing = ct.Facing;
                 bool thin = ct.Kind == TileKind.Frame; // frame pieces are small: fewer chunks
                 if (c.To == TileState.Broken) _debris.Burst(b, facing, DebrisColour(ct.Kind, c.From), thin ? 4 : 16, !thin);
@@ -134,9 +155,12 @@ namespace Sculpt.Game.World
             for (int i = 0; i < _tiles.Count; i++)
             {
                 int look = LookOf(_tiles[i]);
-                if (look == _look[i]) continue;
+                ulong open = _tiles[i].Open;
+                if (look == _look[i] && open == _openSeen[i]) continue;
                 _look[i] = look;
+                _openSeen[i] = open;
                 _dirty.Add(BlockOf(_tiles.World[_tiles[i].Brush]));
+                DirtyNeighbours(i); // a hole's rim is drawn by the broken tile and depends on the tiles around it
             }
             foreach (Vector2Int key in _dirty) RebuildTiles(key);
             _dirty.Clear();
@@ -171,9 +195,11 @@ namespace Sculpt.Game.World
 
         private void AddTile(MeshBits m, int id, in WallTile t)
         {
-            if (t.State == TileState.Broken) return;
+            if (t.State == TileState.Broken) { AddRims(m, id); return; }
+            bool holed = t.Holed;
             Brush shape = _tiles.World[t.Brush];
             bool damaged = t.State == TileState.Damaged;
+            _surface = Rough;
             switch (t.Kind)
             {
                 case TileKind.Frame:
@@ -192,7 +218,16 @@ namespace Sculpt.Game.World
             Aabb b = shape.Bounds;
             Vector3 lo = b.Min.ToUnity(), hi = b.Max.ToUnity();
             bool floor = t.Kind == TileKind.Floor;
-            AddBox(m, lo, hi, floor ? (damaged ? ClayDamaged : Clay) : (damaged ? BrickDamaged : Brick));
+            Color baseCol = floor ? (damaged ? ClayDamaged : Clay) : (damaged ? BrickDamaged : Brick);
+            _surface = floor ? Rough : BrickSurface;
+            if (holed)
+            {
+                // Blast holes: only the standing cells, as runs along each row (inner faces between runs never show).
+                foreach (Aabb run in shape.Solids) AddBox(m, run.Min.ToUnity(), run.Max.ToUnity(), baseCol);
+            }
+            else AddBox(m, lo, hi, baseCol);
+            _surface = Rough;
+            if (holed) AddRims(m, id);
             Vector3 centre = (lo + hi) * 0.5f, size = hi - lo;
             // The two big faces: across the thin axis. Walls face North (thin in z) or East (thin in x); floors face Up.
             Vector3 n, up;
@@ -213,14 +248,14 @@ namespace Sculpt.Game.World
             {
                 Vector3 fn = n * side, fc = centre + fn * half;
                 if (t.State == TileState.Patched)
-                    Panel(m, fc, fn, up, h - 0.15f, w - 0.15f, PatchCement);
+                    PatchBlob(m, id, fc, fn, up, w, h, baseCol);
                 else if (t.State == TileState.Reinforced)
                 {
                     Panel(m, fc + up * (h * 0.55f), fn, up, 0.09f, w, SteelBand);
                     Panel(m, fc - up * (h * 0.55f), fn, up, 0.09f, w, SteelBand);
                     Panel(m, fc, fn, up, h, 0.09f, SteelBand);
                 }
-                if (crack > 0) AddCracks(m, id, fc + fn * 0.002f, fn, up, w, h, crack == 2 ? 6 : 3);
+                if (crack > 0) AddCracks(m, id, fc + fn * 0.002f, fn, up, w, h, crack == 2 ? 6 : 3, baseCol, crack, holed);
             }
         }
 
@@ -233,7 +268,7 @@ namespace Sculpt.Game.World
         }
 
         /// <summary>Jagged dark crack lines out from near the middle, the same for a tile every time (hashed from its id).</summary>
-        private void AddCracks(MeshBits m, int id, Vector3 c, Vector3 n, Vector3 up, float w, float h, int count)
+        private void AddCracks(MeshBits m, int id, Vector3 c, Vector3 n, Vector3 up, float w, float h, int count, Color baseCol, int level, bool holed = false)
         {
             uint seed = (uint)(id * 2654435761u + 0x9E3779B9u);
             float Rand()
@@ -243,6 +278,12 @@ namespace Sculpt.Game.World
             }
             Vector3 r = Vector3.Cross(n, up).normalized;
             Vector3 start = c + r * ((Rand() - 0.5f) * w * 0.5f) + up * ((Rand() - 0.5f) * h * 0.5f);
+            // A spalled crater where the cracks start (bigger when badly damaged), so damage reads from range.
+            if (!holed) // the spall would hang over the hole; a holed tile shows its damage at the hole's edge already
+            {
+                Blob(m, start - n * 0.0015f, n, 0.13f + 0.07f * level, 0.35f, 9, seed, baseCol * 0.62f);
+                Blob(m, start - n * 0.0008f, n, 0.05f + 0.03f * level, 0.4f, 7, seed + 7, baseCol * 0.38f);
+            }
             for (int k = 0; k < count; k++)
             {
                 float a = (k + Rand() * 0.6f) * Mathf.PI * 2f / count;
@@ -256,7 +297,9 @@ namespace Sculpt.Game.World
                     // Keep inside the face.
                     q = c + r * Mathf.Clamp(Vector3.Dot(q - c, r), -w + 0.03f, w - 0.03f) + up * Mathf.Clamp(Vector3.Dot(q - c, up), -h + 0.03f, h - 0.03f);
                     Vector3 across = Vector3.Cross(n, (q - p).normalized) * (0.022f - seg * 0.005f);
-                    Quad(m, p - across, q - across, q + across, p + across, Crack);
+                    // Holed tiles: no crack drawn across open cells (it would float in the hole).
+                    if (!holed || (!OpenAt(id, p) && !OpenAt(id, q) && !OpenAt(id, (p + q) * 0.5f)))
+                        Quad(m, p - across, q - across, q + across, p + across, Crack);
                     p = q;
                 }
             }
@@ -276,16 +319,55 @@ namespace Sculpt.Game.World
                 return;
             }
             _mat = new Material(shader) { name = "Greybox (runtime)" };
+            _brushWorld = world;
             _linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
+            _surface = Greybox;
 
             var byBlock = new Dictionary<Vector2Int, MeshBits>();
+            // Hills and berms are drawn as meadow (the terrain's own ground look: grass on top, soil down the sides), so
+            // they read as part of the land around them instead of green greybox slabs. Their yellow edge lines stay.
+            var hills = new MeshBits { Raw = true };
             for (int i = 0; i < world.Count; i++)
             {
                 Brush b = world[i];
                 if (b.Kind == BrushKind.Tile) continue; // drawn from the client's tile state (BindTiles)
                 Vector2Int key = BlockOf(b);
                 if (!byBlock.TryGetValue(key, out MeshBits m)) byBlock[key] = m = new MeshBits();
+                if (b.Kind == BrushKind.Ground)
+                {
+                    int first = hills.V.Count;
+                    _stripeSink = m;
+                    AddBrush(hills, b);
+                    _stripeSink = null;
+                    for (int v = first; v < hills.V.Count; v++)
+                    {
+                        Vector3 p = hills.V[v];
+                        double top = b.IsRamp ? b.Bounds.Min.Y + (b.Bounds.Max.Y - b.Bounds.Min.Y) * System.Math.Max(0, System.Math.Min(1, b.RiseFraction(p.x, p.z))) : b.Bounds.Max.Y;
+                        hills.U1.Add(new Vector2(ChunkMesher.KindGround, Mathf.Clamp((float)(top - p.y), 0f, 2.4f)));
+                    }
+                    continue;
+                }
                 AddBrush(m, b);
+            }
+            Shader voxel = Shader.Find("SCULPT/Voxel");
+            if (hills.V.Count > 0 && voxel != null)
+            {
+                _groundMat = new Material(voxel) { name = "Hills (runtime)" };
+                var mesh = new Mesh { name = "Hills", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+                mesh.SetVertices(hills.V);
+                mesh.SetNormals(hills.N);
+                mesh.SetColors(hills.C);
+                mesh.SetUVs(1, hills.U1);
+                mesh.SetTriangles(hills.T, 0);
+                mesh.RecalculateBounds();
+                var go = new GameObject("Hills");
+                go.transform.SetParent(transform, false);
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var r = go.AddComponent<MeshRenderer>();
+                r.sharedMaterial = _groundMat;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                r.receiveShadows = false;
+                _blocks.Add(go);
             }
             foreach (var kv in byBlock)
             {
@@ -312,6 +394,9 @@ namespace Sculpt.Game.World
             public readonly List<Vector3> N = new List<Vector3>();
             public readonly List<Color> C = new List<Color>();
             public readonly List<int> T = new List<int>();
+            public readonly List<Vector2> U1 = new List<Vector2>();
+            /// <summary>Colours are shade only, not linearised (the voxel shader's nature palette does the colour).</summary>
+            public bool Raw;
         }
 
         private static Color ColorOf(BrushKind k)
@@ -330,13 +415,24 @@ namespace Sculpt.Game.World
 
         private void AddBrush(MeshBits m, in Brush b)
         {
-            Color col = ColorOf(b.Kind);
+            Color col = m.Raw ? Color.white : ColorOf(b.Kind);
             if (b.Kind == BrushKind.Stairs && b.IsRamp) { AddStairs(m, b, col); return; }
             if (b.IsRamp) { AddWedge(m, b, col); return; }
             AddBox(m, b.Bounds.Min.ToUnity(), b.Bounds.Max.ToUnity(), col);
         }
 
         // ---- shapes ----
+
+        /// <summary>
+        /// Hills: shade from the fixed sun (Scenery's direction), so a meadow slope reads as a slope against the flat
+        /// meadow around it (lighter facing the sun, darker away). 1 on flat ground.
+        /// </summary>
+        private static float HillShade(Vector3 n)
+        {
+            Vector3 toSun = -(Quaternion.Euler(55f, -35f, 0f) * Vector3.forward);
+            float d = Vector3.Dot(n, toSun);
+            return Mathf.Clamp((0.25f + 0.75f * d) / (0.25f + 0.75f * toSun.y), 0.45f, 1.15f);
+        }
 
         /// <summary>Fixed sun shading per face, baked into the colour (tops brightest, sides darker).</summary>
         private static float Shade(Vector3 n)
@@ -349,9 +445,9 @@ namespace Sculpt.Game.World
         private void Quad(MeshBits m, Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color col)
         {
             Vector3 n = Vector3.Cross(b - a, d - a).normalized;
-            Color s = col * Shade(n);
-            s.a = 1;
-            if (_linear) s = s.linear;
+            Color s = col * (m.Raw ? HillShade(n) : Shade(n));
+            s.a = m.Raw ? 1f : _surface; // hills use the voxel shader (alpha 1); greybox alpha is the surface code
+            if (_linear && !m.Raw) s = s.linear;
             int i = m.V.Count;
             m.V.Add(a); m.V.Add(b); m.V.Add(c); m.V.Add(d);
             for (int k = 0; k < 4; k++) { m.N.Add(n); m.C.Add(s); }
@@ -362,9 +458,9 @@ namespace Sculpt.Game.World
         private void Tri(MeshBits m, Vector3 a, Vector3 b, Vector3 c, Color col)
         {
             Vector3 n = Vector3.Cross(b - a, c - a).normalized;
-            Color s = col * Shade(n);
-            s.a = 1;
-            if (_linear) s = s.linear;
+            Color s = col * (m.Raw ? HillShade(n) : Shade(n));
+            s.a = m.Raw ? 1f : _surface; // hills use the voxel shader (alpha 1); greybox alpha is the surface code
+            if (_linear && !m.Raw) s = s.linear;
             int i = m.V.Count;
             m.V.Add(a); m.V.Add(b); m.V.Add(c);
             for (int k = 0; k < 3; k++) { m.N.Add(n); m.C.Add(s); }
@@ -412,8 +508,8 @@ namespace Sculpt.Game.World
             Tri(m, l0, h0, b0, col);               // sides
             Tri(m, l1, b1, h1, col);
             // Yellow edge lines along the low edge and the crest so the ramp's ends read.
-            AddStripe(m, b, 0.0, 0.08, y0, y0, StairNose);
-            AddStripe(m, b, 1.0 - 0.04, 1.0, y1, y1, StairNose);
+            AddStripe(_stripeSink ?? m, b, 0.0, 0.08, y0, y0, StairNose);
+            AddStripe(_stripeSink ?? m, b, 1.0 - 0.04, 1.0, y1, y1, StairNose);
         }
 
         /// <summary>A thin painted band across the wedge at rise fraction u0..u1, lifted 1 cm (cosmetic only).</summary>

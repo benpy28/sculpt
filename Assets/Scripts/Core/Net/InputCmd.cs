@@ -86,7 +86,7 @@ namespace Sculpt.Core.Net
 
         private const byte FJumpPressed = 1, FJumpHeld = 2, FCrouchHeld = 4, FCrouchPressed = 8, FSprint = 16, FShoot = 32, FRespawn = 64, FExt = 128;
         private const byte XToggle = 1, XSculpt = 2, XReinforce = 4, XReload = 8, XWarp = 128;
-        private const byte GFireHeld = 1, GFirePressed = 2;
+        private const byte GFireHeld = 1, GFirePressed = 2, GAimPressed = 4;
         private const byte YPickup = 1, YDrop = 2, YPunch = 4, YHeal = 8, YHealReinforce = 16;
 
         internal void Write(ByteWriter w)
@@ -105,6 +105,7 @@ namespace Sculpt.Core.Net
             byte g = 0;
             if (Move.FireHeld) g |= GFireHeld;
             if (Move.FirePressed) g |= GFirePressed;
+            if (Move.AimPressed) g |= GAimPressed;
             w.U8(g);
             w.I8(AxisToByte(Move.MoveX));
             w.I8(AxisToByte(Move.MoveZ));
@@ -153,6 +154,7 @@ namespace Sculpt.Core.Net
             byte g = r.U8();
             c.Move.FireHeld = (g & GFireHeld) != 0;
             c.Move.FirePressed = (g & GFirePressed) != 0;
+            c.Move.AimPressed = (g & GAimPressed) != 0;
             c.Move.MoveX = AxisFromByte(r.I8());
             c.Move.MoveZ = AxisFromByte(r.I8());
             float yaw = r.F32();
@@ -206,6 +208,7 @@ namespace Sculpt.Core.Net
             c.Move.JumpPressed = false;
             c.Move.CrouchPressed = false;
             c.Move.FirePressed = false;
+            c.Move.AimPressed = false;
             c.Respawn = false;
             c.Warp = false;
             c.Hand = default;
@@ -231,18 +234,18 @@ namespace Sculpt.Core.Net
         {
             if (cmd.Respawn)
             {
-                Respawn(ref s, spawn, cmd.Tick, events);
+                Respawn(ref s, spawn, cmd.Tick, events, grenades);
                 return;
             }
             if (cmd.Warp && nc.AllowDevWarp)
             {
-                Respawn(ref s, nc.DevWarpPoint, cmd.Tick, events);
+                Respawn(ref s, nc.DevWarpPoint, cmd.Tick, events, grenades);
                 return;
             }
             if (s.Dead)
             {
                 GrenadeRules.Step(grid, mc, ref s, cmd.Tick, cmd.Move, cmd.Pitch, grenades); // grenades already thrown still fly
-                if (cmd.Tick >= s.RespawnTick) Respawn(ref s, spawn, cmd.Tick, events);
+                if (cmd.Tick >= s.RespawnTick) Respawn(ref s, spawn, cmd.Tick, events, grenades);
                 return; // frozen where they fell
             }
             HandRules.Step(ref s.Hand, cmd.Tick, cmd.Hand, mc.Hand);
@@ -260,15 +263,16 @@ namespace Sculpt.Core.Net
             }
             if (events == null) ev.Clear();
 
-            if (s.Position.Y < nc.KillY) { Respawn(ref s, spawn, cmd.Tick, events); return; }
+            if (s.Position.Y < nc.KillY) { Respawn(ref s, spawn, cmd.Tick, events, grenades); return; }
             if (s.Dead) return;
             GrenadeRules.Step(grid, mc, ref s, cmd.Tick, cmd.Move, cmd.Pitch, grenades);
             PunchRules.Step(ref s, cmd.Tick, cmd.Hand.Punch, cmd.Move.Yaw, cmd.Pitch, mc, punches);
             WeaponRules.Step(ref s, cmd.Tick, cmd.Move, cmd.Pitch, mc, shots, cmd.Hand.Reload);
         }
 
-        private static void Respawn(ref MotorState s, Vec3d spawn, int tick, List<MoveEvent> events)
+        private static void Respawn(ref MotorState s, Vec3d spawn, int tick, List<MoveEvent> events, List<GrenadeEvent> grenades)
         {
+            GrenadeRules.Fizzle(ref s, tick, grenades, false); // anything still out is gone (observers are told)
             s = MotorState.At(spawn);
             events?.Add(new MoveEvent { Type = MoveEventType.Respawned, Tick = tick });
         }

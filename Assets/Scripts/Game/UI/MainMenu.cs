@@ -10,7 +10,7 @@ using UnityEngine;
 namespace Sculpt.Game.UI
 {
     /// <summary>
-    /// Front menu for the friend demo: host a LAN 1v1, join one by IP, or practise offline (1v1 map, or the breach test
+    /// Front menu for the friend demo: host a LAN 1v1, join one by IP, play the 1v1 against a bot, or practise offline (1v1 map, or the breach test
     /// map with the dummy and the movement course). Each choice reloads the scene with that map and start, so every mode
     /// builds the world the same way. Also shows "connecting..." while a join is under way, and why a join failed.
     /// </summary>
@@ -153,6 +153,17 @@ namespace Sculpt.Game.UI
                 PlayerPrefs.Save();
                 GameBootstrap.Relaunch(GameBootstrap.Launch.Join, GameBootstrap.MapChoice.Duel, _address.Trim());
             }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(22);
+            GUILayout.Label("Play vs bot (the same 1v1 match, offline)", _sub);
+            GUILayout.BeginHorizontal();
+            foreach (Sculpt.Core.Net.BotLevel level in new[] { Sculpt.Core.Net.BotLevel.Easy, Sculpt.Core.Net.BotLevel.Normal, Sculpt.Core.Net.BotLevel.Hard })
+                if (GUILayout.Button(level.ToString(), _button, GUILayout.Height(40)))
+                {
+                    GameBootstrap.NextBotLevel = level;
+                    GameBootstrap.Relaunch(GameBootstrap.Launch.VsBot, GameBootstrap.MapChoice.Duel);
+                }
             GUILayout.EndHorizontal();
 
             GUILayout.Space(22);

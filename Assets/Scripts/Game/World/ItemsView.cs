@@ -83,7 +83,7 @@ namespace Sculpt.Game.World
             }
         }
 
-        private static int Visuals(in GroundItem g) => g.Kind == Item.Grenade ? Mathf.Clamp(g.Count, 1, 4) : 1;
+        private static int Visuals(in GroundItem g) => g.Kind == Item.Grenade || g.Kind == Item.C4 ? Mathf.Clamp(g.Count, 1, 4) : 1;
 
         private Transform Build(in GroundItem g)
         {
@@ -98,6 +98,27 @@ namespace Sculpt.Game.World
                 gun.localRotation = Quaternion.Euler(0, 0, 90);
                 gun.localPosition = new Vector3(0, 0.04f, -0.05f);
                 gun.localScale = Vector3.one * 1.15f; // a touch bigger than real so it reads from standing height
+            }
+            else if (g.Kind == Item.Launcher)
+            {
+                GunModel m = GunModels.BuildLauncher(_mat);
+                Transform gun = m.Root.transform;
+                gun.SetParent(root, false);
+                gun.localRotation = Quaternion.Euler(0, 0, 90);
+                gun.localPosition = new Vector3(0, 0.05f, -0.08f);
+                gun.localScale = Vector3.one * 1.15f;
+            }
+            else if (g.Kind == Item.C4)
+            {
+                int n = Visuals(g);
+                for (int k = 0; k < n; k++)
+                {
+                    GameObject c4 = GunModels.BuildC4(_mat);
+                    c4.transform.SetParent(root, false);
+                    c4.transform.localPosition = new Vector3(0, 0.035f + k * 0.07f, 0); // stacked bricks
+                    c4.transform.localRotation = Quaternion.Euler(0, k * 17f, 0);
+                    c4.transform.localScale = Vector3.one * 1.2f;
+                }
             }
             else
             {

@@ -20,11 +20,34 @@ namespace Sculpt.Game.UI
         private WeaponView _view;
         private Camera _camera;
         private Material _gl;
-        private GUIStyle _label, _big, _shadow;
 
         private static readonly Color Red = new Color(1f, 0.22f, 0.18f, 1f);
         private static readonly Color Amber = new Color(1f, 0.72f, 0.2f, 1f);
         private static readonly string[] Names = { "Pump", "SMG", "AR", "Pistol" };
+        // Text the HUD shows every frame, built once (a string made per frame is garbage per frame).
+        private static readonly string[] NamesUpper = { "PUMP", "SMG", "AR", "PISTOL" };
+        private static readonly string[] SlashCache = new string[128], NadeCache = new string[16];
+        private readonly System.Collections.Generic.Dictionary<long, string> _feedText = new System.Collections.Generic.Dictionary<long, string>();
+
+        private static string Slash(int n) => n < 0 || n >= SlashCache.Length ? "/ " + n : SlashCache[n] ?? (SlashCache[n] = "/ " + n);
+        private static readonly string[] C4Cache = new string[16], GlCache = new string[16];
+        private static string Counted(string[] cache, string prefix, int n) => n < 0 || n >= cache.Length ? prefix + n : cache[n] ?? (cache[n] = prefix + n);
+        private static readonly System.Collections.Generic.Dictionary<Item, string> UpperCache = new System.Collections.Generic.Dictionary<Item, string>();
+        private static string UpperName(Item it) { if (!UpperCache.TryGetValue(it, out string u)) UpperCache[it] = u = Items.Name(it).ToUpperInvariant(); return u; }
+        // The C4 detonate hint, rebuilt only when what it says changes.
+        private string _hintText, _hintFire, _hintAim, _keyFire, _keyAim; private float _hintKeysAt; private bool _hintEmpty; private int _hintOut = -1;
+        private string DetonateHint(bool empty, int out_)
+        {
+            // Reading a bind's display name builds strings, so look the keys up at most twice a second (a rebind shows within 0.5 s).
+            if (_hintFire == null || Time.unscaledTime >= _hintKeysAt) { _keyFire = _player.FireKeyName; _keyAim = _player.AimKeyName; _hintKeysAt = Time.unscaledTime + 0.5f; }
+            string fire = _keyFire, aim = _keyAim;
+            if (_hintText == null || empty != _hintEmpty || out_ != _hintOut || fire != _hintFire || aim != _hintAim)
+            {
+                _hintEmpty = empty; _hintOut = out_; _hintFire = fire; _hintAim = aim;
+                _hintText = (empty ? fire + " / " : "") + aim + "  DETONATE  (" + out_ + " out)";
+            }
+            return _hintText;
+        }
 
         public void Init(LocalPlayer player, NetSession session, WeaponView view, Camera camera)
         {
@@ -45,25 +68,20 @@ namespace Sculpt.Game.UI
             if (_player == null) return;
             NetClient net = _session.Client;
             if (!net.Joined) return;
-            if (_label == null)
-            {
-                _label = new GUIStyle(GUI.skin.label) { fontSize = 14, alignment = TextAnchor.MiddleCenter };
-                _label.normal.textColor = Color.white;
-                _big = new GUIStyle(_label) { fontSize = 30, fontStyle = FontStyle.Bold };
-                _shadow = new GUIStyle(_label);
-            }
+            // Draw-only HUD: nothing here reacts to mouse or key events, so only the repaint call does any work.
+            if (Event.current.type != EventType.Repaint) return;
 
             MotorState s = _player.State;
             WeaponsConfig cfg = _player.Config.Weapons;
             float w = Screen.width, h = Screen.height;
 
-            if (Event.current.type == EventType.Repaint)
             {
                 _gl.SetPass(0);
                 GL.PushMatrix();
                 try
                 {
                     HudDraw.LoadPixels();
+                    HudDraw.BeginBatch(); // every shape below goes out as one draw
                     if (!s.Dead) DrawCrosshair(s, cfg, w / 2f, h / 2f);
                     DrawHitMarker(w / 2f, h / 2f);
                     DrawHurt(w, h);
@@ -73,22 +91,35 @@ namespace Sculpt.Game.UI
                     DrawHotbar(s, net.Tick, w);
                     DrawFeedPanels(net, w, h);
                 }
-                finally { GL.PopMatrix(); } // an exception must never leave the matrix stack pushed
+                finally
+                {
+                    // An exception must never leave the batch open or the matrix stack pushed.
+                    HudDraw.EndBatch();
+                    GL.PopMatrix();
+                }
             }
 
             // Health (bottom left).
             int hp = s.Health(cfg);
             bool low = hp <= cfg.MaxHealth / 3;
-            HudDraw.Label(HudDraw.ToGui(HealthX + 16, Margin + 20, 120, 40), hp.ToString(), 30, low ? HudDraw.Red : HudDraw.Text, TextAnchor.MiddleLeft, true);
+            HudDraw.Label(HudDraw.ToGui(HealthX + 16, Margin + 20, 120, 40), HudDraw.Num(hp), 30, low ? HudDraw.Red : HudDraw.Text, TextAnchor.MiddleLeft, true);
             HudDraw.Label(HudDraw.ToGui(HealthX + 80, Margin + 24, 60, 30), "HP", 12, HudDraw.Dim, TextAnchor.MiddleLeft, true);
 
-            // Gun and ammo (bottom right); a grenade shows its count.
-            if (!s.Dead && s.Hand.HeldItem == Item.Grenade)
+            // Gun and ammo (bottom right); grenades, C4 and the launcher show their count.
+            Item heldItem = s.Hand.HeldItem;
+            if (!s.Dead && Items.Stacks(heldItem))
             {
                 float px = w - Margin - PanelW;
-                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), "GRENADE", 13, HudDraw.Dim, TextAnchor.MiddleLeft, true);
-                HudDraw.Label(HudDraw.ToGui(px + PanelW - 96, Margin + 16, 50, 40), s.Hand.Bag.Grenades.ToString(), 30, HudDraw.Text, TextAnchor.MiddleRight, true);
-                HudDraw.Label(HudDraw.ToGui(px + PanelW - 44, Margin + 18, 40, 30), "/ " + _player.Config.Items.GrenadeCarry, 13, HudDraw.Dim, TextAnchor.MiddleLeft);
+                int count = s.Hand.Bag.CountIn(s.Hand.Slot);
+                int out_ = GrenadeRules.ActiveOf(s, ThrowKind.C4);
+                string title = heldItem == Item.C4 && count == 0 ? "DETONATOR" : UpperName(heldItem);
+                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), title, 13, HudDraw.Dim, TextAnchor.MiddleLeft, true);
+                HudDraw.Label(HudDraw.ToGui(px + PanelW - 96, Margin + 16, 50, 40), HudDraw.Num(count), 30, count == 0 ? HudDraw.Dim : HudDraw.Text, TextAnchor.MiddleRight, true);
+                HudDraw.Label(HudDraw.ToGui(px + PanelW - 44, Margin + 18, 40, 30), Slash(_player.Config.Items.Carry(heldItem)), 13, HudDraw.Dim, TextAnchor.MiddleLeft);
+                string hint = null;
+                if (heldItem == Item.C4 && out_ > 0) hint = DetonateHint(count == 0, out_);
+                else if (heldItem == Item.Launcher && net.Tick < s.LauncherReadyTick) hint = "LOADING";
+                if (hint != null) HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 14, 200, 20), hint, 11, heldItem == Item.C4 ? HudDraw.Amber : HudDraw.Dim, TextAnchor.MiddleLeft, true);
             }
             else if (!s.Dead && s.Hand.HasGun)
             {
@@ -98,9 +129,9 @@ namespace Sculpt.Game.UI
                 float px = w - Margin - PanelW;
                 bool reloading = s.Weapon.Reloading && s.Weapon.ReloadGun == held;
                 Color ammoCol = ammo == 0 ? HudDraw.Red : ammo <= st.MagSize / 4 ? HudDraw.Amber : HudDraw.Text;
-                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), Names[(int)held].ToUpperInvariant(), 13, HudDraw.Dim, TextAnchor.MiddleLeft, true);
-                HudDraw.Label(HudDraw.ToGui(px + PanelW - 96, Margin + 16, 50, 40), ammo.ToString(), 30, ammoCol, TextAnchor.MiddleRight, true);
-                HudDraw.Label(HudDraw.ToGui(px + PanelW - 44, Margin + 18, 40, 30), "/ " + st.MagSize, 13, HudDraw.Dim, TextAnchor.MiddleLeft);
+                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), NamesUpper[(int)held], 13, HudDraw.Dim, TextAnchor.MiddleLeft, true);
+                HudDraw.Label(HudDraw.ToGui(px + PanelW - 96, Margin + 16, 50, 40), HudDraw.Num(ammo), 30, ammoCol, TextAnchor.MiddleRight, true);
+                HudDraw.Label(HudDraw.ToGui(px + PanelW - 44, Margin + 18, 40, 30), Slash(st.MagSize), 13, HudDraw.Dim, TextAnchor.MiddleLeft);
                 string hint = reloading ? "RELOADING" : ammo == 0 ? "EMPTY" : ammo <= st.MagSize / 4 ? "R  RELOAD" : null;
                 if (hint != null && s.Hand.Mode == HandMode.Weapon)
                     HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 14, 150, 20), hint, 11, reloading ? HudDraw.Text : ammoCol, TextAnchor.MiddleLeft, true);
@@ -113,8 +144,11 @@ namespace Sculpt.Game.UI
                 Item it = s.Hand.Bag[i];
                 bool held = i == s.Hand.Slot && it != Item.None;
                 Color tc = it == Item.None ? HudDraw.A(HudDraw.Dim, 0.5f) : held ? HudDraw.Text : HudDraw.Dim;
-                HudDraw.Label(HudDraw.ToGui(r.x + 7, r.y + r.height - 15, 20, 12), (i + 1).ToString(), 10, HudDraw.A(tc, 0.8f), TextAnchor.MiddleLeft, true);
-                string name = it == Item.None ? "—" : it == Item.Grenade ? "Nade x" + s.Hand.Bag.Grenades : Items.Name(it);
+                HudDraw.Label(HudDraw.ToGui(r.x + 7, r.y + r.height - 15, 20, 12), HudDraw.Num(i + 1), 10, HudDraw.A(tc, 0.8f), TextAnchor.MiddleLeft, true);
+                int n = s.Hand.Bag.Count(i);
+                string name = it == Item.None ? "—" : it == Item.Grenade ? Counted(NadeCache, "Nade x", n)
+                    : it == Item.C4 ? (n == 0 ? "Det." : Counted(C4Cache, "C4 x", n))
+                    : it == Item.Launcher ? Counted(GlCache, "GL x", n) : Items.Name(it);
                 HudDraw.Label(HudDraw.ToGui(r.x, r.y + 3, r.width, r.height - 8), name, 12, tc, TextAnchor.MiddleCenter, held);
             }
 
@@ -129,7 +163,7 @@ namespace Sculpt.Game.UI
                 Color col = HudDraw.Text;
                 if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
                 else if (plan.Allowed) line = $"{key}  Pick up {what}";
-                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
+                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
                 else { line = what; col = HudDraw.Dim; }
                 HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), line, 14, col, TextAnchor.MiddleCenter, true);
             }
@@ -138,7 +172,7 @@ namespace Sculpt.Game.UI
 
             // Damage dealt by the last hit, next to the crosshair.
             if (Time.time - _view.HitTime < 0.5f)
-                HudDraw.Label(new Rect(w / 2f + 20, h / 2f + 8, 80, 20), _view.LastHitDamage.ToString(), 14,
+                HudDraw.Label(new Rect(w / 2f + 20, h / 2f + 8, 80, 20), HudDraw.Num(_view.LastHitDamage), 14,
                      Time.time - _view.HeadHitTime < 0.5f ? HudDraw.Amber : HudDraw.Text, TextAnchor.MiddleLeft, true);
 
             DrawFeed(net, w);
@@ -155,17 +189,6 @@ namespace Sculpt.Game.UI
 
         private const float Margin = 24f, PanelW = 240f, PanelH = 64f, HealthX = 24f;
 
-        private void Text(Rect r, string t, GUIStyle st, Color c, TextAnchor a)
-        {
-            st.alignment = a;
-            Color old = st.normal.textColor;
-            st.normal.textColor = new Color(0, 0, 0, 0.8f);
-            GUI.Label(new Rect(r.x + 1, r.y + 1, r.width, r.height), t, st);
-            st.normal.textColor = c;
-            GUI.Label(r, t, st);
-            st.normal.textColor = old;
-        }
-
         private static string SourceName(DamageSource s)
         {
             switch (s)
@@ -174,6 +197,8 @@ namespace Sculpt.Game.UI
                 case DamageSource.Fall: return "Fall";
                 case DamageSource.Grenade: return "Grenade";
                 case DamageSource.Punch: return "Punch";
+                case DamageSource.C4: return "C4";
+                case DamageSource.Launcher: return "Launcher";
                 default: return (int)s < Names.Length ? Names[(int)s] : s.ToString();
             }
         }
@@ -237,34 +262,11 @@ namespace Sculpt.Game.UI
 
         private static void Dot(float cx, float cy, float r, Color c) => Rect(cx - r, cy - r, 2 * r, 2 * r, c);
 
-        private static void Rect(float x, float y, float w, float h, Color c)
-        {
-            GL.Begin(GL.QUADS);
-            GL.Color(c);
-            GL.Vertex3(x, y, 0); GL.Vertex3(x + w, y, 0); GL.Vertex3(x + w, y + h, 0); GL.Vertex3(x, y + h, 0);
-            GL.End();
-        }
+        private static void Rect(float x, float y, float w, float h, Color c) => HudDraw.Quad(x, y, w, h, c);
 
-        private static void Ring(float cx, float cy, float r, float th, Color c) => Arc(cx, cy, r, th, 0, 360, c);
+        private static void Ring(float cx, float cy, float r, float th, Color c) => HudDraw.Arc(cx, cy, r, th, 0, 360, c);
 
-        private static void Arc(float cx, float cy, float r, float thick, float fromDeg, float spanDeg, Color c)
-        {
-            if (spanDeg <= 0.01f) return;
-            int steps = Mathf.Max(2, Mathf.CeilToInt(spanDeg / 6f));
-            GL.Begin(GL.QUADS);
-            GL.Color(c);
-            for (int i = 0; i < steps; i++)
-            {
-                float a0 = (fromDeg + spanDeg * i / steps) * Mathf.Deg2Rad, a1 = (fromDeg + spanDeg * (i + 1) / steps) * Mathf.Deg2Rad;
-                Vector2 d0 = new Vector2(Mathf.Sin(a0), Mathf.Cos(a0)), d1 = new Vector2(Mathf.Sin(a1), Mathf.Cos(a1));
-                float ri = r - thick * 0.5f, ro = r + thick * 0.5f;
-                GL.Vertex3(cx + d0.x * ri, cy + d0.y * ri, 0);
-                GL.Vertex3(cx + d0.x * ro, cy + d0.y * ro, 0);
-                GL.Vertex3(cx + d1.x * ro, cy + d1.y * ro, 0);
-                GL.Vertex3(cx + d1.x * ri, cy + d1.y * ri, 0);
-            }
-            GL.End();
-        }
+        private static void Arc(float cx, float cy, float r, float thick, float fromDeg, float spanDeg, Color c) => HudDraw.Arc(cx, cy, r, thick, fromDeg, spanDeg, c);
 
         // ---------------------------------------------------------------- Hits
 
@@ -279,18 +281,15 @@ namespace Sculpt.Game.UI
             bool head = now - _view.HeadHitTime < 0.22f;
             Color c = kill ? Red : head ? Amber : Color.white;
             float inner = kill ? 10f : 8f, outer = kill ? 22f : head ? 18f : 15f, th = kill ? 2.2f : 1.5f;
-            GL.Begin(GL.QUADS);
-            GL.Color(new Color(c.r, c.g, c.b, a));
+            var col = new Color(c.r, c.g, c.b, a);
             for (int k = 0; k < 4; k++)
             {
                 float ang = (45f + 90f * k) * Mathf.Deg2Rad;
                 Vector2 d = new Vector2(Mathf.Sin(ang), Mathf.Cos(ang));
                 Vector2 n = new Vector2(d.y, -d.x) * th;
                 Vector2 p0 = new Vector2(cx, cy) + d * inner, p1 = new Vector2(cx, cy) + d * outer;
-                GL.Vertex3(p0.x + n.x, p0.y + n.y, 0); GL.Vertex3(p1.x + n.x, p1.y + n.y, 0);
-                GL.Vertex3(p1.x - n.x, p1.y - n.y, 0); GL.Vertex3(p0.x - n.x, p0.y - n.y, 0);
+                HudDraw.Quad(p0 + n, p1 + n, p1 - n, p0 - n, col);
             }
-            GL.End();
         }
 
         private void DrawHurt(float w, float h)
@@ -314,20 +313,14 @@ namespace Sculpt.Game.UI
                 float spanDeg = Mathf.Clamp(20f + arrow.Damage * 0.4f, 20f, 60f);
                 Arc(centre.x, centre.y, ring, 5f, ang * Mathf.Rad2Deg - spanDeg / 2, spanDeg, new Color(Red.r, Red.g, Red.b, 0.85f * k));
                 Vector2 tip = centre + dir * (ring + 16f), b = centre + dir * (ring + 4f), side = new Vector2(dir.y, -dir.x) * 9f;
-                GL.Begin(GL.TRIANGLES);
-                GL.Color(new Color(Red.r, Red.g, Red.b, 0.9f * k));
-                GL.Vertex3(tip.x, tip.y, 0); GL.Vertex3(b.x + side.x, b.y + side.y, 0); GL.Vertex3(b.x - side.x, b.y - side.y, 0);
-                GL.End();
+                HudDraw.Tri(tip, b + side, b - side, new Color(Red.r, Red.g, Red.b, 0.9f * k));
             }
         }
 
         private static void Edge(float x, float y, float w, float hgt, float a, bool bottom)
         {
-            GL.Begin(GL.QUADS);
             Color solid = new Color(Red.r, Red.g * 0.5f, Red.b * 0.5f, a), clear = new Color(Red.r, 0, 0, 0);
-            GL.Color(bottom ? solid : clear); GL.Vertex3(x, y, 0); GL.Vertex3(x + w, y, 0);
-            GL.Color(bottom ? clear : solid); GL.Vertex3(x + w, y + hgt, 0); GL.Vertex3(x, y + hgt, 0);
-            GL.End();
+            HudDraw.Quad(new Vector2(x, y), new Vector2(x + w, y), new Vector2(x + w, y + hgt), new Vector2(x, y + hgt), bottom ? solid : clear, bottom ? clear : solid);
         }
 
         // ---------------------------------------------------------------- Health, hotbar, feed
@@ -349,13 +342,20 @@ namespace Sculpt.Game.UI
             if (s.Dead) return;
             float px = w - Margin - PanelW;
             HudDraw.PanelRect(px, Margin, PanelW, PanelH);
-            if (s.Hand.HeldItem == Item.Grenade)
+            if (Items.Stacks(s.Hand.HeldItem))
             {
                 float gx = px + 16, gy = Margin + 12;
-                int carry = Mathf.Max(1, _player.Config.Items.GrenadeCarry);
+                int carry = Mathf.Max(1, _player.Config.Items.Carry(s.Hand.HeldItem));
+                int have = s.Hand.Bag.CountIn(s.Hand.Slot);
                 float pw = (PanelW - 32 - 6 * (carry - 1)) / carry;
                 for (int i = 0; i < carry; i++)
-                    HudDraw.RoundRect(gx + i * (pw + 6), gy, pw, 5, 1.5f, i < s.Hand.Bag.Grenades ? HudDraw.A(HudDraw.Text, 0.9f) : new Color(1, 1, 1, 0.12f));
+                    HudDraw.RoundRect(gx + i * (pw + 6), gy, pw, 5, 1.5f, i < have ? HudDraw.A(HudDraw.Text, 0.9f) : new Color(1, 1, 1, 0.12f));
+                if (s.Hand.HeldItem == Item.Launcher && tick < s.LauncherReadyTick)
+                {
+                    // The next round loading: a thin bar under the pips.
+                    float k = Mathf.Clamp01(1f - (s.LauncherReadyTick - tick) / (float)Mathf.Max(1, _player.Config.Items.Launcher.ThrowRecoveryTicks));
+                    HudDraw.Bar(gx, gy + 8, PanelW - 32, 2, k, HudDraw.Dim);
+                }
                 return;
             }
             if (!s.Hand.HasGun) return;
@@ -407,8 +407,14 @@ namespace Sculpt.Game.UI
 
         private string FeedText(NetClient net, in WeaponView.FeedLine f)
         {
+            // The same few lines are asked for twice a frame for six seconds: keep them by what they say.
+            long key = ((long)(f.Killer & 0xFFFF) << 40) | ((long)(f.Victim & 0xFFFF) << 24) | ((long)((int)f.Source & 0xFF) << 16) | (f.Head ? 1L << 8 : 0) | (uint)(net.PlayerId & 0xFF);
+            if (_feedText.TryGetValue(key, out string line)) return line;
+            if (_feedText.Count > 256) _feedText.Clear();
             string killer = f.Killer == 0 || f.Killer == f.Victim ? "" : Name(net, f.Killer) + "   ";
-            return $"{killer}{SourceName(f.Source).ToUpperInvariant()}{(f.Head ? " · HEAD" : "")}   {Name(net, f.Victim)}";
+            line = $"{killer}{SourceName(f.Source).ToUpperInvariant()}{(f.Head ? " · HEAD" : "")}   {Name(net, f.Victim)}";
+            _feedText[key] = line;
+            return line;
         }
 
         private float FeedWidth(string line) => 22f + line.Length * 7.4f;

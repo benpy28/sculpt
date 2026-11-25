@@ -39,6 +39,14 @@ namespace Sculpt.Game.Net
 
         private MethodInfo _iterIn, _iterOut;
         private bool _pumpWarned;
+        private FieldInfo _socketNetManager;
+        private bool _flushWarned;
+
+        /// <summary>
+        /// Wake the UDP library's send thread right after our packets are queued (see <see cref="FlushSockets"/>).
+        /// Off only for comparing (-noflush on the command line).
+        /// </summary>
+        public static bool FlushImmediately = !Array.Exists(Environment.GetCommandLineArgs(), a => string.Equals(a, "-noflush", StringComparison.OrdinalIgnoreCase));
 
         public FishNetTransport()
         {
@@ -120,6 +128,36 @@ namespace Sculpt.Game.Net
         {
             if (Manager == null || (!IsServer && !IsClient)) return;
             Pump(_iterOut);
+            if (FlushImmediately) FlushSockets();
+        }
+
+        /// <summary>
+        /// The UDP library under FishNet's default transport (LiteNetLib inside Tugboat) does not write a packet to the
+        /// socket when it is sent: it queues it, and its own thread writes the queue out every 15 ms. Left alone, every
+        /// input packet and every snapshot waits 0 to 15 ms (7.5 on average) before it even leaves the machine, in
+        /// both directions, and the uneven wait looks like jitter to the netcode. Waking that thread as soon as our
+        /// packets are queued sends them now. Its field is internal, hence the reflection; if it is ever renamed we
+        /// fall back to the old behaviour and say so once.
+        /// </summary>
+        private void FlushSockets()
+        {
+            try
+            {
+                if (!(Manager.TransportManager.Transport is FishNet.Transporting.Tugboat.Tugboat tugboat)) return;
+                if (_socketNetManager == null)
+                {
+                    _socketNetManager = typeof(FishNet.Transporting.Tugboat.CommonSocket).GetField("NetManager", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (_socketNetManager == null) throw new MissingFieldException("CommonSocket.NetManager");
+                }
+                if (IsServer && tugboat.ServerSocket != null) (_socketNetManager.GetValue(tugboat.ServerSocket) as LiteNetLib.NetManager)?.TriggerUpdate();
+                if (IsClient && tugboat.ClientSocket != null) (_socketNetManager.GetValue(tugboat.ClientSocket) as LiteNetLib.NetManager)?.TriggerUpdate();
+            }
+            catch (Exception e)
+            {
+                if (!_flushWarned) Debug.LogWarning("[SCULPT] Could not flush the UDP send queue at once (packets wait up to 15 ms): " + e.Message);
+                _flushWarned = true;
+                FlushImmediately = false;
+            }
         }
 
         private void Pump(MethodInfo m)

@@ -50,6 +50,7 @@ namespace Sculpt.Core.Tests
         public void HealsABrokenTileAfterTheDelay_NotBefore()
         {
             var h = Arena(out int[] room);
+            h.Server.Walls.Config.BlastHoles = false; // one whole tile, to time the dummy exactly
             var watcher = h.AddClient(new Vec3d(9, 0, 2), team: 1);
             ServerPlayer d = h.Server.AddDummy(new PracticeDummy(Post, 0, room), team: 2);
             h.RunSeconds(0.5);
@@ -152,6 +153,7 @@ namespace Sculpt.Core.Tests
         public void OnTheBreachMap_TheDummyInTheSealedRoomHealsEveryWallYouBreak()
         {
             BrushWorld w = BreachMap.BuildBrushes(out BreachMapInfo info);
+            w.Tiles.Config.BlastHoles = false; // whole tiles, so the dummy's bar covers them all in time
             var server = new NetServer(BreachMap.Terrain(BreachMap.BuildGround(), w), new MovementConfig(), new NetConfig(), (c, d, r) => { });
             server.AddDummy(new PracticeDummy(info.RoomCentre, Math.PI, info.Room), team: 2);
             for (int k = 0; k < 30; k++) server.Step();

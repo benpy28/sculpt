@@ -462,8 +462,14 @@ namespace Sculpt.Core
                 info.Frame.Add(id);
                 return id;
             }
-            // Beam strips in each slab over every column line next to a floored cell: four 1.5 m pieces per segment,
-            // each linked to the floor tiles on both sides and the wall tiles under and over it.
+            // A wall stands on this line segment just under or just over slab s.
+            bool WallLine(int s, bool alongX, int line, int seg) =>
+                (alongX ? Solidish(b.AlongX[s, line, seg]) : Solidish(b.AlongZ[s, line, seg])) ||
+                (s + 1 < b.Storeys && (alongX ? Solidish(b.AlongX[s + 1, line, seg]) : Solidish(b.AlongZ[s + 1, line, seg])));
+            // Beam strips in each slab over every column line next to a floored cell, or with a wall under or over it
+            // (an outer wall beside a stairwell's open slab: without the strip there was a 0.3 m slit through the wall
+            // at slab height). Four 1.5 m pieces per segment, each linked to the floor tiles on both sides and the wall
+            // tiles under and over it.
             var stripX = new Dictionary<(int, int, int, int), int>(); // (slab, z-line j, segment i, piece)
             var stripZ = new Dictionary<(int, int, int, int), int>(); // (slab, x-line i, segment j, piece)
             for (int s = 0; s < b.Storeys; s++)
@@ -472,7 +478,7 @@ namespace Sculpt.Core
                 for (int j = 0; j <= b.Mz; j++)
                     for (int i = 0; i < b.Mx; i++)
                     {
-                        if (Floor(s, i, j - 1, 0, 0) < 0 && Floor(s, i, j, 0, 0) < 0) continue;
+                        if (Floor(s, i, j - 1, 0, 0) < 0 && Floor(s, i, j, 0, 0) < 0 && !WallLine(s, true, j, i)) continue;
                         for (int k = 0; k < 4; k++)
                         {
                             links.Clear();
@@ -485,7 +491,7 @@ namespace Sculpt.Core
                 for (int i = 0; i <= b.Mx; i++)
                     for (int j = 0; j < b.Mz; j++)
                     {
-                        if (Floor(s, i - 1, j, 0, 0) < 0 && Floor(s, i, j, 0, 0) < 0) continue;
+                        if (Floor(s, i - 1, j, 0, 0) < 0 && Floor(s, i, j, 0, 0) < 0 && !WallLine(s, false, i, j)) continue;
                         for (int k = 0; k < 4; k++)
                         {
                             links.Clear();

@@ -61,7 +61,8 @@ namespace Sculpt.Core
             s.GroundNormal = grounded ? normal : new Vec3d(0, 1, 0);
 
             // ---- Mode transitions from contact ----
-            if (s.Mode == MoveMode.Air && grounded && s.Velocity.Y <= 0)
+            // Landing: moving down, or (on an uphill slope) no longer rising faster than the slope under you.
+            if (s.Mode == MoveMode.Air && grounded && s.Velocity.Y <= Math.Max(0, WithTangentY(Horizontal(s.Velocity), normal).Y))
                 Land(c, ref s, input, events);
             else if ((s.Mode == MoveMode.Ground || s.Mode == MoveMode.Slide) && !grounded)
             {
@@ -124,6 +125,7 @@ namespace Sculpt.Core
             s.Sprinting = input.SprintHeld && !input.WantsToShoot && !s.Crouched && input.MoveZ > 0.1;
 
             double target = s.Crouched ? c.CrouchSpeed : (s.Sprinting ? c.SprintSpeed : c.RunSpeed);
+            if (s.Hand.HeldItem == Item.Launcher && !s.Crouched) target *= c.Items.Launcher.MoveSpeedScale; // heavy: a little slower on foot
             Vec3d vh = Horizontal(s.Velocity);
             vh = CounterBrake(c, ref s, vh, wish, events);
             vh = GroundAccelerate(c, vh, wish, target);
@@ -608,13 +610,13 @@ namespace Sculpt.Core
                 d = new Vec3d(d.X, (vy0 + vy1) * 0.5 * c.Dt, d.Z);
                 s.Velocity = new Vec3d(s.Velocity.X, vy1, s.Velocity.Z);
                 double hBefore = Horizontal(s.Velocity).Length;
-                MoveAxis(g, c, ref s.Position, 0, d.X, h, out bool bx);
+                AirMoveHorizontal(g, c, ref s.Position, 0, d.X, h, out bool bx);
                 if (bx)
                 {
                     RecordWallHit(ref s, new Vec3d(-Math.Sign(d.X), 0, 0), hBefore);
                     s.Velocity = new Vec3d(0, s.Velocity.Y, s.Velocity.Z);
                 }
-                MoveAxis(g, c, ref s.Position, 2, d.Z, h, out bool bz);
+                AirMoveHorizontal(g, c, ref s.Position, 2, d.Z, h, out bool bz);
                 if (bz)
                 {
                     RecordWallHit(ref s, new Vec3d(0, 0, -Math.Sign(d.Z)), hBefore);
@@ -623,6 +625,30 @@ namespace Sculpt.Core
                 MoveAxis(g, c, ref s.Position, 1, d.Y, h, out bool by);
                 if (by) s.Velocity = new Vec3d(s.Velocity.X, 0, s.Velocity.Z);
             }
+        }
+
+        /// <summary>
+        /// A horizontal move in the air. Running into a walkable slope (stairs, a ramp) from the air is not a wall:
+        /// the move rides up onto the slope (at most a step) and keeps its speed, so jumping onto, up or along stairs
+        /// never stops you dead. Only slopes count; walls and flat ledges still block (vault, mantle and wall kicks
+        /// are unchanged).
+        /// </summary>
+        private static double AirMoveHorizontal(ITerrain g, MovementConfig c, ref Vec3d pos, int axis, double delta, double h, out bool blocked)
+        {
+            Vec3d start = pos;
+            double moved = MoveAxis(g, c, ref pos, axis, delta, h, out blocked);
+            if (!blocked) return moved;
+            Vec3d alt = start;
+            double lift = MoveAxis(g, c, ref alt, 1, c.MaxStepUp, h, out _);
+            if (lift < 1e-6) return moved;
+            double altMoved = MoveAxis(g, c, ref alt, axis, delta, h, out bool altBlocked);
+            if (Math.Abs(altMoved) <= Math.Abs(moved) + 1e-6) return moved;
+            MoveAxis(g, c, ref alt, 1, -lift, h, out bool landed);
+            if (!landed) return moved; // nothing under the raised path: it went over a ledge, not up a slope
+            if (!g.GroundContact(Box(alt, c.HalfWidth, h), c.GroundProbe, out Vec3d n) || n.Y <= 0.5 || n.Y >= 0.9999) return moved;
+            pos = alt;
+            blocked = altBlocked;
+            return altMoved;
         }
 
         /// <summary>Remembers the speed you hit a wall with in the air (wall kick timing, mantle momentum).</summary>
