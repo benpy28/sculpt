@@ -15,6 +15,7 @@ namespace Sculpt.Game.UI
     /// </summary>
     public sealed class CombatHud : MonoBehaviour
     {
+        private string _doorKey, _openLine, _shutLine; // door prompt, built when the bind changes (no string per frame)
         private LocalPlayer _player;
         private NetSession _session;
         private WeaponView _view;
@@ -166,6 +167,12 @@ namespace Sculpt.Game.UI
                 else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
                 else { line = what; col = HudDraw.Dim; }
                 HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), line, 14, col, TextAnchor.MiddleCenter, true);
+            }
+            else if (!s.Dead && _player.DoorTarget >= 0)
+            {
+                string key = _player.InteractKeyName;
+                if (key != _doorKey) { _doorKey = key; _openLine = key + "  Open door"; _shutLine = key + "  Close door"; }
+                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), _player.DoorTargetOpen ? _shutLine : _openLine, 14, HudDraw.Text, TextAnchor.MiddleCenter, true);
             }
             else if (!s.Dead && _player.DropHold > 0f)
                 HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), "Dropping " + Items.Name(s.Hand.HeldItem) + "...", 13, HudDraw.Dim, TextAnchor.MiddleCenter, true);

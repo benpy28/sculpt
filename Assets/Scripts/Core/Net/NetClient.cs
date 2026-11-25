@@ -40,6 +40,9 @@ namespace Sculpt.Core.Net
         public readonly TileWalls Walls;
         /// <summary>Your own charge breaks, predicted on <see cref="Walls"/> until the server confirms or refuses them.</summary>
         public readonly PredictedChargeBreaker Charges = new PredictedChargeBreaker();
+        /// <summary>Your own door presses, shown at once until the server answers.</summary>
+        public readonly PredictedDoors Doors = new PredictedDoors();
+        private readonly List<Aabb> _doorBodies = new List<Aabb>();
         /// <summary>Everyone's heals as the server reported them (null without tiles). Also runs the press checks.</summary>
         public readonly TileHealing Heals;
         /// <summary>Heal events from the server (everyone's), for the Game layer to drain (sounds, effects, red refusals).</summary>
@@ -207,6 +210,7 @@ namespace Sculpt.Core.Net
                             if (c.Hp != null && Walls.HasCells(c.Tile))
                                 Walls.WriteCells(c.Tile, c.To == TileState.Broken ? ulong.MaxValue : c.Open, c.Patch, c.Steel, c.Hp, cause, c.By);
                             else Walls.Set(c.Tile, c.To, c.Health, cause, c.By);
+                            Doors.OnServerChange(Walls, c.Tile, c.To, c.Health, tm.Tick);
                         }
                         if (Walls.Changes.Count > 4096) Walls.Changes.RemoveRange(0, 2048); // nobody is draining (tests)
                         foreach (HealEvent e in tm.Heals)
@@ -477,6 +481,17 @@ namespace Sculpt.Core.Net
                 WeaponShot sh = LocalShots[k];
                 sh.ShooterId = PlayerId;
                 LocalShots[k] = sh;
+            }
+            if (Walls != null)
+            {
+                // Doors: the server applies a press right after that tick's movement, so do the same here.
+                Doors.Expire(Walls, Tick, HealAnswerTimeoutTicks);
+                if (cmd.Hand.Door && !_pred.Dead)
+                {
+                    _doorBodies.Clear();
+                    _doorBodies.Add(PlayerMovement.Box(_pred.Position, Movement.HalfWidth, PlayerMovement.HeightOf(_pred, Movement)));
+                    Doors.Press(Walls, cmd.Hand.DoorTile, cmd.Hand.DoorOpen, Tick, PlayerId, _doorBodies);
+                }
             }
             int lockUntil = Sculpt != null ? Sculpt.AfterMove(Tick, _pred, cmd) : int.MinValue;
             if (lockUntil != int.MinValue) HandRules.LockGun(ref _pred.Hand, lockUntil);

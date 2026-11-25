@@ -217,21 +217,22 @@ namespace Sculpt.Core
             SetTurned(keep, WallKind.Wall, 0, 2, 0, alongX: true);       // each stairwell's ground floor ends under the arrival
             for (int i = 1; i <= 3; i++)
             {
-                SetTurned(keep, i == 3 ? WallKind.ShutDoor : WallKind.Wall, 0, 1, i, alongX: true); // front hall -> corridor at the far end
+                SetTurned(keep, i == 3 ? WallKind.Door : WallKind.Wall, 0, 1, i, alongX: true); // front hall -> corridor at the far end
                 SetTurned(keep, i == 2 ? WallKind.Door : WallKind.Wall, 1, 1, i, alongX: true); // upstairs: doors in the middle
             }
-            SetTurned(keep, WallKind.Door, 0, 0, 0, alongX: true);       // outside -> your stairwell
+            // Doors (they open and shut, and break easily) only where you come in from outside; inside, open doorways.
+            SetTurned(keep, WallKind.ShutDoor, 0, 0, 0, alongX: true);   // outside -> your stairwell
             SetTurned(keep, WallKind.WideDoor, 0, 0, 1, alongX: true);   // main door into the front hall
             SetTurned(keep, WallKind.Window, 0, 0, 3, alongX: true);
             foreach (int i in new[] { 1, 2, 3, 4 }) SetTurned(keep, WallKind.Window, 1, 0, i, alongX: true);
             // West side (east turned): the first segment faces your own street, the other two the enemy's.
-            SetTurned(keep, WallKind.Window, 0, 0, 0, alongX: false);    // your street -> your stairwell (vault)
+            SetTurned(keep, WallKind.Window, 0, 0, 0, alongX: false);    // your street -> your stairwell (vault in)
             SetTurned(keep, WallKind.ShutDoor, 0, 0, 2, alongX: false);  // their street -> the room behind their stairwell
             SetTurned(keep, WallKind.Window, 1, 0, 0, alongX: false);
             SetTurned(keep, WallKind.Window, 1, 0, 2, alongX: false);
             // Between the stair lanes and the halls.
-            SetTurned(keep, WallKind.Window, 0, 1, 0, alongX: false);    // stairwell -> front hall (vault)
-            SetTurned(keep, WallKind.ShutDoor, 0, 1, 2, alongX: false);  // the room behind the stairwell -> back hall
+            SetTurned(keep, WallKind.Wall, 0, 1, 0, alongX: false);      // stairwell | front hall (no windows inside)
+            SetTurned(keep, WallKind.Door, 0, 1, 2, alongX: false);      // the room behind the stairwell -> back hall
             SetTurned(keep, WallKind.Wall, 0, 1, 1, alongX: false);
             SetTurned(keep, WallKind.Wall, 1, 1, 1, alongX: false);      // upstairs, beside the open middle of the stairwell
             SetTurned(keep, WallKind.Door, 1, 1, 0, alongX: false);      // upstairs, both ends of the stairwell
@@ -244,17 +245,16 @@ namespace Sculpt.Core
             var west = new Building(3.45, keep.Cz(1) - 2 * Module, 2, 3);   // a column line meets the keep's
             Stairwell(w, info, west, 0, true, +1, flip: true);
             west.AlongX[0, 2, 0] = WallKind.Wall;     // the stairwell's ground floor ends under the arrival
-            west.AlongX[0, 1, 1] = WallKind.Wall;     // three ground rooms in the east lane
-            west.AlongX[0, 2, 1] = WallKind.Wall;
-            west.AlongX[0, 0, 0] = WallKind.Door;     // south: into the stairwell
+            west.AlongX[0, 2, 1] = WallKind.Wall;     // east lane: a long front room and a back room
+            west.AlongX[0, 0, 0] = WallKind.ShutDoor; // south: into the stairwell
             west.AlongX[0, 0, 1] = WallKind.ShutDoor; // south: the front room
-            west.AlongZ[0, 1, 0] = WallKind.Window;   // front room -> stairwell (vault onto the stairs' foot)
+            west.AlongZ[0, 1, 0] = WallKind.Wall;     // front room | stairwell
+            west.AlongZ[0, 1, 1] = WallKind.Wall;
             west.AlongZ[0, 2, 0] = WallKind.Window;   // east, onto your street
-            west.AlongZ[0, 2, 1] = WallKind.ShutDoor; // east: the middle room, from your street
-            west.AlongZ[0, 1, 1] = WallKind.Window;   // middle room -> stairwell (vault)
+            west.AlongZ[0, 2, 1] = WallKind.ShutDoor; // east: the front room, from your street
             west.AlongZ[0, 2, 2] = WallKind.ShutDoor; // east: the back room, from their street
             west.AlongX[0, 3, 1] = WallKind.ShutDoor; // north: the back room, from their yard
-            west.AlongZ[0, 1, 2] = WallKind.ShutDoor; // back room <-> the room under the stairs' arrival
+            west.AlongZ[0, 1, 2] = WallKind.Door;     // back room <-> the room under the stairs' arrival
             west.AlongZ[1, 1, 0] = WallKind.Door;     // upstairs: a corridor along the east lane
             west.AlongZ[1, 1, 2] = WallKind.Door;
             west.AlongZ[1, 1, 1] = WallKind.Wall;     // beside the open middle of the stairwell
@@ -643,6 +643,7 @@ namespace Sculpt.Core
                     int id = t.AddTile(new Aabb(lo, hi), alongX ? Dir.North : Dir.East, TileKind.Door);
                     info.Tiles.Add(id);
                     info.Doors.Add(id);
+                    if (k == 2) t.PairDoor(id - 1, id); // the two leaves open and shut together
                 }
             if (kind == WallKind.Door || kind == WallKind.WideDoor)
             {

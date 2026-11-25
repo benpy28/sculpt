@@ -186,6 +186,13 @@ In order: 1 fix the F6 showcase jitter (done); 2 LAN 1v1 between two PCs, host/j
 - The bot's nav is built with doors open (`DuelMap.BuildNav`) and it punches a shut door in its way. It also leads its own strafe when aiming (it used to trail by 3-4 degrees and never fire at 9 m on flat ground).
 - Map plan tool: `SCULPT_PLAN_DIR=folder dotnet test Tests/Core.Tests --filter MapPlan` writes a top-down PNG (ground, first floor, roofs).
 
+### Doors you open and close (Claude, 2026-11-25, after Ben's play-test of the divide; tell Ben, change if he disagrees)
+- Ben: "dont place doors everywhere inside the house", "windows inside the house makes no sense", "make doors open and closeable and even interactable". Duel map: shut doors only where you come in from outside (keep: your stairwell's outside door, the side door from their street; side buildings: every outside door); doorways inside are open; no windows on inside walls (the stairwell/hall and front-room/stairwell windows are walls now, and the side building's two front rooms are one).
+- Interact (E) on a door you aim at within 2.5 m (Breach Settings: `DoorReach`; items under the crosshair win) opens a shut door or shuts an open one: both leaves together (`TileWalls.PairDoor`). Open leaves are `TileState.DoorOpen`: no collision, no damage, no heal, health kept for when it shuts. Shutting is refused while anyone stands in a leaf's space. A shut door still breaks as before (4x damage, sprint charge goes through it); a charge through an open door breaks nothing.
+- Netcode: the press rides in the command (Hand.Door + tile + open, carried if late), server applies it right after that player's movement, the change goes out in the Tiles message (new Door cause). The client applies its own press on the same tick (`PredictedDoors`); if the server never answers (refused) the door goes back after the heal answer timeout. Tested at 0 and 100 ms ping: no correction walking through a door you just opened. Protocol 26.
+- Look and sound: an open door slides into its frame (a 12 cm timber strip on the hinge side, too thin to hide anyone); generated wooden slide + clack on open, heavier knock on shut. HUD prompt "E  Open door" / "E  Close door".
+- The bot opens doors with the same press (it punches one down only if it won't open after two tries); its nav is built with every door open.
+
 ## Working rules
 
 - Work milestone by milestone, one branch each. Current plan from Ben (2026-11-20): run M0, M1 and M2 back to back, then STOP after M2 with a short report and a play-test checklist (in chat, not a separate doc) so Ben can test feel. After that, stop at the end of each milestone unless Ben says otherwise. Do not start a milestone past the agreed stop point until Ben says so.

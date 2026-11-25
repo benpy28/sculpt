@@ -16,6 +16,9 @@ namespace Sculpt.Core
         Patched = 3,
         /// <summary>Reinforced: high health.</summary>
         Reinforced = 4,
+        /// <summary>A door leaf slid open (Ben 2026-11-25: doors you open and close): no collision, bullets and players
+        /// pass, its health is kept for when it closes. Only door leaves are ever in this state (see <see cref="DoorRules"/>).</summary>
+        DoorOpen = 5,
     }
 
     /// <summary>What part of a building a tile is (its look, and which rules apply). Step 8 (Ben 2026-11-21).</summary>
@@ -49,6 +52,8 @@ namespace Sculpt.Core
         Reinforce = 6,
         /// <summary>A client copying the server's state.</summary>
         Server = 7,
+        /// <summary>A door opened or closed.</summary>
+        Door = 8,
     }
 
     /// <summary>
@@ -69,6 +74,8 @@ namespace Sculpt.Core
         public int ReinforcedHealth = 200;
         /// <summary>Door leaves take this many times the damage a wall tile would: with walls by cell (AR 50, punch 50 per hit) one hit of anything breaks a leaf.</summary>
         public int DoorDamageScale = 4;
+        /// <summary>How far from the eye a door can be opened or shut (metres to the nearest point of a leaf).</summary>
+        public double DoorReach = 2.5;
 
         /// <summary>
         /// Wall damage per bullet (per pellet for the pump), dealt to every cell of the wall within the weapon's hit
@@ -208,6 +215,7 @@ namespace Sculpt.Core
                 case TileState.Damaged: return IntactHealth;
                 case TileState.Patched: return PatchedHealth;
                 case TileState.Reinforced: return ReinforcedHealth;
+                case TileState.DoorOpen: return Math.Max(IntactHealth, ReinforcedHealth); // kept as it was
                 default: return 0;
             }
         }
@@ -293,6 +301,9 @@ namespace Sculpt.Core
         public Aabb BoundsOf(int tile) => World[_tiles[tile].Brush].Bounds;
 
         /// <summary>Tile index of a brush, or -1 if it is not a tile.</summary>
+        /// <summary>Not there for collision, bullets and sight: broken, or a door slid open.</summary>
+        public static bool Gone(TileState s) => s == TileState.Broken || s == TileState.DoorOpen;
+
         public int TileOfBrush(int brush) => _byBrush.TryGetValue(brush, out int t) ? t : -1;
 
         /// <summary>The tile a terrain hit landed on, or -1 (<see cref="TerrainHit.Brush"/> is brush index + 1).</summary>
@@ -346,9 +357,22 @@ namespace Sculpt.Core
             int id = _tiles.Count;
             _tiles.Add(new WallTile { Brush = brush, State = TileState.Intact, Health = Config.IntactHealth, Facing = facing, Kind = kind, Links = links });
             _byBrush[brush] = id;
+            if (kind == TileKind.Door) _doors.Add(id);
             GrowCells(id);
             return id;
         }
+
+        private readonly List<int> _doors = new List<int>();
+        private readonly Dictionary<int, int> _doorPartner = new Dictionary<int, int>();
+
+        /// <summary>Every door leaf.</summary>
+        public IReadOnlyList<int> Doors => _doors;
+
+        /// <summary>Makes two leaves one door (they open and close together).</summary>
+        public void PairDoor(int a, int b) { _doorPartner[a] = b; _doorPartner[b] = a; }
+
+        /// <summary>The other leaf of a double door, or -1.</summary>
+        public int DoorPartner(int leaf) => _doorPartner.TryGetValue(leaf, out int p) ? p : -1;
 
         private readonly Dictionary<int, List<int>> _followers = new Dictionary<int, List<int>>();
         private static readonly List<int> NoFollowers = new List<int>();
@@ -435,7 +459,7 @@ namespace Sculpt.Core
             t.Open = o;
             if (cause != TileCause.Built) t.Changed = true;
             _tiles[tile] = t;
-            if ((from == TileState.Broken) != (state == TileState.Broken)) World.SetSolid(t.Brush, state != TileState.Broken);
+            if (Gone(from) != Gone(state)) World.SetSolid(t.Brush, !Gone(state));
             if (state == TileState.Broken && cause == TileCause.Charge) _chargedAt[tile] = Tick;
             else _chargedAt.Remove(tile);
             Changes.Add(new TileChange { Tick = Tick, Tile = tile, From = from, To = state, Health = health, Cause = cause, By = by });
@@ -472,7 +496,7 @@ namespace Sculpt.Core
         public bool Damage(int tile, int amount, TileCause cause, int by = 0)
         {
             WallTile t = _tiles[tile];
-            if (amount <= 0 || t.State == TileState.Broken || t.Links != null) return false; // followers only go with their links
+            if (amount <= 0 || t.State == TileState.Broken || t.State == TileState.DoorOpen || t.Links != null) return false; // followers only go with their links
             if (HasCells(tile)) return DamageWholeCells(tile, amount, cause, by);
             if (t.Kind == TileKind.Door) amount *= Math.Max(1, Config.DoorDamageScale);
             AfterDamage(t.State, t.Health, amount, Config, out TileState s, out int h);
@@ -489,7 +513,7 @@ namespace Sculpt.Core
         public bool Damage(int tile, int amount, Vec3d at, TileCause cause, int by = 0, double radius = -1)
         {
             WallTile t = _tiles[tile];
-            if (amount <= 0 || t.State == TileState.Broken || t.Links != null) return false;
+            if (amount <= 0 || t.State == TileState.Broken || t.State == TileState.DoorOpen || t.Links != null) return false;
             if (!HasCells(tile) || !Config.BlastHoles) return Damage(tile, amount, cause, by);
             return HitArea(tile, at, amount, radius > 0 ? radius : Config.ArHitRadius, cause, by);
         }

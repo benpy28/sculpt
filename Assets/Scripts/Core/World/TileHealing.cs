@@ -129,6 +129,7 @@ namespace Sculpt.Core
         public static HealResult StateCheck(in WallTile t, HealKind kind, BreachConfig c)
         {
             if (t.Links != null) return HealResult.NothingToHeal; // frame followers come back with the tiles around them
+            if (t.State == TileState.DoorOpen) return HealResult.NothingToHeal; // an open door: shut it first
             if (kind == HealKind.Reinforce)
                 return t.State == TileState.Reinforced && t.Health >= c.ReinforcedHealth ? HealResult.AlreadyReinforced : HealResult.Ok;
             switch (t.State)

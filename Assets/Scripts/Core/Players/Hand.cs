@@ -108,6 +108,11 @@ namespace Sculpt.Core
         /// <summary>The cell of <see cref="HealTile"/> aimed at (walls and floors heal by area round it), 0..63.</summary>
         public int HealCell;
         public bool HealReinforce;
+        /// <summary>Interact on a door: open it (<see cref="DoorOpen"/>) or shut it. The server checks reach and that
+        /// nobody stands in the doorway when shutting.</summary>
+        public bool Door;
+        public int DoorTile;
+        public bool DoorOpen;
     }
 
     /// <summary>Hand timings (Ben approved 2026-11-20). Ticks at 60 Hz.</summary>

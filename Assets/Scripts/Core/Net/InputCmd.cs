@@ -41,6 +41,7 @@ namespace Sculpt.Core.Net
             if (!c.Hand.Pickup || c.Hand.PickId < 0) { c.Hand.Pickup = false; c.Hand.PickId = 0; }
             if (!c.Hand.Heal || c.Hand.HealTile < 0 || c.Hand.HealTile > ushort.MaxValue) { c.Hand.Heal = false; c.Hand.HealTile = 0; c.Hand.HealCell = 0; c.Hand.HealReinforce = false; }
             else c.Hand.HealCell = Math.Max(0, Math.Min(63, c.Hand.HealCell));
+            if (!c.Hand.Door || c.Hand.DoorTile < 0 || c.Hand.DoorTile > ushort.MaxValue) { c.Hand.Door = false; c.Hand.DoorTile = 0; c.Hand.DoorOpen = false; }
             if (c.HasSculpt && !TargetFits(c.Sculpt.Target)) c.HasSculpt = false;
             if (c.HasSculpt)
             {
@@ -88,7 +89,7 @@ namespace Sculpt.Core.Net
         private const byte FJumpPressed = 1, FJumpHeld = 2, FCrouchHeld = 4, FCrouchPressed = 8, FSprint = 16, FShoot = 32, FRespawn = 64, FExt = 128;
         private const byte XToggle = 1, XSculpt = 2, XReinforce = 4, XReload = 8, XWarp = 128;
         private const byte GFireHeld = 1, GFirePressed = 2, GAimPressed = 4;
-        private const byte YPickup = 1, YDrop = 2, YPunch = 4, YHeal = 8, YHealReinforce = 16;
+        private const byte YPickup = 1, YDrop = 2, YPunch = 4, YHeal = 8, YHealReinforce = 16, YDoor = 32, YDoorOpen = 64;
 
         internal void Write(ByteWriter w)
         {
@@ -100,7 +101,7 @@ namespace Sculpt.Core.Net
             if (Move.SprintHeld) f |= FSprint;
             if (Move.WantsToShoot) f |= FShoot;
             if (Respawn) f |= FRespawn;
-            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt || Warp || Hand.Pickup || Hand.Drop || Hand.Punch || Hand.Heal;
+            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt || Warp || Hand.Pickup || Hand.Drop || Hand.Punch || Hand.Heal || Hand.Door;
             if (ext) f |= FExt;
             w.U8(f);
             byte g = 0;
@@ -129,9 +130,12 @@ namespace Sculpt.Core.Net
             if (Hand.Punch) y |= YPunch;
             if (Hand.Heal) y |= YHeal;
             if (Hand.Heal && Hand.HealReinforce) y |= YHealReinforce;
+            if (Hand.Door) y |= YDoor;
+            if (Hand.Door && Hand.DoorOpen) y |= YDoorOpen;
             w.U8(y);
             if (Hand.Pickup) w.I32(Hand.PickId);
             if (Hand.Heal) { w.U16((ushort)Hand.HealTile); w.U8((byte)Hand.HealCell); }
+            if (Hand.Door) w.U16((ushort)Hand.DoorTile);
             if (!HasSculpt) return;
             w.U8(SculptSeq);
             w.U8((byte)((byte)Sculpt.Type | ((byte)Sculpt.Direction << 4)));
@@ -191,6 +195,13 @@ namespace Sculpt.Core.Net
                 if (c.Hand.HealCell > 63) throw new NetFormatException("Bad heal cell.");
             }
             else if ((y & YHealReinforce) != 0) throw new NetFormatException("Reinforce bit without a heal.");
+            c.Hand.Door = (y & YDoor) != 0;
+            if (c.Hand.Door)
+            {
+                c.Hand.DoorOpen = (y & YDoorOpen) != 0;
+                c.Hand.DoorTile = r.U16();
+            }
+            else if ((y & YDoorOpen) != 0) throw new NetFormatException("Door-open bit without a door.");
             if ((x & XSculpt) == 0) return c;
             c.HasSculpt = true;
             c.SculptSeq = r.U8();

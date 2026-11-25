@@ -77,11 +77,11 @@ namespace Sculpt.Core.Net
                 byte s = r.U8();
                 bool holed = (s & 0x80) != 0;
                 s &= 0x7F;
-                if (s > (byte)TileState.Reinforced) throw new NetFormatException("Bad tile state.");
+                if (s > (byte)TileState.DoorOpen) throw new NetFormatException("Bad tile state.");
                 c.To = (TileState)s;
                 c.Health = r.U16();
                 byte cause = r.U8();
-                if (cause > (byte)TileCause.Server) throw new NetFormatException("Bad tile cause.");
+                if (cause > (byte)TileCause.Door) throw new NetFormatException("Bad tile cause.");
                 c.Cause = (TileCause)cause;
                 c.By = r.U16();
                 if (holed)

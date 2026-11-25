@@ -60,7 +60,7 @@ namespace Sculpt.Core
                 WallTile tile = w[t];
                 if (tile.Kind != TileKind.Wall && tile.Kind != TileKind.Door) continue; // floors, stairs and frame never take a charge (collision still stops you)
                 if (w.ChargedAt(t) == tick) charged = true; // replaying the tick we charged through it
-                if (tile.State == TileState.Broken) continue;
+                if (TileWalls.Gone(tile.State)) continue;
                 if (!w.HasCells(t))
                 {
                     if (tile.Kind != TileKind.Door && tile.State != TileState.Damaged && tile.State != TileState.Patched) return false; // a solid wall stops you (a door never does)
@@ -172,7 +172,7 @@ namespace Sculpt.Core
             foreach (int t in _near)
             {
                 WallTile w = walls[t];
-                if (w.State == TileState.Broken) continue;
+                if (TileWalls.Gone(w.State)) continue;
                 _pending.Add(new Pending { Tile = t, Tick = tick, State = w.State, Health = w.Health, Cells = walls.HasCells(t) ? walls.Snapshot(t) : default });
             }
             int keep = walls.Tick;

@@ -78,7 +78,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 24; // 16 latency (snapshot hold time), 18 blast holes, 19 C4/launcher/per-slot counts/four flights, 20 all of them merged for the friend demo; 23 feel pass (faster movement, slide carve flag, smaller head) above the 120 Hz thread, 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2)
+        public const byte Version = 26; // 26 doors you open and close (door press in the command, DoorOpen tile state, Door cause); 16 latency (snapshot hold time), 18 blast holes, 19 C4/launcher/per-slot counts/four flights, 20 all of them merged for the friend demo; 23 feel pass (faster movement, slide carve flag, smaller head) above the 120 Hz thread, 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2)
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
