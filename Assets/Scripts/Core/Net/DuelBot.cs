@@ -62,8 +62,8 @@ namespace Sculpt.Core.Net
         private struct Obs
         {
             public int Tick;
-            public bool Seen, Heard;
-            public Vec3d Pos, Vel, HeardPos;
+            public bool Seen, Heard, Pinged;
+            public Vec3d Pos, Vel, HeardPos, PingPos;
             public double Height;
         }
 
@@ -86,6 +86,9 @@ namespace Sculpt.Core.Net
         private int _lastSeenTick = int.MinValue / 2;
         private Vec3d _lastHeardPos;
         private int _lastHeardTick = int.MinValue / 2;
+        // The anti-hiding ping: where the server showed the enemy through walls (a person sees the same marker).
+        private Vec3d _pingPos;
+        private int _pingTick = int.MinValue / 2;
         private int _lastDamage;
 
         // Movement.
@@ -114,6 +117,8 @@ namespace Sculpt.Core.Net
         public bool Engaged => _engaged;
         public bool Firing => _firedLast;
         public int LastSeenTick => _lastSeenTick;
+        /// <summary>The tick of the newest ping it acted on (where the server showed the enemy through walls).</summary>
+        public int LastPingTick => _pingTick;
         public IReadOnlyList<int> Path => _path;
 
         public DuelBot(BotNav nav, DuelBotConfig config = null, int seed = 1)
@@ -154,7 +159,7 @@ namespace Sculpt.Core.Net
                 _path.Clear();
                 _hasRoam = false;
                 _lastDamage = s.Damage;
-                _lastSeenTick = _lastHeardTick = int.MinValue / 2;
+                _lastSeenTick = _lastHeardTick = _pingTick = int.MinValue / 2;
                 _stuckFrom = s.Position;
                 _stuckCheck = tick;
             }
@@ -181,6 +186,7 @@ namespace Sculpt.Core.Net
             }
             else _engaged = false;
             if (p.Heard) { _lastHeardPos = p.HeardPos; _lastHeardTick = p.Tick; }
+            if (p.Pinged) { _pingPos = p.PingPos; _pingTick = p.Tick; }
 
             bool recentlySeen = tick - _lastSeenTick < 90 * SimTime.Per60;
             double dist = recentlySeen ? (_lastSeenPos - s.Position).Length : 30;
@@ -232,14 +238,17 @@ namespace Sculpt.Core.Net
             else
             {
                 Vec3d goal;
-                if (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60) goal = _lastSeenPos;
+                // A ping newer than its last sighting: go where it was shown (it still has to find and see them to fight).
+                if (!recentlySeen && _pingTick > _lastSeenTick && tick - _pingTick < 600 * SimTime.Per60) goal = _pingPos;
+                else if (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60) goal = _lastSeenPos;
                 else if (tick - _lastHeardTick < 600 * SimTime.Per60) goal = _lastHeardPos;
                 else goal = RoamGoal(s.Position);
                 wish = FollowPath(s, goal, tick, ref jump, out Vec3d lookAt, out bool arrived);
                 if (arrived)
                 {
                     // Nothing here: forget it and look elsewhere.
-                    if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
+                    if (goal.Equals(_pingPos)) _pingTick = int.MinValue / 2;
+                    else if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
                     else if (goal.Equals(_lastHeardPos)) _lastHeardTick = int.MinValue / 2;
                     else _hasRoam = false;
                 }
@@ -359,6 +368,13 @@ namespace Sculpt.Core.Net
                 o.Seen = true;
                 o.Pos = e.Position;
                 o.Vel = e.Velocity;
+            }
+            // The ping shows them through walls to everyone it concerns, the bot included: like a sighting of where
+            // they are, but nothing to aim at (it acts on it a reaction time late and has to go and find them).
+            if (!o.Seen && server.IsRevealed(me.Id, enemy.Id))
+            {
+                o.Pinged = true;
+                o.PingPos = e.Position;
             }
             if (!o.Seen)
             {
@@ -557,6 +573,7 @@ namespace Sculpt.Core.Net
                     _hasRoam = false; // unreachable: pick something else
                     if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
                     if (goal.Equals(_lastHeardPos)) _lastHeardTick = int.MinValue / 2;
+                    if (goal.Equals(_pingPos)) _pingTick = int.MinValue / 2;
                 }
             }
             if (_path.Count == 0 || _pathAt >= _path.Count) { if (_path.Count > 0) arrived = true; return Vec3d.Zero; }

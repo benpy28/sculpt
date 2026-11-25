@@ -271,6 +271,7 @@ namespace Sculpt.Game.Bootstrap
             gameObject.AddComponent<FeelHud>().Init(_player, client);
             gameObject.AddComponent<SettingsMenu>().Init(_player, client, _input);
             gameObject.AddComponent<MatchHud>().Init(_player, _session);
+            gameObject.AddComponent<PingHud>().Init(_session, _rig.Camera);
             var menu = gameObject.AddComponent<MainMenu>();
             menu.Init(_player, _session);
 

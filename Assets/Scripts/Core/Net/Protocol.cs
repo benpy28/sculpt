@@ -19,6 +19,7 @@ namespace Sculpt.Core.Net
         Tiles = 8,     // server -> client, reliable: wall tile changes of one tick, or every changed tile for a late joiner
         Items = 9,     // server -> client, reliable: the whole list of items on the ground, whenever it changes (and on join)
         Match = 10,    // server -> client, reliable: match phase, timer and scores, whenever they change (and on join)
+        Reveal = 11,   // server -> client, reliable: an enemy shown through walls by the anti-hiding ping (only to those two players, only when it starts or is cancelled)
     }
 
     public struct WelcomeMsg
@@ -78,7 +79,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 28; // 28 balance pass (pump/SMG/pistol, punch lock, heal stops a charge, utility slot: rules differ, so builds must match); 16 latency (snapshot hold time), 18 blast holes, 19 C4/launcher/per-slot counts/four flights, 20 all of them merged for the friend demo; 23 feel pass (faster movement, slide carve flag, smaller head) above the 120 Hz thread, 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2)
+        public const byte Version = 29; // 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;

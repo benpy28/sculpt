@@ -109,7 +109,43 @@ namespace Sculpt.Game.Player
                     a.Gun.localPosition = new Vector3(w * 0.5f + 0.02f, eye - 0.28f, 0.1f);
                     a.Gun.localRotation = Quaternion.Euler((float)v.Pitch, 0, 0);
                 }
+
+                // The anti-hiding ping: the server says this player is shown through walls right now.
+                if (net.IsRevealed(id, out RevealEntry rev)) DrawXray(a, v.Team, rev.EndTick - net.ServerTimeEstimate);
             }
+        }
+
+        private Material _xray;
+        private Mesh _xrayBox;
+        private MaterialPropertyBlock _xrayBlock;
+        private static readonly int ColorId = Shader.PropertyToID("_Color");
+
+        /// <summary>
+        /// A see-through silhouette drawn only where walls hide the player (depth test "greater"), in their team colour
+        /// (never purple), pulsing, fading out over the last 0.4 s. Their real box still draws normally where visible.
+        /// </summary>
+        private void DrawXray(Avatar a, int team, double ticksLeft)
+        {
+            if (_xray == null)
+            {
+                _xray = new Material(Shader.Find("Hidden/Internal-Colored")) { name = "Ping x-ray (runtime)", hideFlags = HideFlags.HideAndDontSave };
+                _xray.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                _xray.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                _xray.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Back);
+                _xray.SetInt("_ZWrite", 0);
+                _xray.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Greater);
+                _xray.renderQueue = 3200;
+                _xrayBox = BuildBox(Color.white, centred: false);
+                _xrayBlock = new MaterialPropertyBlock();
+            }
+            float secs = (float)(ticksLeft / SimTime.TicksPerSecond);
+            float fade = Mathf.Clamp01(secs / 0.4f);
+            float pulse = 0.42f + 0.16f * Mathf.Sin(Time.time * 9f);
+            Color c = Color.Lerp(TeamColours[Mathf.Abs(team - 1) % TeamColours.Length], Color.white, 0.2f);
+            c.a = pulse * fade;
+            _xrayBlock.SetColor(ColorId, c);
+            Graphics.DrawMesh(_xrayBox, a.Body.localToWorldMatrix, _xray, 0, null, 0, _xrayBlock, false, false);
+            Graphics.DrawMesh(_xrayBox, a.Head.localToWorldMatrix, _xray, 0, null, 0, _xrayBlock, false, false);
         }
 
         private Avatar Create(int id)
