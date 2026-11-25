@@ -78,7 +78,7 @@ namespace Sculpt.Core.Tests
             Assert.That(_s.Sprinting, Is.True);
             Place(3, 0, 10);
             Run(20, Fwd(crouch: true));
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(3.0).Within(1e-6));
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.CrouchSpeed).Within(1e-6));
             Assert.That(_s.Crouched, Is.True);
         }
 
@@ -500,6 +500,11 @@ namespace Sculpt.Core.Tests
         public void RampLaunchKeepsVerticalVelocity()
         {
             _g.Fill(new Int3(5, 0, 0), new Int3(5, 0, 31), Block.Ramp(Dir.West)); // rises toward east, drops after
+            // A one-tile sub-cell ramp is a 4-step staircase: whether the crest comes while you are still climbing
+            // depends on the tick phase. At 9.2 m/s it does; at 10 m/s you reach its 0.3 m top lip first and run off
+            // the drop instead. Pinned to 9.2 so this test stays about the launch rule, not the sprint number (the
+            // greybox maps use exact wedges, where the climb never pauses).
+            _c.SprintSpeed = 9.2;
             double peak = 0, launchVy = 0;
             for (int i = 0; i < 120; i++)
             {

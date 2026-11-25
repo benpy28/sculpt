@@ -224,6 +224,8 @@ namespace Sculpt.Core
 
             if (jumpBuffered)
             {
+                // Sliding into a ledge and jumping mantles it, like on foot (it keeps the speed you hit it with).
+                if (TryMantle(g, c, ref s, input.Yaw, false, events)) return;
                 SetCrouched(g, c, ref s, false);
                 Jump(c, ref s, vh, events);
                 s.LastSlideJumpTick = s.Tick;
@@ -250,14 +252,33 @@ namespace Sculpt.Core
                 speed = newSpeed;
             }
 
-            if (speed > 1e-9)
+            // In a slide, holding forward (W) steers: looking round a corner carves instead of braking. Sideways or
+            // back keys alone still brake (the counter-strafe stop out of a slide).
+            if (speed > 1e-9 && input.MoveZ <= 0.1)
             {
                 vh = CounterBrake(c, ref s, vh, wish, events);
                 speed = vh.Length;
             }
+            else s.Braking = false;
 
-            // Limited steering toward the wish direction.
-            if (speed > 1e-6 && wish.LengthSquared > 1e-9) vh = RotateToward(vh, wish, c.SlideTurnRate * dt);
+            // Steering toward the wish direction: free up to SlideTurnRate, a carve (costs speed) up to SlideCarveTurnRate.
+            if (speed > 1e-6 && wish.LengthSquared > 1e-9)
+            {
+                double maxTurn = Math.Max(c.SlideTurnRate, c.SlideCarveTurnRate) * dt;
+                Vec3d turned = RotateToward(vh, wish, maxTurn);
+                double cos = Math.Max(-1, Math.Min(1, turned.Dot(vh) / (speed * speed)));
+                double extra = Math.Acos(cos) - c.SlideTurnRate * dt;
+                if (extra > 1e-9)
+                {
+                    turned = turned * Math.Max(0, 1 - c.SlideCarveLoss * extra);
+                    if (!s.Carving) Emit(events, MoveEventType.SlideCarve, s.Tick, 0, speed);
+                    s.Carving = true;
+                }
+                else s.Carving = false;
+                vh = turned;
+                speed = vh.Length;
+            }
+            else s.Carving = false;
 
             bool downhill = IsDownhill(vh, n);
             if (speed < c.SlideEndSpeed && !downhill)

@@ -114,7 +114,9 @@ namespace Sculpt.Core
                     i.CrouchHeld = true;
                     Vec3d gap = _c.Mark("gap-2");
                     i.Yaw = Steer(p, _c.Mark("corner-wall").Z - 0.5, East);
-                    jump = FlatFlow(s, 1000, out _);
+                    // Never a hop that comes down just short of the gap (at slide speed it would slide off the
+                    // edge low): hop at the edge itself.
+                    jump = FlatFlow(s, gap.X - p.X, out _);
                     if (s.Mode == MoveMode.Air && p.X > gap.X - 1.0) Go(Phase.GapTwoAir);
                     if (s.Mode == MoveMode.Ground) Fail("slide ended in the corridor");
                     break;
@@ -150,6 +152,7 @@ namespace Sculpt.Core
                     i.Yaw = East;
                     // Jump again against the ledge wall: an air mantle that keeps the speed you hit it with.
                     i.CrouchHeld = true;
+                    if (s.Mode == MoveMode.Mantle) { Go(Phase.Mantle); break; } // a hop slid into the wall and mantled
                     if (s.Tick - s.WallHitTick <= 1 && s.WallHitNormal.X < -0.5) { jump = true; Go(Phase.Mantle); }
                     else if (s.Mode == MoveMode.Slide) { jump = FlatFlow(s, 1000, out _); } // short of the wall: hop again
                     break;

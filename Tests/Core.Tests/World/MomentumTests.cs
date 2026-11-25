@@ -255,10 +255,97 @@ namespace Sculpt.Core.Tests
         [Test]
         public void AirSpeedAboveTheSoftCapBleeds()
         {
-            At(0, 60, 0, vx: 20);
+            double v0 = _c.AirSoftCapSpeed + 5;
+            At(0, 60, 0, vx: v0);
             _s.Mode = MoveMode.Air;
-            Run(60, new MoveInput { Yaw = East });
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(20 - _c.AirSoftCapDecel).Within(0.05));
+            Run(SimTime.TicksPerSecond, new MoveInput { Yaw = East });
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(v0 - _c.AirSoftCapDecel).Within(0.05));
+        }
+
+        // ---------------- slide carving (Ben 2026-11-25: "no sliding around rooms") ----------------
+
+        /// <summary>A slide at <paramref name="speed"/> heading east, then n ticks steering with this yaw and keys.</summary>
+        private (double turned, double speed) SlideSteer(double speed, double yaw, double moveX, double moveZ, int ticks)
+        {
+            At(0, 0, 0, vx: speed);
+            _s.Mode = MoveMode.Slide;
+            _s.Crouched = true;
+            _s.Grounded = true;
+            Vec3d before = _s.Velocity;
+            Run(ticks, new MoveInput { Yaw = yaw, MoveX = moveX, MoveZ = moveZ, CrouchHeld = true });
+            Vec3d after = new Vec3d(_s.Velocity.X, 0, _s.Velocity.Z);
+            double turned = Math.Acos(Math.Max(-1, Math.Min(1, after.Normalized.Dot(new Vec3d(before.X, 0, before.Z).Normalized))));
+            return (turned, _s.HorizontalSpeed);
+        }
+
+        [Test]
+        public void GentleSlideSteeringIsFree()
+        {
+            // A beginner holding W and turning the mouse a little: up to the free turn rate, only friction is paid.
+            int n = SimTime.TicksPerSecond / 4;
+            At(0, 0, 0, vx: 12); _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            for (int k = 0; k < n; k++) // the mouse turns 0.3 rad over the quarter second (1.2 rad/s)
+                Tick(new MoveInput { Yaw = East - 0.3 * (k + 1) / n, MoveZ = 1, CrouchHeld = true });
+            double turned = Math.Abs(Math.Atan2(_s.Velocity.Z, _s.Velocity.X)), speed = _s.HorizontalSpeed;
+            Assert.That(turned, Is.EqualTo(0.3).Within(0.02), "followed the aim all the way");
+            Assert.That(speed, Is.EqualTo(12 - _c.SlideFriction * n * _c.Dt).Within(1e-6), "nothing but friction");
+            Assert.That(_s.Carving, Is.False);
+            Assert.That(Had(MoveEventType.SlideCarve), Is.False);
+        }
+
+        [Test]
+        public void HardSlideCarveTurnsFastAndCostsSpeed()
+        {
+            // Aiming 90 degrees left of the slide: a carve turns up to SlideCarveTurnRate, paying SlideCarveLoss per
+            // radian above the free rate. A quarter turn takes ~0.35 s and keeps most of the speed.
+            int n = (int)Math.Ceiling(Math.PI / 2 / _c.SlideCarveTurnRate * SimTime.TicksPerSecond) + 1;
+            var (turned, speed) = SlideSteer(13, North, 0, 1, n);
+            Assert.That(turned, Is.EqualTo(Math.PI / 2).Within(0.01), "came round a full corner");
+            Assert.That(Had(MoveEventType.SlideCarve), Is.True);
+            double friction = _c.SlideFriction * n * _c.Dt;
+            double extra = Math.PI / 2 - _c.SlideTurnRate * n * _c.Dt;
+            Assert.That(speed, Is.LessThan(13 - friction - 0.05), "a carve costs speed");
+            Assert.That(speed, Is.GreaterThan((13 - friction) * (1 - _c.SlideCarveLoss * extra) - 0.2), "but not much");
+            Assert.That(speed, Is.GreaterThan(_c.SprintSpeed), "still faster than a sprint after a corner");
+            Assert.That(Had(MoveEventType.Braked), Is.False, "holding W steers, it never brakes");
+            // The old slide (1.6 rad/s only) needed ~1 s for the same corner: a 90 degree turn is at least 2.5x faster.
+            Assert.That(n, Is.LessThan(SimTime.TicksPerSecond * 0.4));
+        }
+
+        [Test]
+        public void SmoothCarvingKeepsMoreSpeedThanASnapTurn()
+        {
+            // The skill: start the turn early and spread it (free steering) instead of snapping at the last moment.
+            int n = SimTime.TicksPerSecond;
+            At(0, 0, 0, vx: 13); _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            for (int k = 0; k < n; k++) Tick(new MoveInput { Yaw = East - Math.PI / 2 * Math.Min(1, (k + 1) / (double)n), MoveZ = 1, CrouchHeld = true });
+            double smooth = _s.HorizontalSpeed;
+            At(0, 0, 0, vx: 13); _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            for (int k = 0; k < n; k++) Tick(new MoveInput { Yaw = k < n * 2 / 3 ? East : North, MoveZ = 1, CrouchHeld = true });
+            double snap = _s.HorizontalSpeed;
+            Assert.That(smooth, Is.GreaterThan(snap + 0.3));
+        }
+
+        [Test]
+        public void SidewaysOrBackKeysStillBrakeASlide()
+        {
+            At(0, 0, 0, vx: 13); _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            Run(SimTime.TicksPerSecond / 10, new MoveInput { Yaw = East, MoveZ = -1, CrouchHeld = true });
+            Assert.That(Had(MoveEventType.Braked), Is.True);
+            At(0, 0, 0, vx: 13); _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            Run(SimTime.TicksPerSecond / 10, new MoveInput { Yaw = East, MoveX = 1, CrouchHeld = true });
+            Assert.That(Had(MoveEventType.Braked), Is.True, "D alone (strafe) brakes");
+        }
+
+        [Test]
+        public void SlidingIntoALedgeAndJumpingMantlesIt()
+        {
+            _w.AddBox(new Vec3d(10, 0, -5), new Vec3d(14, 3, 5), BrushKind.Frame); // a 3 m ledge
+            At(8, 0, 0, vx: 11);
+            _s.Mode = MoveMode.Slide; _s.Crouched = true; _s.Grounded = true;
+            for (int k = 0; k < 30 && _s.Position.X < 10 - _c.HalfWidth - 1e-6; k++) Tick(new MoveInput { Yaw = East, MoveZ = 1, CrouchHeld = true });
+            Tick(new MoveInput { Yaw = East, MoveZ = 1, CrouchHeld = true, JumpPressed = true, JumpHeld = true });
+            Assert.That(_s.Mode, Is.EqualTo(MoveMode.Mantle));
         }
 
         // ---------------- slide-hops ----------------

@@ -79,15 +79,16 @@ namespace Sculpt.Game.Player
                 float eye = (float)(v.Crouched ? _cfg.CrouchEye : _cfg.StandEye);
                 float w = (float)(_cfg.HalfWidth * 2);
                 a.Root.transform.SetPositionAndRotation(v.Position.ToUnity(), Quaternion.Euler(0, (float)(v.Yaw * Mathf.Rad2Deg), 0));
-                // Body below the head; the head is exactly the headshot zone (top of the box, full width), so what you see
-                // is what you hit. Together they fill the collision box.
+                // Body below the head; the head is exactly the headshot zone (top of the box, narrower than the body), so
+                // what you see is what you hit: bullets past the head's sides miss (Core HitTarget.HeadBox).
                 float headH = (float)_cfg.Weapons.HeadZone(h);
+                float headW = Mathf.Min(w, (float)_cfg.Weapons.HeadWidth);
                 a.Body.localScale = new Vector3(w, h - headH, w);
                 a.Body.localPosition = Vector3.zero;
-                a.Head.localScale = new Vector3(w, headH, w);
+                a.Head.localScale = new Vector3(headW, headH, headW);
                 a.Head.localPosition = new Vector3(0, h - headH, 0);
                 a.Head.localRotation = Quaternion.identity;
-                a.Visor.localPosition = new Vector3(0, eye - 0.05f, w * 0.4f);
+                a.Visor.localPosition = new Vector3(0, eye - 0.05f, headW * 0.48f);
                 a.Visor.localRotation = Quaternion.Euler((float)v.Pitch, 0, 0);
 
                 // Their gun: held at the right side, along their aim; lowered out of sight in sculpt mode (a tell).

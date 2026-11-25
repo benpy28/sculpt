@@ -11,6 +11,9 @@ namespace Sculpt.Core
         public Aabb Box;
         /// <summary>Hits at or above this height are headshots.</summary>
         public double HeadMinY;
+        /// <summary>Half the head's width (centred on the box, both horizontal axes). 0 = the full box width. Above
+        /// HeadMinY only the head is there: a ray past the head's sides hits nothing (the shoulders are drawn below).</summary>
+        public double HeadHalfWidth;
 
         public static HitTarget Of(int id, int team, Vec3d feet, double halfWidth, double height, WeaponsConfig cfg) => new HitTarget
         {
@@ -18,7 +21,23 @@ namespace Sculpt.Core
             Team = team,
             Box = new Aabb(new Vec3d(feet.X - halfWidth, feet.Y, feet.Z - halfWidth), new Vec3d(feet.X + halfWidth, feet.Y + height, feet.Z + halfWidth)),
             HeadMinY = feet.Y + height - cfg.HeadZone(height),
+            HeadHalfWidth = Math.Min(halfWidth, cfg.HeadWidth * 0.5),
         };
+
+        /// <summary>The body: the box below the head zone.</summary>
+        public Aabb BodyBox => new Aabb(Box.Min, new Vec3d(Box.Max.X, HeadMinY, Box.Max.Z));
+
+        /// <summary>The head: the top of the box, HeadHalfWidth either side of its centre.</summary>
+        public Aabb HeadBox
+        {
+            get
+            {
+                double cx = (Box.Min.X + Box.Max.X) * 0.5, cz = (Box.Min.Z + Box.Max.Z) * 0.5;
+                double hx = HeadHalfWidth > 0 ? Math.Min(HeadHalfWidth, (Box.Max.X - Box.Min.X) * 0.5) : (Box.Max.X - Box.Min.X) * 0.5;
+                double hz = HeadHalfWidth > 0 ? Math.Min(HeadHalfWidth, (Box.Max.Z - Box.Min.Z) * 0.5) : (Box.Max.Z - Box.Min.Z) * 0.5;
+                return new Aabb(new Vec3d(cx - hx, HeadMinY, cz - hz), new Vec3d(cx + hx, Box.Max.Y, cz + hz));
+            }
+        }
     }
 
     public enum HitKind : byte { None = 0, Terrain = 1, Player = 2 }
@@ -62,10 +81,15 @@ namespace Sculpt.Core
                 HitTarget t = targets[i];
                 if (t.Id == shooterId) continue;
                 if (!friendlyFire && t.Team == shooterTeam) continue;
-                if (!RayBox(origin, dir, t.Box, out double d, out Vec3d n)) continue;
+                if (!RayBox(origin, dir, t.Box, out _, out _)) continue; // cheap reject: misses the whole player
+                bool body = RayBox(origin, dir, t.BodyBox, out double db, out Vec3d nb);
+                bool head = RayBox(origin, dir, t.HeadBox, out double dh, out Vec3d nh);
+                if (!body && !head) continue; // past the side of the head, over the shoulder
+                bool isHead = head && (!body || dh < db);
+                double d = isHead ? dh : db;
                 if (d >= best.Distance) continue;
                 Vec3d p = origin + dir * d;
-                best = new BulletHit { Kind = HitKind.Player, Distance = d, Point = p, Normal = n, Target = i, Head = p.Y >= t.HeadMinY };
+                best = new BulletHit { Kind = HitKind.Player, Distance = d, Point = p, Normal = isHead ? nh : nb, Target = i, Head = isHead };
             }
             return best;
         }

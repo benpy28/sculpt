@@ -8,13 +8,14 @@ namespace Sculpt.Core
         public double Dt = 1.0 / SimTime.TicksPerSecond;
 
         // Speeds
-        public double RunSpeed = 6.4;
-        public double SprintSpeed = 9.2;
-        public double CrouchSpeed = 3.0;
+        // Ben 2026-11-25 play-test: "movement isnt fast enough, theres no sliding around rooms and being skillful with it".
+        public double RunSpeed = 7.0;     // was 6.4
+        public double SprintSpeed = 10.0; // was 9.2
+        public double CrouchSpeed = 3.5;  // was 3.0
 
         // Acceleration: snappy, never floaty.
         public double GroundAccel = 60.0;     // 0 -> run in 0.1 s
-        public double GroundDecel = 50.0;     // run -> stop in 0.12 s
+        public double GroundDecel = 60.0;     // run -> stop in 0.12 s (was 50 at the old 6.4 run speed)
         public double OverspeedDecel = 20.0;  // bleeding speed above the target (e.g. after a slide or landing)
         public double AirAccelFraction = 0.15;
 
@@ -34,13 +35,19 @@ namespace Sculpt.Core
         public double CrouchEye = 0.95;
 
         // Slide
-        public double SlideBoostSpeed = 11.0;
-        public double SlideFriction = 6.0;          // 11 -> 3 m/s in ~1.3 s on flat ground
-        public double SlideMaxSpeed = 15.0;
-        public double SlideEndSpeed = 3.0;
+        public double SlideBoostSpeed = 13.0;       // was 11
+        public double SlideFriction = 4.5;          // was 6: 13 -> 4 m/s in 2 s on flat ground
+        public double SlideMaxSpeed = 18.0;         // was 15
+        public double SlideEndSpeed = 4.0;          // was 3
         public double SlideMinStartSpeed = 5.0;     // must be sprinting at about this speed to slide
-        public double SlideTurnRate = 1.6;          // rad/s of steering while sliding
-        public int SlideBoostCooldownTicks = 72;    // 1.2 s, flat ground only
+        // Carving: a slide steers toward where you aim and move. Up to SlideTurnRate it is free (a beginner's gentle
+        // steer costs nothing); faster turning, up to SlideCarveTurnRate, is a carve that costs SlideCarveLoss of your
+        // speed per radian of the extra turn. So a slide can whip round a doorway or a room corner, and the player who
+        // starts the turn early and smoothly keeps the most speed.
+        public double SlideTurnRate = 1.6;          // rad/s of free steering while sliding
+        public double SlideCarveTurnRate = 4.5;     // rad/s at most, carving (radius ~3 m at 13 m/s)
+        public double SlideCarveLoss = 0.08;        // fraction of speed lost per radian turned above the free rate
+        public int SlideBoostCooldownTicks = SimTime.SecondsToTicks(0.8); // was 1.2 s; flat ground only
         public int SlideLandWindowTicks = 9;        // 150 ms
         public double SlideLandMinSpeed = 5.0;
 
@@ -74,7 +81,7 @@ namespace Sculpt.Core
         public int WallKickCooldownTicks = 12;
         // Counter-strafe brake: on the ground or sliding, pressing back or sideways against your motion while faster
         // than CounterBrakeMinSpeed brakes hard down to that speed. Only removes speed, never flips direction.
-        public double CounterBrakeMinSpeed = 6.5;
+        public double CounterBrakeMinSpeed = 7.0;   // run speed
         public double CounterBrakeDecel = 120.0;      // m/s^2 (letting go is 50)
         public double CounterBrakeMaxDot = 0.25;      // wish . motion at or below this counts (sideways or back)
         // Air: below run speed the old air control applies (a standing jump can still be steered). Above it the air
@@ -85,7 +92,7 @@ namespace Sculpt.Core
         // little, so flats slowly cost speed and slopes, ramps and stairs are where speed is built.
         public double SlideHopKeep = 0.95;            // speed kept by a slide-land that follows a slide-jump
         public int SlideHopChainTicks = 60;           // a slide-land this soon after a slide-jump counts as a hop
-        public double AirSoftCapSpeed = 15.0;         // above this, air speed bleeds (explosion boosts later)
+        public double AirSoftCapSpeed = 18.0;       // was 15: same as the slide cap         // above this, air speed bleeds (explosion boosts later)
         public double AirSoftCapDecel = 4.0;
 
         // Sprint to aim

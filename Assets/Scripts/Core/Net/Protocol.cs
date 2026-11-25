@@ -78,7 +78,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 20; // 16 latency (snapshot hold time), 18 blast holes, 19 C4/launcher/per-slot counts/four flights, 20 all of them merged for the friend demo
+        public const byte Version = 23; // 16 latency (snapshot hold time), 18 blast holes, 19 C4/launcher/per-slot counts/four flights, 20 all of them merged for the friend demo; 23 feel pass (faster movement, slide carve flag, smaller head) above the 120 Hz thread
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
@@ -233,6 +233,7 @@ namespace Sculpt.Core.Net
             if (s.Grounded) f |= 4;
             if (s.LandSlideUsed) f |= 8;
             if (s.Braking) f |= 16;
+            if (s.Carving) f |= 32;
             w.U8(f);
             w.Vec(s.GroundNormal);
             w.I32(s.Tick);
@@ -329,6 +330,7 @@ namespace Sculpt.Core.Net
             s.Grounded = (f & 4) != 0;
             s.LandSlideUsed = (f & 8) != 0;
             s.Braking = (f & 16) != 0;
+            s.Carving = (f & 32) != 0;
             s.GroundNormal = r.Vec();
             s.Tick = r.I32();
             s.LastGroundedTick = r.I32();
@@ -409,7 +411,7 @@ namespace Sculpt.Core.Net
                    a.LandVelocity.Equals(b.LandVelocity) && a.AirPeakY.Equals(b.AirPeakY) && a.UphillTicks == b.UphillTicks && a.ActionTick == b.ActionTick &&
                    a.ActionStartY.Equals(b.ActionStartY) && a.ActionTargetY.Equals(b.ActionTargetY) &&
                    a.ActionForward.Equals(b.ActionForward) && a.ActionKeepVelocity.Equals(b.ActionKeepVelocity) &&
-                   a.ShootReadyTick == b.ShootReadyTick && a.Braking == b.Braking &&
+                   a.ShootReadyTick == b.ShootReadyTick && a.Braking == b.Braking && a.Carving == b.Carving &&
                    a.WallHitTick == b.WallHitTick && a.WallHitSpeed.Equals(b.WallHitSpeed) && a.WallHitNormal.Equals(b.WallHitNormal) &&
                    a.WallKicks == b.WallKicks && a.LastWallKickTick == b.LastWallKickTick && a.LastWallKickNormal.Equals(b.LastWallKickNormal) && a.LastSlideJumpTick == b.LastSlideJumpTick &&
                    a.Hand.Equals(b.Hand) && a.Weapon.Equals(b.Weapon) &&
