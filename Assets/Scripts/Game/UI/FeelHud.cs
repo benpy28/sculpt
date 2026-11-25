@@ -15,7 +15,7 @@ namespace Sculpt.Game.UI
         private LocalPlayer _player;
         private ClientSettings _settings;
         private Material _gl;
-        private GUIStyle _letter, _small;
+        private static readonly string[] Heading = new string[360];
         private float _speedLines;
 
         private const int Lines = 30;
@@ -62,17 +62,12 @@ namespace Sculpt.Game.UI
         private void OnGUI()
         {
             if (_player == null || !_player.Net.Joined) return;
-            if (_letter == null)
-            {
-                _letter = new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
-                _small = new GUIStyle(_letter) { fontSize = 11, fontStyle = FontStyle.Normal };
-            }
+            if (Event.current.type != EventType.Repaint) return; // draw-only: nothing here reacts to input events
             float w = Screen.width, h = Screen.height;
             float stripW = Mathf.Min(520f, w * 0.42f), stripH = 30f, top = 10f;
             float cx = w / 2f;
             float yaw = Mathf.Repeat(_player.Yaw, 360f);
 
-            if (Event.current.type == EventType.Repaint)
             {
                 _gl.SetPass(0);
                 GL.PushMatrix();
@@ -95,9 +90,10 @@ namespace Sculpt.Game.UI
                 string label = Name(deg);
                 float fade = 1f - Mathf.Pow(Mathf.Abs(off) / (CompassSpan / 2f), 3f);
                 Color col = deg == 0 ? new Color(1f, 0.85f, 0.35f, fade) : new Color(1, 1, 1, (cardinal ? 1f : 0.7f) * fade);
-                Shadowed(new Rect(x - 20, top + 2, 40, 20), label, cardinal ? _letter : _small, col);
+                HudDraw.Label(new Rect(x - 20, top + 2, 40, 20), label, cardinal ? 16 : 11, col, TextAnchor.MiddleCenter, cardinal);
             }
-            Shadowed(new Rect(cx - 30, top + stripH - 2, 60, 18), Mathf.RoundToInt(yaw) % 360 + "°", _small, new Color(1, 1, 1, 0.85f));
+            int heading = ((Mathf.RoundToInt(yaw) % 360) + 360) % 360;
+            HudDraw.Label(new Rect(cx - 30, top + stripH - 2, 60, 18), Heading[heading] ?? (Heading[heading] = heading + "°"), 11, new Color(1, 1, 1, 0.85f), TextAnchor.MiddleCenter);
         }
 
         private static string Name(int deg)
@@ -113,14 +109,6 @@ namespace Sculpt.Game.UI
                 case 270: return "W";
                 default: return "NW";
             }
-        }
-
-        private void Shadowed(Rect r, string t, GUIStyle st, Color c)
-        {
-            st.normal.textColor = new Color(0, 0, 0, 0.7f * c.a);
-            GUI.Label(new Rect(r.x + 1, r.y + 1, r.width, r.height), t, st);
-            st.normal.textColor = c;
-            GUI.Label(r, t, st);
         }
 
         /// <summary>GL (pixel coordinates, y up). yTop is the strip's top edge.</summary>
