@@ -51,7 +51,7 @@ namespace Sculpt.Game.Config
         [Tooltip("Ben: the AR two-taps a wall (2 x 50; four on reinforced, one on patched).")]
         [Min(0)] public int arTileDamage = 50;
         [Min(0)] public int pistolTileDamage = 34;
-        [Tooltip("How far round each hit the damage (cracks, and the hole the finishing hit opens) reaches, metres.")]
+        [Header("How far round each hit the damage (cracks, and the hole the finishing hit opens) reaches, metres")]
         [Tooltip("Pump: the hole is at least this radius round the middle of the pellets, even where none landed (Ben: no hole smaller than a chest up close). Metres.")]
         [Range(0.2f, 1.5f)] public float pumpHitRadius = 0.65f;
         [Tooltip("A pump shot reaches round its whole pattern, at most this far, metres (Ben: no hole much bigger than a body from range). Keep at or below 0.72.")]
