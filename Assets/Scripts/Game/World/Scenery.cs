@@ -86,10 +86,13 @@ namespace Sculpt.Game.World
                 v.Add(new Vector3(x0, 0, z0)); v.Add(new Vector3(x0, 0, z1)); v.Add(new Vector3(x1, 0, z1)); v.Add(new Vector3(x1, 0, z0));
                 tri.Add(i); tri.Add(i + 1); tri.Add(i + 2); tri.Add(i); tri.Add(i + 2); tri.Add(i + 3);
             }
-            Rect(-far, -far, sx + far, 0);        // south
-            Rect(-far, sz, sx + far, sz + far);   // north
-            Rect(-far, 0, 0, sz);                 // west
-            Rect(sx, 0, sx + far, sz);            // east
+            // The frame reaches 0.3 m under the map's own ground: the terrain mesh stops a few centimetres short of the
+            // grid's far edges, and the overlap is the same meadow colour at the same height, so nothing shows.
+            const float lap = 0.3f;
+            Rect(-far, -far, sx + far, lap);              // south
+            Rect(-far, sz - lap, sx + far, sz + far);     // north
+            Rect(-far, lap, lap, sz - lap);               // west
+            Rect(sx - lap, lap, sx + far, sz - lap);      // east
             var mesh = new Mesh { name = "Ground skirt" };
             mesh.SetVertices(v);
             mesh.SetTriangles(tri, 0);

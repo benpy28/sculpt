@@ -160,7 +160,24 @@ namespace Sculpt.Game.Bootstrap
             _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
 
             _world = new GameObject("World").AddComponent<WorldView>();
-            GroundCover cover = brushes != null ? new GroundCover(_grid, breachInfo?.Block?.Buildings) : null;
+            GroundCover cover = null;
+            if (brushes != null)
+            {
+                // Building interiors get concrete ground floors: the block's buildings and the breach map's sealed room.
+                var paved = new System.Collections.Generic.List<Aabb>();
+                if (breachInfo?.Block != null) paved.AddRange(breachInfo.Block.Buildings);
+                if (breachInfo?.Room != null && breachInfo.Room.Length > 0)
+                {
+                    Aabb r = brushes.Tiles.BoundsOf(breachInfo.Room[0]);
+                    foreach (int t in breachInfo.Room)
+                    {
+                        Aabb o = brushes.Tiles.BoundsOf(t);
+                        r = new Aabb(new Vec3d(Math.Min(r.Min.X, o.Min.X), 0, Math.Min(r.Min.Z, o.Min.Z)), new Vec3d(Math.Max(r.Max.X, o.Max.X), 1, Math.Max(r.Max.Z, o.Max.Z)));
+                    }
+                    paved.Add(r);
+                }
+                cover = new GroundCover(_grid, paved);
+            }
             _world.Init(_grid, sculptConfig, mapInfo, cover);
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);

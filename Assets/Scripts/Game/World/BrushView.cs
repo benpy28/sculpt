@@ -381,6 +381,17 @@ namespace Sculpt.Game.World
 
         // ---- shapes ----
 
+        /// <summary>
+        /// Hills: shade from the fixed sun (Scenery's direction), so a meadow slope reads as a slope against the flat
+        /// meadow around it (lighter facing the sun, darker away). 1 on flat ground.
+        /// </summary>
+        private static float HillShade(Vector3 n)
+        {
+            Vector3 toSun = -(Quaternion.Euler(55f, -35f, 0f) * Vector3.forward);
+            float d = Vector3.Dot(n, toSun);
+            return Mathf.Clamp((0.25f + 0.75f * d) / (0.25f + 0.75f * toSun.y), 0.45f, 1.15f);
+        }
+
         /// <summary>Fixed sun shading per face, baked into the colour (tops brightest, sides darker).</summary>
         private static float Shade(Vector3 n)
         {
@@ -392,7 +403,7 @@ namespace Sculpt.Game.World
         private void Quad(MeshBits m, Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color col)
         {
             Vector3 n = Vector3.Cross(b - a, d - a).normalized;
-            Color s = col * Shade(n);
+            Color s = col * (m.Raw ? HillShade(n) : Shade(n));
             s.a = 1;
             if (_linear && !m.Raw) s = s.linear;
             int i = m.V.Count;
@@ -405,7 +416,7 @@ namespace Sculpt.Game.World
         private void Tri(MeshBits m, Vector3 a, Vector3 b, Vector3 c, Color col)
         {
             Vector3 n = Vector3.Cross(b - a, c - a).normalized;
-            Color s = col * Shade(n);
+            Color s = col * (m.Raw ? HillShade(n) : Shade(n));
             s.a = 1;
             if (_linear && !m.Raw) s = s.linear;
             int i = m.V.Count;
