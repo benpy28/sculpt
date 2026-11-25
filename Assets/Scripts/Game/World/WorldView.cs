@@ -75,7 +75,11 @@ namespace Sculpt.Game.World
                     foreach (Int3 c in t.Leaves) _mesher.Decor[c] = (byte)ChunkMesher.KindLeaves;
                 }
             }
-            _grass = new GrassField();
+            // Meadow grass belongs to the nature maps (the ones that come with trees and map info). On the greybox maps
+            // it would be planted on every bit of bare ground, building interiors included: a quarter of a million
+            // tufts handed to the graphics card every frame (0.4 ms of a 1.8 ms frame), and never visible in a built
+            // game anyway (see GrassField). Null: no grass.
+            _grass = map != null ? new GrassField() : null;
             Shader shader = Shader.Find("SCULPT/Voxel");
             if (shader == null)
             {
@@ -117,7 +121,7 @@ namespace Sculpt.Game.World
                 }
             }
             _grid = grid;
-            _grass.Bind(grid);
+            _grass?.Bind(grid);
             grid.MarkAllDirty();
             RebuildDirty();
         }
@@ -158,7 +162,7 @@ namespace Sculpt.Game.World
             foreach (int i in _dirty)
             {
                 _mesher.Build(_grid, _grid.ChunkCoordFromIndex(i), _meshes[i]);
-                _grass.Rebuild(i);
+                _grass?.Rebuild(i);
             }
             return _dirty.Count;
         }

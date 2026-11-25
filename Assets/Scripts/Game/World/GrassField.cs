@@ -32,6 +32,12 @@ namespace Sculpt.Game.World
     /// metre of any player, shrink with distance, and never grow on anchors, pieces or ground that has been sculpted
     /// (a column whose contents changed since the map loaded stays bare for the rest of the match), so grass never
     /// hides anyone and never suggests rock that isn't there.
+    ///
+    /// Known gap (2026-11-25): in a built game nothing is drawn. The materials are made at run time, so Unity sees no
+    /// material asset using the instanced variant of SCULPT/Grass and strips it from the build (Project Settings >
+    /// Graphics > Instancing Variants = Strip Unused); the Editor compiles it on demand, so grass shows there. The
+    /// per-frame cost is also high: every tuft's matrix is copied to the graphics card each frame. Before a nature map
+    /// ships, draw from a buffer filled once per chunk and read by instance id (no instancing variant needed).
     /// </summary>
     public sealed class GrassField
     {

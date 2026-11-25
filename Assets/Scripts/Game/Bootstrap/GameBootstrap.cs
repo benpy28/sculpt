@@ -4,6 +4,7 @@ using Sculpt.Core.Net;
 using Sculpt.Game.Audio;
 using Sculpt.Game.Net;
 using Sculpt.Game.Cameras;
+using Sculpt.Game.Diagnostics;
 using Sculpt.Game.Config;
 using Sculpt.Game.Input;
 using Sculpt.Game.Player;
@@ -238,6 +239,8 @@ namespace Sculpt.Game.Bootstrap
                 case Launch.Menu: menu.Open(); break;
             }
             ApplyCommandLine(); // sim ping/loss/jitter, and a non-default -port
+            // Frame pacing, lean rendering, the performance overlay and the -benchmark run.
+            PerfSetup.Install(gameObject, _session, _player, _input, _rig, _grid);
 
             Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {(NextMap == MapChoice.Duel ? "1v1 duel" : breachMap ? "Breach" : map.ToString())} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
         }
@@ -256,6 +259,7 @@ namespace Sculpt.Game.Bootstrap
             int ticks = net.BeginFrame(dt); // client clock runs a little ahead of the server
             for (int i = 0; i < ticks; i++) _player.Tick();
             _session.EndFrame();            // inputs leave this frame
+            PerfRuntime.PacketsSent();      // latency overlay: this frame's commands are on the wire
 
             net.UpdateVisual(dt);
             _player.Render((float)net.Alpha);

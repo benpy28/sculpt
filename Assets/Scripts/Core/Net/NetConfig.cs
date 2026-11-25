@@ -13,6 +13,15 @@ namespace Sculpt.Core.Net
         /// </summary>
         public int TargetLeadTicks = 2;
 
+        /// <summary>
+        /// How many ticks above <see cref="TargetLeadTicks"/> the reported lead may sit before the clock slows down.
+        /// Every tick of lead is a tick of delay on everything the server confirms and on what others see of you, so
+        /// this is 0: the clock walks back until the worst lead in the window is the target itself. (It was a fixed 2
+        /// until 2026-11-25, which left clean low-ping links resting two ticks, 33 ms, later than needed.) The report
+        /// is in whole ticks and looks back over a window, which is all the damping the loop needs.
+        /// </summary>
+        public int ClockDeadbandTicks = 0;
+
         /// <summary>Lead feedback window: the server reports the worst lead seen in this many ticks.</summary>
         public int LeadWindowTicks = 60;
 

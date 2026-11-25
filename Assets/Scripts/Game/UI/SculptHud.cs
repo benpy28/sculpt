@@ -49,6 +49,7 @@ namespace Sculpt.Game.UI
             NetClient net = _session.Client;
             SculptClient sc = net.Sculpt;
             if (sc == null || !net.Joined) return;
+            if (Event.current.type != EventType.Repaint) return; // draw-only: nothing here reacts to input events
             if (_small == null)
             {
                 _small = new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleCenter };
