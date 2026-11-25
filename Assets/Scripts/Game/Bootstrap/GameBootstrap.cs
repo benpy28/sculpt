@@ -34,11 +34,13 @@ namespace Sculpt.Game.Bootstrap
         public enum MapKind { Arena, MovementCourse }
 
         // ---- What the next scene load starts (the main menu picks it, then reloads the scene) ----
-        public enum Launch { Menu, Offline, Host, Join }
+        public enum Launch { Menu, Offline, Host, Join, VsBot }
         public enum MapChoice { Duel, Breach }
         public static Launch NextLaunch = Launch.Menu;
         public static MapChoice NextMap = MapChoice.Duel;
         public static string NextAddress = "";
+        /// <summary>How good the bot is in a "Play vs bot" launch.</summary>
+        public static BotLevel NextBotLevel = BotLevel.Normal;
         private static bool _commandLineDone;
 
         /// <summary>Reloads the game with a new map and start (menu buttons). Everything is rebuilt from code.</summary>
@@ -143,7 +145,24 @@ namespace Sculpt.Game.Bootstrap
                 yaw = new[] { spawnYaw, spawnYaw };
             }
             Action<NetServer> setup = null;
-            if (breachInfo != null)
+            bool vsBot = NextLaunch == Launch.VsBot && NextMap == MapChoice.Duel;
+            if (vsBot)
+            {
+                // Play vs bot: the same 1v1 match on the local server, the bot is the second player (team 2).
+                BreachMapInfo bi = breachInfo;
+                Vec3d botSpawn = spawns[1][0];
+                double botYaw = yaw[1];
+                BotLevel level = NextBotLevel;
+                setup = server =>
+                {
+                    foreach (GroundItem g in bi.ItemSpawns) server.SpawnItem(g.Kind, g.Count, g.Position);
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    BotNav nav = BotNav.Build(server.Grid, 0, 0, bi.SizeX, bi.SizeZ);
+                    server.AddBot(new DuelBot(nav, DuelBotConfig.For(level), Environment.TickCount), 2, botSpawn, botYaw);
+                    Debug.Log($"[SCULPT] Bot ({level}) added; nav {nav.Nodes.Count} spots in {sw.ElapsedMilliseconds} ms.");
+                };
+            }
+            else if (breachInfo != null)
             {
                 BreachMapInfo bi = breachInfo;
                 var dummy = new DummyConfig();
@@ -158,6 +177,7 @@ namespace Sculpt.Game.Bootstrap
             }
             _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup);
             _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
+            if (vsBot) { _session.MatchOffline = true; _session.Server.MatchConfig.Enabled = true; }
 
             _world = new GameObject("World").AddComponent<WorldView>();
             _world.Init(_grid, sculptConfig, mapInfo);
@@ -292,6 +312,7 @@ namespace Sculpt.Game.Bootstrap
                 if (a == "-host") NextLaunch = Launch.Host;
                 else if (a == "-connect" && i + 1 < args.Length) { NextLaunch = Launch.Join; NextAddress = args[i + 1]; }
                 else if (a == "-offline") NextLaunch = Launch.Offline;
+                else if (a == "-bot") NextLaunch = Launch.VsBot;
                 else if (a == "-breach") NextMap = MapChoice.Breach;
             }
         }

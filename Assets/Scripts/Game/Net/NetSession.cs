@@ -33,6 +33,8 @@ namespace Sculpt.Game.Net
         public SculptConfig SculptConfig => _sculptConfig;
         /// <summary>Run the match (most kills in 5 minutes) on the local server while hosting. Offline it is always off.</summary>
         public bool MatchWhenHosting;
+        /// <summary>Run the match offline too (playing against a bot on the local server).</summary>
+        public bool MatchOffline;
         /// <summary>Seconds spent trying to join without a welcome (the menu shows a hint after a few).</summary>
         public float JoinWaitSeconds { get; private set; }
         /// <summary>Why the last join failed, in plain words (empty if it didn't).</summary>
@@ -88,7 +90,7 @@ namespace Sculpt.Game.Net
         {
             ShutdownFishNet();
             CreateLocalServer();
-            Server.MatchConfig.Enabled = false;
+            Server.MatchConfig.Enabled = MatchOffline;
             Mode = NetMode.Offline;
             Status = "Offline (local server)";
         }
