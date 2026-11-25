@@ -94,6 +94,7 @@ namespace Sculpt.Game.Bootstrap
             breachSettings.ApplyTo(sculptConfig);
             breachSettings.ApplyTo(movement.Items);
             breachSettings.ApplyTo(movement.Punch);
+            breachSettings.ApplyTo(movement.Hand);
             var breach = new BreachConfig();
             breachSettings.ApplyTo(breach);
             var netConfig = new NetConfig { AllowDevWarp = GameInput.DevBuild };
@@ -261,7 +262,7 @@ namespace Sculpt.Game.Bootstrap
             PerfSetup.Install(gameObject, _session, _player, _input, _rig, _grid);
             string tour = Sculpt.Game.Dev.PhotoTour.RequestedFolder();
             if (tour != null && breachInfo != null && (GameInput.DevBuild || Application.isEditor))
-                gameObject.AddComponent<Sculpt.Game.Dev.PhotoTour>().Init(tour, _rig.Camera, breachInfo, CurrentMap == MapChoice.Duel);
+                gameObject.AddComponent<Sculpt.Game.Dev.PhotoTour>().Init(tour, _rig.Camera, breachInfo, CurrentMap == MapChoice.Duel, () => _session.Server?.Walls);
             Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {(NextMap == MapChoice.Duel ? "1v1 duel" : breachMap ? "Breach" : map.ToString())} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
         }
 

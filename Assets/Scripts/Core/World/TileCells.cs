@@ -232,6 +232,7 @@ namespace Sculpt.Core
             if (!HasCells(tile)) return;
             WallTile t = _tiles[tile];
             if (t.State == TileState.Broken) { World.SetShape(t.Brush, 0, null); return; }
+            if (t.Open == 0 && NothingOpenAround(tile)) { World.SetShape(t.Brush, 0, null); return; } // cracks only: the whole box
             var fills = _fillScratch ??= new QuadFill[Quads * Quads];
             bool all = true;
             for (int qj = 0; qj < Quads; qj++)
@@ -245,6 +246,23 @@ namespace Sculpt.Core
         }
 
         [ThreadStatic] private static QuadFill[] _fillScratch;
+
+        /// <summary>No open cell in the 8 tiles of the same grid around (so none of this whole tile's corners are cut).</summary>
+        private bool NothingOpenAround(int tile)
+        {
+            for (int d = 0; d < 4; d++)
+            {
+                int n = _edge[tile * 4 + d];
+                if (n < 0) continue;
+                if (OpenCells(n) != 0) return false;
+                for (int e = d < 2 ? 2 : 0; e < (d < 2 ? 4 : 2); e++)
+                {
+                    int m = _edge[n * 4 + e];
+                    if (m >= 0 && OpenCells(m) != 0) return false;
+                }
+            }
+            return true;
+        }
 
         /// <summary>Quarter cells along each side of a celled tile.</summary>
         public const int Quads = N * 2;

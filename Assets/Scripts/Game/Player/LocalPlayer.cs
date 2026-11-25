@@ -54,12 +54,14 @@ namespace Sculpt.Game.Player
         public HealKind HealKindNow => ReinforceHeld ? HealKind.Reinforce : HealKind.Heal;
         /// <summary>Healing replaces block moving while block moves are parked (Breach Settings).</summary>
         public bool Heals => Net.Heals != null && !SculptConfig.BlockMovesEnabled;
+        /// <summary>Q heals what you aim at straight away, no sculpt mode (Ben 2026-11-25: "no heal menu").</summary>
+        public bool QuickHeal => Heals && _cfg.Hand.QuickHeal;
         /// <summary>Last refused heal press (local check or the server) and when, for the red flash.</summary>
         public float HealRejectTime { get; set; } = -10f;
         public HealResult LastHealReject { get; set; }
         public int LastHealRejectTile { get; set; } = -1;
         private bool _healWant;
-        private int _healWantTile;
+        private int _healWantTile, _healWantCell;
         private HealKind _healWantKind;
         private float _healWantTime;
 
@@ -183,7 +185,11 @@ namespace Sculpt.Game.Player
             if (_input.Crouch.WasPressedThisFrame()) _crouchLatch = true;
             if (GameInput.DevBuild && _input.DevRespawn.WasPressedThisFrame()) _respawnLatch = true;
             if (GameInput.DevBuild && _course != null && _input.DevShowcase.WasPressedThisFrame()) _showcaseLatch = true;
-            if (_input.SculptToggle.WasPressedThisFrame()) _toggleLatch = true;
+            if (_input.SculptToggle.WasPressedThisFrame())
+            {
+                if (QuickHeal) PressHeal(); // Q heals (Alt + Q reinforces); there is no heal mode
+                else _toggleLatch = true;
+            }
             for (int i = 0; i < Items.Slots; i++) if (_input.Hotbar[i].WasPressedThisFrame()) _weaponLatch = (byte)(i + 1);
             if (_input.LastWeapon.WasPressedThisFrame()) _weaponLatch = (byte)(State.Hand.PrevSlot + 1);
             if (!InSculptMode && !clickToLock && _input.Fire.WasPressedThisFrame()) _fireLatch = true;
@@ -263,6 +269,7 @@ namespace Sculpt.Game.Player
             if (HealCheck != HealResult.Ok && HealCheck != HealResult.NotInSculptMode) { RejectHeal(HealCheck, t.Tile); return; }
             _healWant = true;
             _healWantTile = t.Tile;
+            _healWantCell = t.Cell;
             _healWantKind = kind;
             _healWantTime = Time.unscaledTime;
         }
@@ -303,10 +310,10 @@ namespace Sculpt.Game.Player
         {
             HealTarget = TileTarget.None;
             HealCheck = HealResult.NoTile;
-            if (!Net.Joined || !Heals || !InSculptMode || State.Dead) { _healWant = false; return; }
+            if (!Net.Joined || !Heals || (!QuickHeal && !InSculptMode) || State.Dead) { _healWant = false; return; }
             HealTarget = TileAim.Find(Net.Grid, Net.Walls, SimEye, LookDir, Net.Walls.Config.HealRange, HealKindNow);
             if (!HealTarget.Valid) return;
-            HealCheck = Net.Heals.Check(Net.Grid, Net.PlayerId, SimEye, State.Hand.CanConfirmSculpt, HealTarget.Tile, HealKindNow, Net.DisplayBar);
+            HealCheck = Net.Heals.Check(Net.Grid, Net.PlayerId, SimEye, _cfg.Hand.CanHeal(State.Hand), HealTarget.Tile, HealTarget.Cell, HealKindNow, Net.DisplayBar);
         }
 
         /// <summary>
@@ -376,12 +383,13 @@ namespace Sculpt.Game.Player
                 SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0, Reload = _reloadLatch && active,
                 Pickup = _pickupLatch && active, PickId = _pickupId, Drop = _dropLatch && active, Punch = _punchLatch && active,
             };
-            if (_healWant && (!active || !InSculptMode || Time.unscaledTime - _healWantTime > 0.25f)) _healWant = false;
-            if (_healWant && h0.CanConfirmSculpt)
+            if (_healWant && (!active || (!QuickHeal && !InSculptMode) || Time.unscaledTime - _healWantTime > 0.25f)) _healWant = false;
+            if (_healWant && _cfg.Hand.CanHeal(h0))
             {
                 _healWant = false;
                 hand.Heal = true;
                 hand.HealTile = _healWantTile;
+                hand.HealCell = _healWantCell;
                 hand.HealReinforce = _healWantKind == HealKind.Reinforce;
             }
             _reloadLatch = false;

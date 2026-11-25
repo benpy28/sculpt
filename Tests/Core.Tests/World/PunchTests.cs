@@ -143,6 +143,16 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
+        public void Timings_ArePickaxeLike_InSeconds()
+        {
+            // Ben 2026-11-25: "too spammable", a slightly longer time to land and a longer recovery.
+            var pc = new PunchConfig();
+            Assert.That(pc.HitTicks, Is.EqualTo(SimTime.SecondsToTicks(0.2)), "lands 0.2 s after the press (was 0.1)");
+            Assert.That(pc.TotalTicks, Is.EqualTo(SimTime.SecondsToTicks(0.8)), "one swing every 0.8 s (was 0.45)");
+            Assert.That(pc.BufferTicks, Is.EqualTo(SimTime.SecondsToTicks(0.1)));
+        }
+
+        [Test]
         public void SlightlyOffAim_StillHitsThePlayer_TeammateNever()
         {
             CompositeTerrain t = Arena(out TileWalls w);

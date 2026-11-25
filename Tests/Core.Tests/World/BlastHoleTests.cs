@@ -504,6 +504,27 @@ namespace Sculpt.Core.Tests
             foreach (int t in ids) if (t != ids[4]) Assert.That(world.Tiles.OpenCells(t), Is.EqualTo(0ul));
         }
 
+        [Test]
+        public void ServerCost_OfAHit_StaysSmall()
+        {
+            var world = Wall(8, 3, out int[] ids);
+            TileWalls tw = world.Tiles;
+            var rng = new Random(3);
+            for (int i = 0; i < 20; i++) tw.ApplyShot(Ar(tw, ids, 8, 0.5 + rng.NextDouble() * 11, 0.5 + rng.NextDouble() * 3.5), Weapon.Ar, 1); // warm up
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            const int Hits = 200;
+            for (int i = 0; i < Hits; i++)
+            {
+                double x = 0.5 + rng.NextDouble() * 11, y = 0.5 + rng.NextDouble() * 3.5;
+                if (i % 4 == 0) tw.ApplyShot(Pump(tw, ids, 8, x, y, 0.2), Weapon.Pump, 1);
+                else tw.ApplyShot(Ar(tw, ids, 8, x, y), Weapon.Ar, 1);
+                if (i % 25 == 24) foreach (int t in ids) tw.Set(t, TileState.Intact, 100, TileCause.Built);
+            }
+            double ms = sw.Elapsed.TotalMilliseconds / Hits;
+            TestContext.WriteLine($"{ms:F3} ms per hit");
+            Assert.That(ms, Is.LessThan(2.0), "a hit stays cheap for the server");
+        }
+
         // ------------------------------------------------------------------ seeded fight
 
         [Test]
