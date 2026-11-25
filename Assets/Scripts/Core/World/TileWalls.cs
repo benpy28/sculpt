@@ -111,6 +111,33 @@ namespace Sculpt.Core
         /// <summary>Bar gained per 10 damage dealt to enemy players (100 = 1%).</summary>
         public int BarPer10Damage = 100;
 
+        // ---- Blast holes (Ben 2026-11-25): holes follow the hit, not the tile grid. ----
+        /// <summary>Off: a tile that breaks goes whole (the old rule).</summary>
+        public bool BlastHoles = true;
+        /// <summary>A break blows out a rough disc of cells around the finishing hit: radius = base + per damage x the
+        /// hit's damage on that tile, clamped. AR bullet 13 ~0.6 m, punch 50 ~1.15 m, point-blank pump 54 ~1.2 m.</summary>
+        public double BlastRadiusBase = 0.42;
+        public double BlastRadiusPerDamage = 0.0145;
+        public double BlastRadiusMin = 0.55;
+        public double BlastRadiusMax = 1.6;
+        /// <summary>A grenade's hole is a disc this big around the blast (about 4.4 m across).</summary>
+        public double GrenadeBlastRadius = 2.2;
+        /// <summary>C4's hole disc around the charge (a doorway-sized breach) and a launcher round's (smaller).</summary>
+        public double C4BlastRadius = 2.2;
+        public double LauncherBlastRadius = 1.7;
+
+        /// <summary>The hole disc radius of a projectile kind's blast.</summary>
+        public double BlastHoleRadius(ThrowKind k) => k == ThrowKind.C4 ? C4BlastRadius : k == ThrowKind.Launcher ? LauncherBlastRadius : GrenadeBlastRadius;
+        /// <summary>How rough a hole's edge is: each cell's reach changes by up to this much (fixed per spot on a wall).</summary>
+        public double BlastJitter = 0.16;
+        /// <summary>No hole smaller than this (Ben: about half a body), in square metres.</summary>
+        public double MinHoleArea = 0.63;
+        /// <summary>A tile with less than this share of its cells left goes entirely.</summary>
+        public double BreakBelowFraction = 0.25;
+
+        public double BlastRadiusFor(int damage) =>
+            Math.Max(BlastRadiusMin, Math.Min(BlastRadiusMax, BlastRadiusBase + BlastRadiusPerDamage * Math.Max(0, damage)));
+
         /// <summary>Writes the bar refill numbers into the sculpt config the bars tick with.</summary>
         public void ApplyBarTo(SculptConfig s)
         {
@@ -164,6 +191,9 @@ namespace Sculpt.Core
         /// </summary>
         public int[] Links;
         public bool IsFollower => Links != null;
+        /// <summary>Blast holes: cells of this tile that are blown out (see <see cref="Brush.Open"/>). Always 0 when Broken.</summary>
+        public ulong Open;
+        public bool Holed => Open != 0;
     }
 
     /// <summary>One change to one tile, in the order they happened.</summary>
@@ -177,6 +207,8 @@ namespace Sculpt.Core
         public TileCause Cause;
         /// <summary>Player who caused it (0 = nobody).</summary>
         public int By;
+        /// <summary>The tile's blown-out cells after the change.</summary>
+        public ulong Open;
     }
 
     /// <summary>
@@ -184,7 +216,7 @@ namespace Sculpt.Core
     /// every change goes through <see cref="Set"/>, which also switches the tile's collision. The server owns the truth;
     /// clients copy it from the server's messages through the same function.
     /// </summary>
-    public sealed class TileWalls
+    public sealed partial class TileWalls
     {
         public readonly BrushWorld World;
         public readonly BreachConfig Config;
@@ -255,6 +287,14 @@ namespace Sculpt.Core
         private int AddShape(Brush b, Dir facing, TileKind kind, int[] links)
         {
             int brush = World.Add(b);
+            if (!b.IsRamp && links == null && (kind == TileKind.Wall || kind == TileKind.Floor))
+            {
+                // Face axes for the cell grid: walls facing North are thin in Z (face X, Y), East thin in X (Z, Y);
+                // floors are thin in Y (X, Z).
+                if (kind == TileKind.Floor) World.SetCells(brush, 0, 2);
+                else if (facing == Dir.North) World.SetCells(brush, 0, 1);
+                else World.SetCells(brush, 2, 1);
+            }
             int id = _tiles.Count;
             _tiles.Add(new WallTile { Brush = brush, State = TileState.Intact, Health = Config.IntactHealth, Facing = facing, Kind = kind, Links = links });
             _byBrush[brush] = id;
@@ -319,23 +359,36 @@ namespace Sculpt.Core
         /// state keeps at least 1), switches collision (only Broken is not solid), logs the change. No-op if nothing
         /// differs.
         /// </summary>
-        public void Set(int tile, TileState state, int health, TileCause cause, int by = 0)
+        /// <param name="open">The blown-out cells. Null keeps them, except that breaking, healing, reinforcing and a
+        /// rebuild always make the tile whole again (a Broken tile has no cells left to speak of).</param>
+        public void Set(int tile, TileState state, int health, TileCause cause, int by = 0, ulong? open = null)
         {
             WallTile t = _tiles[tile];
+            ulong o = open ?? (cause == TileCause.Heal || cause == TileCause.Reinforce || cause == TileCause.Built ? 0ul : t.Open);
+            if (state == TileState.Broken || !World[t.Brush].HasCells) o = 0;
+            if (o == Brush.AllCells) { state = TileState.Broken; o = 0; } // nothing left
             if (state == TileState.Broken) health = 0;
             else health = Math.Max(1, Math.Min(Config.MaxHealthOf(state), health));
-            if (t.State == state && t.Health == health) return;
+            if (t.State == state && t.Health == health && t.Open == o) return;
             TileState from = t.State;
+            ulong fromOpen = t.State == TileState.Broken ? Brush.AllCells : t.Open;
             t.State = state;
             t.Health = health;
+            t.Open = o;
             if (cause != TileCause.Built) t.Changed = true;
             _tiles[tile] = t;
             if ((from == TileState.Broken) != (state == TileState.Broken)) World.SetSolid(t.Brush, state != TileState.Broken);
+            if (World[t.Brush].Open != o) World.SetOpen(t.Brush, o);
             if (state == TileState.Broken && cause == TileCause.Charge) _chargedAt[tile] = Tick;
             else _chargedAt.Remove(tile);
-            Changes.Add(new TileChange { Tick = Tick, Tile = tile, From = from, To = state, Health = health, Cause = cause, By = by });
+            Changes.Add(new TileChange { Tick = Tick, Tile = tile, From = from, To = state, Health = health, Cause = cause, By = by, Open = o });
             Revision++;
+            _beyond.Clear(); // what lies past a tile grid's edge may have changed (frame follows tiles)
             if ((from == TileState.Broken) != (state == TileState.Broken)) Propagate(tile, cause, by);
+            // Cells came back (a heal, reinforce or rebuild): openings next to it that are now too small or too thin go too.
+            ulong nowOpen = state == TileState.Broken ? Brush.AllCells : o;
+            if ((fromOpen & ~nowOpen) != 0 && (cause == TileCause.Heal || cause == TileCause.Reinforce || cause == TileCause.Built))
+                FillSmallHoles(tile, cause, by, null);
         }
 
         /// <summary>Brings the followers of a tile in line with their links (Broken exactly when all links are Broken).</summary>
@@ -359,11 +412,25 @@ namespace Sculpt.Core
         /// Damaged; Patched and Reinforced keep their state until they break. Broken tiles ignore damage.
         /// Returns true if this broke the tile.
         /// </summary>
-        public bool Damage(int tile, int amount, TileCause cause, int by = 0)
+        public bool Damage(int tile, int amount, TileCause cause, int by = 0) =>
+            Damage(tile, amount, BoundsOf(tile).Center, cause, by);
+
+        /// <summary>
+        /// Takes <paramref name="amount"/> health off a tile hit at <paramref name="at"/>. When that breaks a wall or floor
+        /// tile, the hole is a rough disc of cells around <paramref name="at"/> (radius from the damage, or
+        /// <paramref name="blastRadius"/> if given, e.g. a grenade's), which can cut into the tiles around it; see
+        /// <see cref="Blast"/>. Stair, ramp and frame tiles still go whole. Returns true if this broke anything.
+        /// </summary>
+        public bool Damage(int tile, int amount, Vec3d at, TileCause cause, int by = 0, double blastRadius = -1)
         {
             WallTile t = _tiles[tile];
             if (amount <= 0 || t.State == TileState.Broken || t.Links != null) return false; // followers only go with their links
             AfterDamage(t.State, t.Health, amount, Config, out TileState s, out int h);
+            if (s == TileState.Broken && Config.BlastHoles && World[t.Brush].HasCells)
+            {
+                Blast(tile, at, blastRadius > 0 ? blastRadius : Config.BlastRadiusFor(amount), cause, by);
+                return true;
+            }
             Set(tile, s, h, cause, by);
             return s == TileState.Broken;
         }
@@ -388,15 +455,27 @@ namespace Sculpt.Core
         {
             int per = Config.TileDamageOf(weapon);
             if (per <= 0 || pellets == null) return 0;
-            int broke = 0;
+            // One hit per tile: the pellets' damage summed, at the middle of where they landed (so a point-blank pump
+            // blast opens one big hole around its pattern, not nine small ones).
+            var order = _shotTiles ??= new List<int>();
+            var dmg = _shotDmg ??= new Dictionary<int, int>();
+            var at = _shotAt ??= new Dictionary<int, Vec3d>();
+            order.Clear();
+            dmg.Clear();
+            at.Clear();
             for (int i = 0; i < pellets.Count; i++)
             {
                 BulletHit h = pellets[i];
                 if (h.Kind != HitKind.Terrain || h.Brush <= 0) continue;
                 int tile = TileOfBrush(h.Brush - 1);
                 if (tile < 0) continue;
-                if (Damage(tile, per, TileCause.Bullet, by)) broke++;
+                if (!dmg.ContainsKey(tile)) { order.Add(tile); dmg[tile] = 0; at[tile] = Vec3d.Zero; }
+                dmg[tile] += per;
+                at[tile] = at[tile] + h.Point;
             }
+            int broke = 0;
+            foreach (int tile in order)
+                if (Damage(tile, dmg[tile], at[tile] * ((double)per / dmg[tile]), TileCause.Bullet, by)) broke++;
             return broke;
         }
 
@@ -413,6 +492,9 @@ namespace Sculpt.Core
             }
         }
         [ThreadStatic] private static List<int> _nearScratch;
+        [ThreadStatic] private static List<int> _shotTiles;
+        [ThreadStatic] private static Dictionary<int, int> _shotDmg;
+        [ThreadStatic] private static Dictionary<int, Vec3d> _shotAt;
 
         /// <summary>The building world's tiles behind a terrain (unwraps <see cref="CompositeTerrain"/>), or null.</summary>
         public static TileWalls Find(ITerrain terrain)

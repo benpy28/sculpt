@@ -94,7 +94,7 @@ namespace Sculpt.Core.Net
                         if (killed) OnKilled(victim, p.Id, DamageSource.Punch, false);
                     }
                     else if (tile >= 0)
-                        Walls.Damage(tile, PunchRules.TileDamage(Walls[tile].State, Walls.Config), TileCause.Punch, p.Id);
+                        Walls.Damage(tile, PunchRules.TileDamage(Walls[tile].State, Walls.Config), h.Point, TileCause.Punch, p.Id);
                 }
                 p.Punches.Clear();
             }
@@ -143,7 +143,9 @@ namespace Sculpt.Core.Net
                     if (Walls == null) continue;
                     GrenadeRules.TilesInBlast(Walls, e.Position, gc, _blastTiles);
                     int tileDamage = Walls.Config.BlastTileDamage(e.Kind);
-                    foreach (int t in _blastTiles) Walls.Damage(t, tileDamage, TileCause.Grenade, p.Id);
+                    double holeRadius = Walls.Config.BlastHoleRadius(e.Kind);
+                    foreach (int t in _blastTiles)
+                        Walls.Damage(t, tileDamage, e.Position, TileCause.Grenade, p.Id, holeRadius);
                 }
                 p.Nades.Clear();
             }
@@ -245,7 +247,7 @@ namespace Sculpt.Core.Net
             for (int i = 0; i < Walls.Count; i++)
             {
                 WallTile t = Walls[i];
-                if (t.Changed) all.Add(new TileChange { Tick = Tick, Tile = i, To = t.State, Health = t.Health, Cause = TileCause.Server });
+                if (t.Changed) all.Add(new TileChange { Tick = Tick, Tile = i, To = t.State, Health = t.Health, Cause = TileCause.Server, Open = t.Open });
             }
             List<HealEvent> running = RunningHeals();
             if (all.Count == 0 && running.Count == 0) return;

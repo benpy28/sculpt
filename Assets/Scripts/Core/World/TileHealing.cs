@@ -123,6 +123,7 @@ namespace Sculpt.Core
             if (t.Links != null) return HealResult.NothingToHeal; // frame followers come back with the tiles around them
             if (kind == HealKind.Reinforce)
                 return t.State == TileState.Reinforced && t.Health >= c.ReinforcedHealth ? HealResult.AlreadyReinforced : HealResult.Ok;
+            if (t.Open != 0 && t.State != TileState.Reinforced) return HealResult.Ok; // a hole blown in it
             switch (t.State)
             {
                 case TileState.Damaged:
@@ -178,10 +179,16 @@ namespace Sculpt.Core
             Walls.RestoredWith(tile, _restored);
             foreach (int f in _restored)
                 if (Inside(f, players)) return true;
+            // Blast holes: thin or small openings next to it fill in when it comes back.
+            Walls.CellsFilledByRestoring(tile, _filled);
+            foreach (Aabb cell in _filled)
+                for (int i = 0; i < players.Count; i++)
+                    if (players[i].Alive && cell.Overlaps(players[i].Box)) return true;
             return false;
         }
 
         private readonly List<int> _restored = new List<int>();
+        private readonly List<Aabb> _filled = new List<Aabb>();
 
         private bool Inside(int tile, IReadOnlyList<HealerStatus> players)
         {

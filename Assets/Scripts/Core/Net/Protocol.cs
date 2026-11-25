@@ -72,7 +72,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 17; // 16 is the latency thread's; 17: C4, launcher, per-slot counts, four flights
+        public const byte Version = 19; // 16 latency thread, 18 blast holes, 19: C4, launcher, per-slot counts, four flights
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;

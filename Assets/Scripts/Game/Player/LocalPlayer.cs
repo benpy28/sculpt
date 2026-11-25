@@ -192,6 +192,8 @@ namespace Sculpt.Game.Player
             if (_input.Punch.WasPressedThisFrame()) _punchLatch = true;
             if (_client.SprintToggle && _input.Sprint.WasPressedThisFrame()) _sprintOn = !_sprintOn;
             if (_client.CrouchToggle && _input.Crouch.WasPressedThisFrame()) _crouchOn = !_crouchOn;
+            // Toggle mode: pressing sprint while toggled into a crouch stands you up and sprints.
+            if (_client.SprintToggle && _client.CrouchToggle && _input.Sprint.WasPressedThisFrame() && _crouchOn && State.Mode != MoveMode.Slide) _crouchOn = false;
             if (_client.ZoomToggle && !InSculptMode && _input.Aim.WasPressedThisFrame()) _zoomOn = !_zoomOn;
 
             if (!InSculptMode || clickToLock) return;
@@ -345,6 +347,8 @@ namespace Sculpt.Game.Player
             if (h0.Slot != _lastSlot) { _lastSlot = h0.Slot; _zoomOn = false; }
             if (sculpting) _zoomOn = false;
             if (move.sqrMagnitude < 0.01f) _sprintOn = false; // a toggled sprint ends when you stop
+            // ...and when you fire or aim (Ben: toggles end on their own, so you rarely press again to turn them off).
+            if (_client.SprintToggle && active && !sculpting && (_input.Fire.IsPressed() || _input.Aim.IsPressed())) _sprintOn = false;
             bool sprintHeld = active && (_client.SprintToggle ? _sprintOn : _input.Sprint.IsPressed());
             bool crouchHeld = active && (_client.CrouchToggle ? _crouchOn : _input.Crouch.IsPressed());
             bool aimHeld = active && !sculpting && (_client.ZoomToggle ? _zoomOn : _input.Aim.IsPressed());
@@ -414,11 +418,16 @@ namespace Sculpt.Game.Player
                 if (_showcase.Finished) StopShowcase();
             }
 
+            MoveMode modeBefore = State.Mode;
             int before = Events.Count;
             Net.PredictTick(mi, Pitch, respawn, hand, confirm, action, Events);
+            // Toggle crouch: one press is a whole slide. When the slide runs out on the ground you stand back up instead
+            // of being left crouch-walking (jumping out of a slide keeps it on, so the landing slides again).
+            if (_client.CrouchToggle && _crouchOn && modeBefore == MoveMode.Slide && State.Mode == MoveMode.Ground) _crouchOn = false;
             for (int i = before; i < Events.Count; i++)
             {
                 if (Events[i].Type != MoveEventType.Respawned) continue;
+                _crouchOn = _sprintOn = false; // toggles never carry over a respawn
                 if (_warping && _course != null)
                 {
                     _warping = false;

@@ -62,6 +62,8 @@ namespace Sculpt.Core
                     if (w.ChargedAt(t) == tick) charged = true; // replaying the tick we charged through it
                     continue;
                 }
+                // Blast holes: only the part of the tile still standing is in your way.
+                if (tile.Holed && !BrushWorld.Overlaps(w.ShapeOf(t), swept)) continue;
                 if (tile.State != TileState.Damaged && tile.State != TileState.Patched) return false; // a solid wall stops you
                 bool thinInX = tile.Facing == Dir.East || tile.Facing == Dir.West;
                 double headOn = Math.Abs(thinInX ? dir.X : dir.Z);

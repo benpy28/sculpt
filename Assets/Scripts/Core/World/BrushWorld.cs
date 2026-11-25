@@ -37,6 +37,43 @@ namespace Sculpt.Core
         public Dir Rise;
         /// <summary>False once a brush is gone (breakable tiles later). Gone brushes never collide or stop bullets.</summary>
         public bool Solid;
+        /// <summary>
+        /// Blast holes (Ben 2026-11-25): a wall or floor tile's face is split into 8 x 8 cells (0.1875 m on a 1.5 m tile);
+        /// bit c set = cell c is blown out (no collision, bullets pass). c = i + 8 j with i along <see cref="CellA1"/> and
+        /// j along <see cref="CellA2"/> (axis numbers 0 X, 1 Y, 2 Z). 0 = whole. Only <see cref="TileWalls"/> sets it.
+        /// </summary>
+        public ulong Open;
+        public byte CellA1, CellA2;
+        /// <summary>True for a box that can lose cells (wall and floor tiles).</summary>
+        public bool HasCells;
+        /// <summary>When <see cref="Open"/> is not 0: the solid cells merged into row runs (what collides).</summary>
+        public Aabb[] Solids;
+
+        /// <summary>Cells along each side of a tile's face (8: the finest grid whose state fits one 64-bit number).</summary>
+        public const int CellsPerSide = 8;
+        public const int CellCount = CellsPerSide * CellsPerSide;
+        public const ulong AllCells = ulong.MaxValue;
+
+        /// <summary>The box of cell <paramref name="c"/> (0..24) of a celled box brush.</summary>
+        public Aabb CellBox(int c) => CellBox(Bounds, CellA1, CellA2, c);
+
+        public static Aabb CellBox(Aabb b, int a1, int a2, int c)
+        {
+            const int n = CellsPerSide;
+            int i = c % n, j = c / n;
+            double lo1 = Get(b.Min, a1), hi1 = Get(b.Max, a1), lo2 = Get(b.Min, a2), hi2 = Get(b.Max, a2);
+            double s1 = (hi1 - lo1) / n, s2 = (hi2 - lo2) / n;
+            // The outer edges are the tile's own (no rounding drift at the tile boundary).
+            double l1 = i == 0 ? lo1 : lo1 + s1 * i, l2 = j == 0 ? lo2 : lo2 + s2 * j;
+            double h1 = i == n - 1 ? hi1 : lo1 + s1 * (i + 1), h2 = j == n - 1 ? hi2 : lo2 + s2 * (j + 1);
+            Vec3d mn = Put(Put(b.Min, a1, l1), a2, l2), mx = Put(Put(b.Max, a1, h1), a2, h2);
+            return new Aabb(mn, mx);
+        }
+
+        private static double Get(Vec3d v, int a) => a == 0 ? v.X : a == 1 ? v.Y : v.Z;
+
+        private static Vec3d Put(Vec3d v, int a, double x) =>
+            a == 0 ? new Vec3d(x, v.Y, v.Z) : a == 1 ? new Vec3d(v.X, x, v.Z) : new Vec3d(v.X, v.Y, x);
 
         public static Brush Box(Aabb b, BrushKind kind) => new Brush { Bounds = b, Kind = kind, Solid = true };
 
@@ -130,6 +167,46 @@ namespace Sculpt.Core
             _brushes[id] = b;
         }
 
+        /// <summary>Sets which cells of a celled tile are blown out. Tiles go through <see cref="TileWalls.Set"/>, never here.</summary>
+        internal void SetOpen(int id, ulong open)
+        {
+            Brush b = _brushes[id];
+            b.Open = b.HasCells ? open : 0ul;
+            b.Solids = b.Open != 0 ? SolidRuns(b) : null;
+            _brushes[id] = b;
+        }
+
+        /// <summary>The solid cells of a celled brush as boxes, one per run of solid cells along each row.</summary>
+        internal static Aabb[] SolidRuns(in Brush b)
+        {
+            const int n = Brush.CellsPerSide;
+            var list = new List<Aabb>(8);
+            for (int j = 0; j < n; j++)
+            {
+                int i = 0;
+                while (i < n)
+                {
+                    if ((b.Open & (1ul << (i + n * j))) != 0) { i++; continue; }
+                    int start = i;
+                    while (i < n && (b.Open & (1ul << (i + n * j))) == 0) i++;
+                    Aabb lo = b.CellBox(start + n * j), hi = b.CellBox(i - 1 + n * j);
+                    list.Add(new Aabb(lo.Min, hi.Max)); // same row, start <= end on the face axes
+                }
+            }
+            return list.ToArray();
+        }
+
+        /// <summary>Marks a box brush as a celled tile with the given face axes (TileWalls, when it adds a wall or floor tile).</summary>
+        internal void SetCells(int id, int a1, int a2)
+        {
+            Brush b = _brushes[id];
+            if (b.IsRamp) return;
+            b.HasCells = true;
+            b.CellA1 = (byte)a1;
+            b.CellA2 = (byte)a2;
+            _brushes[id] = b;
+        }
+
         // ------------------------------------------------------------------ queries
 
         /// <summary>Indices of brushes whose hash cells touch the box (solid or not; callers test the exact shape).</summary>
@@ -162,7 +239,7 @@ namespace Sculpt.Core
                 Brush b = _brushes[near[i]];
                 if (!b.Solid || !Overlaps(b, probed)) continue;
                 any = true;
-                Vec3d n = ContactNormal(b, box);
+                Vec3d n = ContactNormal(b, box, probed);
                 if (n.Y > 0.5 && n.Y > bestY + 1e-9)
                 {
                     bestY = n.Y;
@@ -209,6 +286,13 @@ namespace Sculpt.Core
         public static bool Overlaps(in Brush b, Aabb box)
         {
             if (!b.Bounds.Overlaps(box)) return false;
+            if (b.Open != 0)
+            {
+                Aabb[] runs = b.Solids;
+                for (int k = 0; k < runs.Length; k++)
+                    if (runs[k].Overlaps(box)) return true;
+                return false;
+            }
             if (!b.IsRamp) return true;
             // Solid = under the slope. The box reaches lowest at its Min.Y and the slope is highest at the box's
             // extent toward the high end, clamped into the wedge.
@@ -232,8 +316,16 @@ namespace Sculpt.Core
         }
 
         /// <summary>The normal the box rests on: straight up on a box top, the slope normal on a wedge.</summary>
-        private static Vec3d ContactNormal(in Brush b, Aabb box)
+        private static Vec3d ContactNormal(in Brush b, Aabb box, Aabb probed)
         {
+            if (b.Open != 0)
+            {
+                // A tile with cells blown out: you rest on the top of a solid cell under you.
+                Aabb[] runs = b.Solids;
+                for (int k = 0; k < runs.Length; k++)
+                    if (runs[k].Overlaps(probed) && box.Min.Y >= runs[k].Max.Y - 0.05) return new Vec3d(0, 1, 0);
+                return new Vec3d(0, 0, 0);
+            }
             if (!b.IsRamp) return box.Min.Y >= b.Bounds.Max.Y - 0.05 ? new Vec3d(0, 1, 0) : new Vec3d(0, 0, 0);
             // Past the high end the box sits on the crest line: that still reads as the slope (walkable).
             return b.SlopeNormal;
@@ -242,6 +334,26 @@ namespace Sculpt.Core
         /// <summary>Ray against one convex brush (the bounds' six planes plus the slope plane for a wedge).</summary>
         internal static bool Clip(in Brush b, Vec3d o, Vec3d d, double maxT, out double tHit, out Vec3d nHit)
         {
+            if (b.Open != 0)
+            {
+                // Nearest solid cell (each is a plain box).
+                bool any = false;
+                tHit = 0;
+                nHit = default;
+                double best = maxT;
+                Aabb[] runs = b.Solids;
+                for (int k = 0; k < runs.Length; k++)
+                {
+                    var cell = Brush.Box(runs[k], b.Kind);
+                    if (!Clip(cell, o, d, best, out double t, out Vec3d n)) continue;
+                    if (any && t >= best) continue;
+                    any = true;
+                    best = t;
+                    tHit = t;
+                    nHit = n;
+                }
+                return any;
+            }
             double tEnter = 0, tExit = maxT;
             nHit = default;
             tHit = 0;

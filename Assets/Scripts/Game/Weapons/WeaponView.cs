@@ -331,7 +331,14 @@ namespace Sculpt.Game.Weapons
                 BulletHit h = Hitscan.Trace(net.Grid, shot.Origin, dir, st.Range, _targets, shot.ShooterId, 0, true);
                 Vector3 p = h.Point.ToUnity();
                 ends.Add(p);
-                if (h.Kind == HitKind.Terrain) RockImpact(p, h.Normal.ToUnity(), st.Pellets > 1 ? 0.5f : 1f);
+                if (h.Kind == HitKind.Terrain)
+                {
+                    float amount = st.Pellets > 1 ? 0.5f : 1f;
+                    // Buildings draw their own chips, dust and marks in the wall's colour; the gun adds the sound.
+                    var wall = Sculpt.Game.World.WallImpacts.OnBullet;
+                    bool drawn = h.Brush > 0 && wall != null && wall(p, h.Normal.ToUnity(), h.Brush - 1, amount);
+                    RockImpact(p, h.Normal.ToUnity(), amount, visuals: !drawn);
+                }
                 // Player hits are drawn when the server confirms them (Hit events).
             }
         }
@@ -406,8 +413,13 @@ namespace Sculpt.Game.Weapons
             _tracers.Add(new Tracer { A = a, B = b, Born = Time.time, Life = life, Colour = TracerColour, Width = width });
         }
 
-        private void RockImpact(Vector3 at, Vector3 normal, float amount)
+        private void RockImpact(Vector3 at, Vector3 normal, float amount, bool visuals = true)
         {
+            if (!visuals)
+            {
+                if (Random.value < 0.6f) GunAudio.Play(GunAudio.Impact, at, 0.45f * amount + 0.1f, Random.Range(0.85f, 1.15f), true, 35f, 1.5f);
+                return;
+            }
             var ep = new ParticleSystem.EmitParams();
             Color rock = Sculpt.Game.World.ChunkMesher.RockHigh;
             int puffs = Mathf.Max(2, Mathf.RoundToInt(5 * amount));
