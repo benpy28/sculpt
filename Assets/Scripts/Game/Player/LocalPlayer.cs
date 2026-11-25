@@ -111,7 +111,16 @@ namespace Sculpt.Game.Player
         public ShowcaseRun LastShowcase { get; private set; }
 
         /// <summary>Gives the player the movement course (breach map only), which enables F6.</summary>
-        public void SetCourse(CourseInfo course) => _course = course;
+        public void SetCourse(CourseInfo course)
+        {
+            _course = course;
+            // Dev builds: -race starts the F6 race (and -watchtas the F7 run) as soon as you are in.
+            if (!GameInput.DevBuild) return;
+            string[] args = System.Environment.GetCommandLineArgs();
+            _autoRace = System.Array.IndexOf(args, "-race") >= 0;
+            _autoWatch = System.Array.IndexOf(args, "-watchtas") >= 0;
+        }
+        private bool _autoRace, _autoWatch;
 
         private byte _weaponLatch;
         private bool _confirmLatch;
@@ -404,6 +413,12 @@ namespace Sculpt.Game.Player
             _weaponLatch = 0;
             _confirmLatch = false;
 
+            if ((_autoRace || _autoWatch) && Net.Joined && !State.Dead)
+            {
+                _showcaseLatch = _autoRace;
+                _watchLatch = _autoWatch && !_autoRace;
+                _autoRace = _autoWatch = false;
+            }
             // F6: warp to the course start (a real command the server applies), count down 3-2-1 and race the TAS ghost.
             // F7: warp there and let the TAS drive you. Either key again stops what is running; a move key stops F7.
             if (_showcaseLatch || _watchLatch)
