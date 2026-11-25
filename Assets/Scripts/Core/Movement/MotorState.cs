@@ -29,6 +29,8 @@ namespace Sculpt.Core
         public bool FireHeld;
         /// <summary>Fire pressed since the last tick (semi-auto and buffered shots).</summary>
         public bool FirePressed;
+        /// <summary>Aim button pressed since the last tick (sets off your C4 while it is in hand).</summary>
+        public bool AimPressed;
     }
 
     /// <summary>
@@ -85,10 +87,12 @@ namespace Sculpt.Core
         /// <summary>Gun timers, bloom and recoil.</summary>
         public WeaponState Weapon;
 
-        /// <summary>Your own grenades in the air (their flight and your own blast push are predicted).</summary>
-        public GrenadeFlight Nade0, Nade1;
+        /// <summary>Your own grenades, C4 and launcher rounds out in the world (their flight and your own blast push are predicted).</summary>
+        public GrenadeFlight Nade0, Nade1, Nade2, Nade3;
         /// <summary>Counts your throws (labels each grenade).</summary>
         public byte NadeSeq;
+        /// <summary>First tick the launcher can fire its next round.</summary>
+        public int LauncherReadyTick;
 
         /// <summary>Tick the last punch started, and of a punch press waiting for the punch to be ready.</summary>
         public int PunchTick;
@@ -119,6 +123,7 @@ namespace Sculpt.Core
             PunchTick = int.MinValue / 2,
             PunchBufferTick = int.MinValue / 2,
             ChargeTick = int.MinValue / 2,
+            LauncherReadyTick = int.MinValue / 2,
             AirPeakY = feet.Y,
             Hand = HandState.Initial,
             Weapon = WeaponState.Initial,

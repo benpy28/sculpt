@@ -99,9 +99,11 @@ namespace Sculpt.Game.Player
                     {
                         a.GunShown = v.Held;
                         // A grenade in hand is a small fist-sized lump (a tell: a throw is coming).
-                        float len = v.Held == Item.Pump ? 0.95f : v.Held == Item.Ar ? 0.9f : v.Held == Item.Smg ? 0.55f : v.Held == Item.Grenade ? 0.12f : 0.25f;
-                        float thick = v.Held == Item.Grenade ? 0.12f : 0.07f;
-                        a.Gun.localScale = new Vector3(thick, v.Held == Item.Grenade ? 0.12f : 0.11f, len);
+                        float len = v.Held == Item.Pump ? 0.95f : v.Held == Item.Ar ? 0.9f : v.Held == Item.Smg ? 0.55f : v.Held == Item.Grenade ? 0.12f
+                            : v.Held == Item.C4 ? 0.14f : v.Held == Item.Launcher ? 0.85f : 0.25f;
+                        bool small = v.Held == Item.Grenade || v.Held == Item.C4;
+                        float thick = small ? 0.12f : v.Held == Item.Launcher ? 0.13f : 0.07f;
+                        a.Gun.localScale = new Vector3(thick, small ? 0.12f : v.Held == Item.Launcher ? 0.14f : 0.11f, len);
                     }
                     a.Gun.localPosition = new Vector3(w * 0.5f + 0.02f, eye - 0.28f, 0.1f);
                     a.Gun.localRotation = Quaternion.Euler((float)v.Pitch, 0, 0);

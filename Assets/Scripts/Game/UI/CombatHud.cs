@@ -82,13 +82,22 @@ namespace Sculpt.Game.UI
             HudDraw.Label(HudDraw.ToGui(HealthX + 16, Margin + 20, 120, 40), hp.ToString(), 30, low ? HudDraw.Red : HudDraw.Text, TextAnchor.MiddleLeft, true);
             HudDraw.Label(HudDraw.ToGui(HealthX + 80, Margin + 24, 60, 30), "HP", 12, HudDraw.Dim, TextAnchor.MiddleLeft, true);
 
-            // Gun and ammo (bottom right); a grenade shows its count.
-            if (!s.Dead && s.Hand.HeldItem == Item.Grenade)
+            // Gun and ammo (bottom right); grenades, C4 and the launcher show their count.
+            Item heldItem = s.Hand.HeldItem;
+            if (!s.Dead && Items.Stacks(heldItem))
             {
                 float px = w - Margin - PanelW;
-                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), "GRENADE", 13, HudDraw.Dim, TextAnchor.MiddleLeft, true);
-                HudDraw.Label(HudDraw.ToGui(px + PanelW - 96, Margin + 16, 50, 40), s.Hand.Bag.Grenades.ToString(), 30, HudDraw.Text, TextAnchor.MiddleRight, true);
-                HudDraw.Label(HudDraw.ToGui(px + PanelW - 44, Margin + 18, 40, 30), "/ " + _player.Config.Items.GrenadeCarry, 13, HudDraw.Dim, TextAnchor.MiddleLeft);
+                int count = s.Hand.Bag.CountIn(s.Hand.Slot);
+                int out_ = GrenadeRules.ActiveOf(s, ThrowKind.C4);
+                string title = heldItem == Item.C4 && count == 0 ? "DETONATOR" : Items.Name(heldItem).ToUpperInvariant();
+                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), title, 13, HudDraw.Dim, TextAnchor.MiddleLeft, true);
+                HudDraw.Label(HudDraw.ToGui(px + PanelW - 96, Margin + 16, 50, 40), count.ToString(), 30, count == 0 ? HudDraw.Dim : HudDraw.Text, TextAnchor.MiddleRight, true);
+                HudDraw.Label(HudDraw.ToGui(px + PanelW - 44, Margin + 18, 40, 30), "/ " + _player.Config.Items.Carry(heldItem), 13, HudDraw.Dim, TextAnchor.MiddleLeft);
+                string hint = null;
+                if (heldItem == Item.C4 && out_ > 0)
+                    hint = (count == 0 ? _player.FireKeyName + " / " : "") + _player.AimKeyName + "  DETONATE  (" + out_ + " out)";
+                else if (heldItem == Item.Launcher && net.Tick < s.LauncherReadyTick) hint = "LOADING";
+                if (hint != null) HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 14, 200, 20), hint, 11, heldItem == Item.C4 ? HudDraw.Amber : HudDraw.Dim, TextAnchor.MiddleLeft, true);
             }
             else if (!s.Dead && s.Hand.HasGun)
             {
@@ -114,7 +123,9 @@ namespace Sculpt.Game.UI
                 bool held = i == s.Hand.Slot && it != Item.None;
                 Color tc = it == Item.None ? HudDraw.A(HudDraw.Dim, 0.5f) : held ? HudDraw.Text : HudDraw.Dim;
                 HudDraw.Label(HudDraw.ToGui(r.x + 7, r.y + r.height - 15, 20, 12), (i + 1).ToString(), 10, HudDraw.A(tc, 0.8f), TextAnchor.MiddleLeft, true);
-                string name = it == Item.None ? "—" : it == Item.Grenade ? "Nade x" + s.Hand.Bag.Grenades : Items.Name(it);
+                string name = it == Item.None ? "—" : it == Item.Grenade ? "Nade x" + s.Hand.Bag.Count(i)
+                    : it == Item.C4 ? (s.Hand.Bag.Count(i) == 0 ? "Det." : "C4 x" + s.Hand.Bag.Count(i))
+                    : it == Item.Launcher ? "GL x" + s.Hand.Bag.Count(i) : Items.Name(it);
                 HudDraw.Label(HudDraw.ToGui(r.x, r.y + 3, r.width, r.height - 8), name, 12, tc, TextAnchor.MiddleCenter, held);
             }
 
@@ -129,7 +140,7 @@ namespace Sculpt.Game.UI
                 Color col = HudDraw.Text;
                 if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
                 else if (plan.Allowed) line = $"{key}  Pick up {what}";
-                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
+                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
                 else { line = what; col = HudDraw.Dim; }
                 HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), line, 14, col, TextAnchor.MiddleCenter, true);
             }
@@ -174,6 +185,8 @@ namespace Sculpt.Game.UI
                 case DamageSource.Fall: return "Fall";
                 case DamageSource.Grenade: return "Grenade";
                 case DamageSource.Punch: return "Punch";
+                case DamageSource.C4: return "C4";
+                case DamageSource.Launcher: return "Launcher";
                 default: return (int)s < Names.Length ? Names[(int)s] : s.ToString();
             }
         }
@@ -349,13 +362,20 @@ namespace Sculpt.Game.UI
             if (s.Dead) return;
             float px = w - Margin - PanelW;
             HudDraw.PanelRect(px, Margin, PanelW, PanelH);
-            if (s.Hand.HeldItem == Item.Grenade)
+            if (Items.Stacks(s.Hand.HeldItem))
             {
                 float gx = px + 16, gy = Margin + 12;
-                int carry = Mathf.Max(1, _player.Config.Items.GrenadeCarry);
+                int carry = Mathf.Max(1, _player.Config.Items.Carry(s.Hand.HeldItem));
+                int have = s.Hand.Bag.CountIn(s.Hand.Slot);
                 float pw = (PanelW - 32 - 6 * (carry - 1)) / carry;
                 for (int i = 0; i < carry; i++)
-                    HudDraw.RoundRect(gx + i * (pw + 6), gy, pw, 5, 1.5f, i < s.Hand.Bag.Grenades ? HudDraw.A(HudDraw.Text, 0.9f) : new Color(1, 1, 1, 0.12f));
+                    HudDraw.RoundRect(gx + i * (pw + 6), gy, pw, 5, 1.5f, i < have ? HudDraw.A(HudDraw.Text, 0.9f) : new Color(1, 1, 1, 0.12f));
+                if (s.Hand.HeldItem == Item.Launcher && tick < s.LauncherReadyTick)
+                {
+                    // The next round loading: a thin bar under the pips.
+                    float k = Mathf.Clamp01(1f - (s.LauncherReadyTick - tick) / (float)Mathf.Max(1, _player.Config.Items.Launcher.ThrowRecoveryTicks));
+                    HudDraw.Bar(gx, gy + 8, PanelW - 32, 2, k, HudDraw.Dim);
+                }
                 return;
             }
             if (!s.Hand.HasGun) return;

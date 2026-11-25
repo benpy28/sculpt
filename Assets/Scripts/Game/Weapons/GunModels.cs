@@ -106,6 +106,77 @@ namespace Sculpt.Game.Weapons
             return root;
         }
 
+        private static readonly Color Putty = new Color(0.66f, 0.62f, 0.50f);
+        private static readonly Color Tape = new Color(0.10f, 0.10f, 0.10f);
+        private static readonly Color Blink = new Color(1f, 0.16f, 0.10f);
+
+        /// <summary>
+        /// A C4 charge: a taped block of putty with a small receiver box and a red light (child "Light", which the view
+        /// blinks). Flat side (-Y) is the side that sticks. Origin at its centre.
+        /// </summary>
+        public static GameObject BuildC4(Material mat, int layer = 0)
+        {
+            var root = new GameObject("C4") { layer = layer };
+            var b = new BoxBuilder();
+            b.Box(Vector3.zero, new Vector3(0.2f, 0.06f, 0.12f), Putty);                               // block
+            b.Box(new Vector3(-0.05f, 0, 0), new Vector3(0.018f, 0.064f, 0.124f), Tape);              // tape bands
+            b.Box(new Vector3(0.05f, 0, 0), new Vector3(0.018f, 0.064f, 0.124f), Tape);
+            b.Box(new Vector3(0, 0.042f, 0), new Vector3(0.06f, 0.026f, 0.05f), DarkSteel);           // receiver
+            b.Box(new Vector3(0.022f, 0.07f, 0.012f), new Vector3(0.004f, 0.05f, 0.004f), Steel);     // antenna
+            Attach(root.transform, "Body", b.ToMesh("C4"), mat, layer);
+            var l = new BoxBuilder();
+            l.Box(Vector3.zero, new Vector3(0.016f, 0.012f, 0.016f), Blink);
+            Transform light = Attach(root.transform, "Light", l.ToMesh("C4 light"), mat, layer);
+            light.localPosition = new Vector3(-0.012f, 0.058f, 0.0f);
+            return root;
+        }
+
+        /// <summary>The detonator in the hand: a grip with a thumb switch and an antenna. +Z forward.</summary>
+        public static GameObject BuildDetonator(Material mat, int layer = 0)
+        {
+            var root = new GameObject("Detonator") { layer = layer };
+            var b = new BoxBuilder();
+            b.Box(Vector3.zero, new Vector3(0.04f, 0.11f, 0.035f), Polymer, 10f);                     // grip
+            b.Box(new Vector3(0, 0.06f, 0.006f), new Vector3(0.03f, 0.014f, 0.024f), Blink);         // switch
+            b.Box(new Vector3(0.012f, 0.1f, -0.006f), new Vector3(0.005f, 0.08f, 0.005f), Steel);    // antenna
+            Attach(root.transform, "Body", b.ToMesh("Detonator"), mat, layer);
+            return root;
+        }
+
+        /// <summary>
+        /// The grenade launcher: a fat single tube with a heavy receiver, a ladder sight and a thick stock. Child "Muzzle"
+        /// marks the tube end. Big on purpose: it reads as a slow, heavy tool.
+        /// </summary>
+        public static GunModel BuildLauncher(Material mat, int layer = 0)
+        {
+            var m = new GunModel { Root = new GameObject("Launcher") { layer = layer } };
+            var b = new BoxBuilder();
+            b.Box(new Vector3(0, 0, 0.0f), new Vector3(0.09f, 0.1f, 0.22f), DarkSteel);                // receiver
+            b.Box(new Vector3(0, 0.012f, 0.26f), new Vector3(0.085f, 0.085f, 0.34f), Olive);           // tube
+            b.Box(new Vector3(0, 0.012f, 0.44f), new Vector3(0.095f, 0.095f, 0.03f), DarkSteel);       // tube lip
+            b.Box(new Vector3(0, -0.04f, 0.24f), new Vector3(0.05f, 0.05f, 0.16f), Wood);              // fore grip
+            b.Box(new Vector3(0, -0.085f, -0.08f), new Vector3(0.04f, 0.11f, 0.05f), Polymer, 18f);    // grip
+            b.Box(new Vector3(0, -0.02f, -0.27f), new Vector3(0.06f, 0.12f, 0.26f), Wood, -4f);        // stock
+            b.Box(new Vector3(0, 0.08f, 0.05f), new Vector3(0.05f, 0.05f, 0.012f), Steel);             // ladder sight
+            Attach(m.Root.transform, "Body", b.ToMesh("Launcher"), mat, layer);
+            m.Muzzle = new GameObject("Muzzle").transform;
+            m.Muzzle.SetParent(m.Root.transform, false);
+            m.Muzzle.localPosition = new Vector3(0, 0.012f, 0.46f);
+            return m;
+        }
+
+        /// <summary>A launcher round in flight or on the ground: a stubby brass-and-olive shell, +Z forward.</summary>
+        public static GameObject BuildRound(Material mat, int layer = 0)
+        {
+            var root = new GameObject("Launcher round") { layer = layer };
+            var b = new BoxBuilder();
+            b.Box(Vector3.zero, new Vector3(0.042f, 0.042f, 0.08f), Olive);
+            b.Box(new Vector3(0, 0, -0.05f), new Vector3(0.046f, 0.046f, 0.03f), new Color(0.62f, 0.5f, 0.26f));
+            b.Box(new Vector3(0, 0, 0.05f), new Vector3(0.028f, 0.028f, 0.025f), Steel);
+            Attach(root.transform, "Body", b.ToMesh("Launcher round"), mat, layer);
+            return root;
+        }
+
         private static readonly Color Glove = new Color(0.16f, 0.15f, 0.14f);
         private static readonly Color GloveCuff = new Color(0.26f, 0.24f, 0.21f);
 

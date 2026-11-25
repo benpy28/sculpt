@@ -72,7 +72,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 18;
+        public const byte Version = 19; // 16 latency thread, 18 blast holes, 19: C4, launcher, per-slot counts, four flights
         public const int NoLead = sbyte.MinValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
@@ -250,8 +250,7 @@ namespace Sculpt.Core.Net
             w.U8((byte)s.Hand.Mode);
             w.U8((byte)((s.Hand.Slot & 7) | ((s.Hand.PrevSlot & 7) << 3) | (s.Hand.HeldReady ? 0x40 : 0) | (s.Hand.ExitQueued ? 0x80 : 0)));
             Bag bag = s.Hand.Bag;
-            for (int k = 0; k < Items.Slots; k++) w.U8((byte)bag[k]);
-            w.U8(bag.Grenades);
+            for (int k = 0; k < Items.Slots; k++) { w.U8((byte)bag[k]); w.U8(bag.Count(k)); }
             w.I32(s.Hand.ReadyTick);
             w.I32(s.Hand.SculptLockUntil);
             WeaponState g = s.Weapon;
@@ -265,7 +264,10 @@ namespace Sculpt.Core.Net
             w.I32(s.Damage); w.Bool(s.Dead); w.I32(s.RespawnTick);
             WriteFlight(w, s.Nade0);
             WriteFlight(w, s.Nade1);
+            WriteFlight(w, s.Nade2);
+            WriteFlight(w, s.Nade3);
             w.U8(s.NadeSeq);
+            w.I32(s.LauncherReadyTick);
             w.I32(s.PunchTick);
             w.I32(s.PunchBufferTick);
             w.I32(s.ChargeTick);
@@ -275,20 +277,34 @@ namespace Sculpt.Core.Net
         {
             w.Bool(f.Active);
             if (!f.Active) return;
+            w.U8((byte)((byte)f.Kind | (f.Stuck ? 0x10 : 0) | (f.Landed ? 0x20 : 0)));
             w.Vec(f.Position);
             w.Vec(f.Velocity);
             w.I32(f.ThrowTick);
             w.U8(f.Seq);
+            w.F64(f.Travel);
+            if (!f.Landed) return;
+            w.I32(f.StuckTick);
+            w.Vec(f.Normal);
         }
 
         private static GrenadeFlight ReadFlight(ref ByteReader r)
         {
             var f = new GrenadeFlight { Active = r.Bool() };
             if (!f.Active) return f;
+            byte kf = r.U8();
+            if ((kf & 0x0F) > (byte)ThrowKind.Launcher || (kf & 0xC0) != 0) throw new NetFormatException("Bad flight.");
+            f.Kind = (ThrowKind)(kf & 0x0F);
+            f.Stuck = (kf & 0x10) != 0;
+            f.Landed = (kf & 0x20) != 0;
             f.Position = r.Vec();
             f.Velocity = r.Vec();
             f.ThrowTick = r.I32();
             f.Seq = r.U8();
+            f.Travel = r.F64();
+            if (!f.Landed) return f;
+            f.StuckTick = r.I32();
+            f.Normal = r.Vec();
             return f;
         }
 
@@ -340,8 +356,8 @@ namespace Sculpt.Core.Net
                 byte it = r.U8();
                 if (it > (byte)Items.Last) throw new NetFormatException("Bad item.");
                 s.Hand.Bag[k] = (Item)it;
+                s.Hand.Bag.SetCount(k, r.U8());
             }
-            s.Hand.Bag.Grenades = r.U8();
             s.Hand.ReadyTick = r.I32();
             s.Hand.SculptLockUntil = r.I32();
             var g = new WeaponState
@@ -363,7 +379,10 @@ namespace Sculpt.Core.Net
             s.RespawnTick = r.I32();
             s.Nade0 = ReadFlight(ref r);
             s.Nade1 = ReadFlight(ref r);
+            s.Nade2 = ReadFlight(ref r);
+            s.Nade3 = ReadFlight(ref r);
             s.NadeSeq = r.U8();
+            s.LauncherReadyTick = r.I32();
             s.PunchTick = r.I32();
             s.PunchBufferTick = r.I32();
             s.ChargeTick = r.I32();
@@ -386,7 +405,8 @@ namespace Sculpt.Core.Net
                    a.WallKicks == b.WallKicks && a.LastWallKickTick == b.LastWallKickTick && a.LastWallKickNormal.Equals(b.LastWallKickNormal) && a.LastSlideJumpTick == b.LastSlideJumpTick &&
                    a.Hand.Equals(b.Hand) && a.Weapon.Equals(b.Weapon) &&
                    a.Damage == b.Damage && a.Dead == b.Dead && a.RespawnTick == b.RespawnTick &&
-                   a.Nade0.Equals(b.Nade0) && a.Nade1.Equals(b.Nade1) && a.NadeSeq == b.NadeSeq &&
+                   a.Nade0.Equals(b.Nade0) && a.Nade1.Equals(b.Nade1) && a.Nade2.Equals(b.Nade2) && a.Nade3.Equals(b.Nade3) &&
+                   a.NadeSeq == b.NadeSeq && a.LauncherReadyTick == b.LauncherReadyTick &&
                    a.PunchTick == b.PunchTick && a.PunchBufferTick == b.PunchBufferTick && a.ChargeTick == b.ChargeTick;
         }
 

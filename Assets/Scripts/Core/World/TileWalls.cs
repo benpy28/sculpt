@@ -74,6 +74,14 @@ namespace Sculpt.Core
         /// <summary>Grenade blast damage to every tile in its radius: breaks Intact, Damaged and Patched tiles at once;
         /// a Reinforced tile (200) survives one blast with 50 left.</summary>
         public int GrenadeTileDamage = 150;
+        /// <summary>C4 is the breaching tool: it breaks every tile in its blast, Reinforced (200) included.</summary>
+        public int C4TileDamage = 220;
+        /// <summary>A launcher round breaks Intact, Damaged and Patched tiles in its (slightly smaller) blast; a
+        /// Reinforced tile keeps 90.</summary>
+        public int LauncherTileDamage = 110;
+
+        /// <summary>Blast tile damage of a projectile kind.</summary>
+        public int BlastTileDamage(ThrowKind k) => k == ThrowKind.C4 ? C4TileDamage : k == ThrowKind.Launcher ? LauncherTileDamage : GrenadeTileDamage;
         /// <summary>Punch (Ben: half an unreinforced wall, 50) and what it does to a Reinforced tile.</summary>
         public int PunchTileDamage = 50;
         public int PunchReinforcedTileDamage = 25;
@@ -114,6 +122,12 @@ namespace Sculpt.Core
         public double BlastRadiusMax = 1.6;
         /// <summary>A grenade's hole is a disc this big around the blast (about 4.4 m across).</summary>
         public double GrenadeBlastRadius = 2.2;
+        /// <summary>C4's hole disc around the charge (a doorway-sized breach) and a launcher round's (smaller).</summary>
+        public double C4BlastRadius = 2.2;
+        public double LauncherBlastRadius = 1.7;
+
+        /// <summary>The hole disc radius of a projectile kind's blast.</summary>
+        public double BlastHoleRadius(ThrowKind k) => k == ThrowKind.C4 ? C4BlastRadius : k == ThrowKind.Launcher ? LauncherBlastRadius : GrenadeBlastRadius;
         /// <summary>How rough a hole's edge is: each cell's reach changes by up to this much (fixed per spot on a wall).</summary>
         public double BlastJitter = 0.16;
         /// <summary>No hole smaller than this (Ben: about half a body), in square metres.</summary>
