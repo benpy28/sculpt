@@ -134,7 +134,7 @@ namespace Sculpt.Game.UI
             }
             if (kb == null || !kb.escapeKey.wasPressedThisFrame || Time.frameCount - _rebindEndedFrame < 2) return;
             if (_open) Close();
-            else if (!_player.InputBlocked) Open(); // not while another box (join address) has the keyboard
+            else if (!_player.InputBlocked && Time.frameCount != MainMenu.ClosedFrame) Open(); // not while another box (join address) has the keyboard
         }
 
         private void Open()
@@ -329,6 +329,7 @@ namespace Sculpt.Game.UI
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Resume (Esc)", _button, GUILayout.Height(32))) Close();
+            if (GUILayout.Button("Leave to main menu", _button, GUILayout.Height(32), GUILayout.Width(190))) { Close(); Sculpt.Game.Bootstrap.GameBootstrap.Relaunch(Sculpt.Game.Bootstrap.GameBootstrap.Launch.Menu, Sculpt.Game.Bootstrap.GameBootstrap.CurrentMap); }
             if (GUILayout.Button("Quit game", _button, GUILayout.Height(32), GUILayout.Width(140))) Application.Quit();
             GUILayout.EndHorizontal();
             GUILayout.EndArea();

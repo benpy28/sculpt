@@ -63,18 +63,18 @@ namespace Sculpt.Core.Tests
         [Test]
         public void RunReachesSixQuickly()
         {
-            Run(6, Fwd());
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(6.0).Within(1e-6), "full speed within 0.1 s");
+            Run(7, Fwd());
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.RunSpeed).Within(1e-6), "full speed within about 0.1 s");
             Run(30, Fwd());
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(6.0).Within(1e-6));
-            Assert.That(_s.Velocity.X, Is.EqualTo(6.0).Within(1e-6), "yaw pi/2 faces east");
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.RunSpeed).Within(1e-6));
+            Assert.That(_s.Velocity.X, Is.EqualTo(_c.RunSpeed).Within(1e-6), "yaw pi/2 faces east");
         }
 
         [Test]
         public void SprintAndCrouchSpeeds()
         {
             Run(20, Fwd(sprint: true));
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(8.5).Within(1e-6));
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.SprintSpeed).Within(1e-6));
             Assert.That(_s.Sprinting, Is.True);
             Place(3, 0, 10);
             Run(20, Fwd(crouch: true));
@@ -86,7 +86,7 @@ namespace Sculpt.Core.Tests
         public void DiagonalIsNotFaster()
         {
             Run(20, new MoveInput { MoveZ = 1, MoveX = 1, Yaw = 0 });
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(6.0).Within(1e-6));
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.RunSpeed).Within(1e-6));
         }
 
         [Test]
@@ -94,7 +94,7 @@ namespace Sculpt.Core.Tests
         {
             Run(20, new MoveInput { MoveZ = -1, Yaw = East, SprintHeld = true });
             Assert.That(_s.Sprinting, Is.False);
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(6.0).Within(1e-6));
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.RunSpeed).Within(1e-6));
         }
 
         [Test]
@@ -203,7 +203,7 @@ namespace Sculpt.Core.Tests
             Run(20, Fwd(sprint: true));
             Tick(new MoveInput { MoveZ = 1, Yaw = East, SprintHeld = true, JumpPressed = true });
             Run(20, new MoveInput { Yaw = East });
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(8.5).Within(1e-6));
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.SprintSpeed).Within(1e-6));
         }
 
         // ---------- Slide ----------
@@ -219,11 +219,12 @@ namespace Sculpt.Core.Tests
         {
             StartSlideFromSprint();
             Assert.That(_s.Mode, Is.EqualTo(MoveMode.Slide));
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(10 - 7.0 / 60).Within(1e-6));
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.SlideBoostSpeed - _c.SlideFriction / 60).Within(1e-6));
             Assert.That(_events.Any(e => e.Type == MoveEventType.SlideStarted && e.Value == 1), Is.True);
             int ticks = 1;
             while (_s.Mode == MoveMode.Slide && ticks < 200) { Tick(Fwd(crouch: true)); ticks++; }
-            Assert.That(ticks, Is.InRange(55, 65), "about 1 s from 10 to 3 m/s");
+            double expect = (_c.SlideBoostSpeed - _c.SlideEndSpeed) / _c.SlideFriction * 60;
+            Assert.That(ticks, Is.InRange(expect - 5, expect + 5), "boost to the end speed at the slide friction (about 1.3 s)");
             Assert.That(_s.Crouched, Is.True);
         }
 
@@ -235,7 +236,7 @@ namespace Sculpt.Core.Tests
             Run(30, Fwd(sprint: true)); // stand and sprint again, 0.67 s after the first boost
             Tick(new MoveInput { MoveZ = 1, Yaw = East, SprintHeld = true, CrouchHeld = true, CrouchPressed = true });
             Assert.That(_s.Mode, Is.EqualTo(MoveMode.Slide));
-            Assert.That(_s.HorizontalSpeed, Is.LessThan(8.5), "no boost during cooldown");
+            Assert.That(_s.HorizontalSpeed, Is.LessThan(_c.SprintSpeed), "no boost during cooldown");
             Run(10, Fwd(crouch: true));
             Run(60, Fwd(sprint: true)); // now past 1.5 s
             Tick(new MoveInput { MoveZ = 1, Yaw = East, SprintHeld = true, CrouchHeld = true, CrouchPressed = true });
@@ -302,7 +303,7 @@ namespace Sculpt.Core.Tests
             }
             Assert.That(started, Is.True);
             Assert.That(maxSpeed, Is.GreaterThan(12.0));
-            Assert.That(maxSpeed, Is.LessThanOrEqualTo(14.0 + 1e-9));
+            Assert.That(maxSpeed, Is.LessThanOrEqualTo(_c.SlideMaxSpeed + 1e-9));
         }
 
         [Test]
@@ -364,7 +365,7 @@ namespace Sculpt.Core.Tests
             for (int i = 0; i < 60 && _s.Mode == MoveMode.Air; i++) Tick(new MoveInput { Yaw = East });
             Run(20, Fwd());
             Assert.That(_s.Mode, Is.EqualTo(MoveMode.Ground));
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(6.0).Within(1e-6));
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.RunSpeed).Within(1e-6));
             Assert.That(_events.Any(e => e.Type == MoveEventType.SlideLandSuccess), Is.False);
         }
 
@@ -399,7 +400,7 @@ namespace Sculpt.Core.Tests
             for (int i = 0; i < 90; i++) Tick(Fwd(sprint: true));
             Assert.That(_events.Any(e => e.Type == MoveEventType.Vaulted), Is.True);
             Assert.That(_s.Position.X, Is.GreaterThan(8 * B), "made it over");
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(8.5).Within(1e-6));
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.SprintSpeed).Within(1e-6));
         }
 
         [Test]

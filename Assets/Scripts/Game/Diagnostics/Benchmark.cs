@@ -12,7 +12,8 @@ using UnityEngine;
 namespace Sculpt.Game.Diagnostics
 {
     /// <summary>
-    /// Repeatable performance run, started with the command line option -benchmark [seconds] (default 20): the camera
+    /// Repeatable performance run, started with the command line option -benchmark [seconds] (default 20), together
+    /// with -offline, -host or -connect so the game starts in play instead of at the main menu: the camera
     /// flies a fixed route (an orbit that keeps the whole map in view, then a run at eye height down the middle of the
     /// buildings), the same every time, while frame times are recorded. At the end it writes a short report (average,
     /// 1% and 0.1% low, percentiles, garbage per frame, the latency probe's numbers), optionally saves a screenshot,

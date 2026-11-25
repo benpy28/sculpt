@@ -84,9 +84,15 @@ namespace Sculpt.Core.Net
         /// </summary>
         private bool Hurt(ServerPlayer attacker, ServerPlayer victim, int damage)
         {
+            if (Match.Protects) return false; // countdown and results: nobody can be hurt
             int before = victim.State.Health(Weapons);
             bool killed = WeaponRules.ApplyDamage(ref victim.State, damage, Tick, Weapons);
             int dealt = Math.Max(0, before - victim.State.Health(Weapons));
+            if (attacker != null && attacker != victim && attacker.Team != victim.Team && dealt > 0)
+            {
+                victim.LastHurtBy = attacker.Id; // a fall soon after still credits them (OnKilled)
+                victim.LastHurtTick = Tick;
+            }
             if (attacker != null && attacker != victim && attacker.Team != victim.Team && dealt > 0 && Walls != null)
                 BarOf(attacker.Id).GainForDamage(dealt, Walls.Config.BarPer10Damage);
             return killed;

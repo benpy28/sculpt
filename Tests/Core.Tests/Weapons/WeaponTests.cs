@@ -264,7 +264,7 @@ namespace Sculpt.Core.Tests.Weapons
             s.Crouched = true;
             Assert.That(WeaponRules.Spread(s, _mc, smg), Is.LessThan(still));
             s.Crouched = false;
-            s.Velocity = new Vec3d(6, 0, 0);
+            s.Velocity = new Vec3d(_mc.RunSpeed, 0, 0);
             Assert.That(WeaponRules.Spread(s, _mc, smg), Is.EqualTo(still + smg.MoveSpread).Within(1e-12));
         }
 

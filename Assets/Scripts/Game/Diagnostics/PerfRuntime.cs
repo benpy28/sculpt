@@ -63,6 +63,7 @@ namespace Sculpt.Game.Diagnostics
         private NetSession _session;
         private LocalPlayer _player;
         private UI.SettingsMenu _menu;
+        private UI.MainMenu _mainMenu;
         private GameInput _input;
         private Func<double> _clock;
         private double _frameStartMs = -1;
@@ -97,6 +98,7 @@ namespace Sculpt.Game.Diagnostics
             p.Profile = profile;
             p._clock = () => NowMs;
             p._menu = host.GetComponent<UI.SettingsMenu>();
+            p._mainMenu = host.GetComponent<UI.MainMenu>();
             session.ClientChanged += p.Latency.Clear;
             p._drawCalls = ProfilerRecorder.StartNew(ProfilerCategory.Render, "Draw Calls Count");
             p._batches = ProfilerRecorder.StartNew(ProfilerCategory.Render, "Batches Count");
@@ -230,9 +232,15 @@ namespace Sculpt.Game.Diagnostics
         internal void LateUpdateEnded()
         {
             _lateEndMs = NowMs;
-            // The settings menu needs its layout pass only while it is open. Decided here, after every script's Update
-            // (the menu opens in its own) and before anything is drawn, so the pass is never missing on its first frame.
+            // The menus need their layout pass only while they show. Decided here, after every script's Update (a menu
+            // opens in its own) and before anything is drawn, so the pass is never missing on a menu's first frame.
             if (_menu != null && _menu.useGUILayout != _menu.IsOpen) _menu.useGUILayout = _menu.IsOpen;
+            if (_mainMenu != null && _session != null)
+            {
+                // The main menu also draws its "connecting" box while a join is in progress.
+                bool showing = _mainMenu.IsOpen || (_session.Mode == NetMode.Client && !_session.Client.Joined);
+                if (_mainMenu.useGUILayout != showing) _mainMenu.useGUILayout = showing;
+            }
         }
 
         private void OnDestroy()

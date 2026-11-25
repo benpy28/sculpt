@@ -20,6 +20,8 @@ namespace Sculpt.Game.Settings
         /// <summary>Wind and birdsong 0..1 (scaled by master).</summary>
         public float AmbienceVolume = 0.7f;
         /// <summary>Hold (default) or toggle, per the keybind table.</summary>
+        /// <summary>Sprint and crouch/slide default to toggle (Ben 2026-11-25: they share a finger; less holding). New keys so
+        /// the new default reaches everyone once; hold stays a setting.</summary>
         public bool SprintToggle, CrouchToggle, ZoomToggle;
 
         public const float MinFov = 60f, MaxFov = 120f;
@@ -40,8 +42,8 @@ namespace Sculpt.Game.Settings
                 SpeedLines = PlayerPrefs.GetInt("sculpt.speedlines", 1) == 1,
                 MasterVolume = PlayerPrefs.GetFloat("sculpt.volume", 0.8f),
                 AmbienceVolume = PlayerPrefs.GetFloat("sculpt.ambience", 0.7f),
-                SprintToggle = PlayerPrefs.GetInt("sculpt.sprintToggle", 0) == 1,
-                CrouchToggle = PlayerPrefs.GetInt("sculpt.crouchToggle", 0) == 1,
+                SprintToggle = PlayerPrefs.GetInt("sculpt.sprintToggle.v2", 1) == 1,
+                CrouchToggle = PlayerPrefs.GetInt("sculpt.crouchToggle.v2", 1) == 1,
                 ZoomToggle = PlayerPrefs.GetInt("sculpt.zoomToggle", 0) == 1,
             }.Clamped();
         }
@@ -67,8 +69,8 @@ namespace Sculpt.Game.Settings
             PlayerPrefs.SetInt("sculpt.speedlines", SpeedLines ? 1 : 0);
             PlayerPrefs.SetFloat("sculpt.volume", MasterVolume);
             PlayerPrefs.SetFloat("sculpt.ambience", AmbienceVolume);
-            PlayerPrefs.SetInt("sculpt.sprintToggle", SprintToggle ? 1 : 0);
-            PlayerPrefs.SetInt("sculpt.crouchToggle", CrouchToggle ? 1 : 0);
+            PlayerPrefs.SetInt("sculpt.sprintToggle.v2", SprintToggle ? 1 : 0);
+            PlayerPrefs.SetInt("sculpt.crouchToggle.v2", CrouchToggle ? 1 : 0);
             PlayerPrefs.SetInt("sculpt.zoomToggle", ZoomToggle ? 1 : 0);
             PlayerPrefs.Save();
         }

@@ -92,6 +92,12 @@ namespace Sculpt.Core.Net
         public int ClockSnaps { get; private set; }
         public double RttTicks { get; private set; }
         public int LastSnapshotTick { get; private set; } = int.MinValue;
+        /// <summary>The match as the server last told it (phase, timer, scores).</summary>
+        public readonly MatchState Match = new MatchState();
+        /// <summary>Set when the server can't be joined (a different game build); empty otherwise.</summary>
+        public string JoinError { get; private set; } = "";
+        /// <summary>Smoothed estimate of the server's tick right now (for timers).</summary>
+        public double ServerTimeEstimate => _serverTime;
         public int SnapshotsReceived { get; private set; }
         public int DroppedPackets { get; private set; }
         public bool LastInputWasRealOnServer { get; private set; } = true;
@@ -215,6 +221,10 @@ namespace Sculpt.Core.Net
                         Items.ReplaceAll(im.Items);
                         break;
                     }
+                    case MsgType.Match:
+                        if (!Joined) return;
+                        MatchProtocol.Read(ref r, Match);
+                        break;
                     case MsgType.Snapshot:
                         if (!Joined) return;
                         OnSnapshot(Protocol.ReadSnapshot(ref r, _snapOthers));
@@ -230,8 +240,14 @@ namespace Sculpt.Core.Net
 
         private void OnWelcome(in WelcomeMsg m)
         {
-            if (m.ProtocolVersion != Protocol.Version) throw new NetFormatException($"Protocol {m.ProtocolVersion}, expected {Protocol.Version}.");
+            if (m.ProtocolVersion != Protocol.Version)
+            {
+                JoinError = m.ProtocolVersion > Protocol.Version ? "The host runs a newer build of the game. Use the same build on both PCs." : "The host runs an older build of the game. Use the same build on both PCs.";
+                throw new NetFormatException($"Protocol {m.ProtocolVersion}, expected {Protocol.Version}.");
+            }
             Joined = true;
+            Match.Phase = MatchPhase.Off;
+            Match.Scores.Clear();
             PlayerId = m.PlayerId;
             Team = m.Team;
             Spawn = m.Spawn;

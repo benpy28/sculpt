@@ -18,6 +18,7 @@ namespace Sculpt.Core.Net
         Combat = 7,    // server -> client, reliable: shots, hits and kills of one tick
         Tiles = 8,     // server -> client, reliable: wall tile changes of one tick, or every changed tile for a late joiner
         Items = 9,     // server -> client, reliable: the whole list of items on the ground, whenever it changes (and on join)
+        Match = 10,    // server -> client, reliable: match phase, timer and scores, whenever they change (and on join)
     }
 
     public struct WelcomeMsg

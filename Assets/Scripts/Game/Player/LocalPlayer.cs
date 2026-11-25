@@ -97,6 +97,7 @@ namespace Sculpt.Game.Player
         private CourseInfo _course;
         private ShowcaseRun _showcase;
         private bool _showcaseLatch, _warping;
+        private float _showcaseYaw;
         /// <summary>The showcase run in progress (null when none). Its inputs replace yours until it ends or you move.</summary>
         public ShowcaseRun Showcase => _showcase;
         /// <summary>The last finished showcase, for the dev HUD summary.</summary>
@@ -153,7 +154,16 @@ namespace Sculpt.Game.Player
             bool clickToLock = !CursorLocked && !InputBlocked && mouse != null && mouse.leftButton.wasPressedThisFrame;
             if (clickToLock) LockCursor(true);
 
-            if (CursorLocked)
+            if (_showcase != null)
+            {
+                // The showcase steers per 60 Hz tick and sometimes turns sharply (wall kicks). The camera follows its
+                // heading smoothly every frame instead, and the mouse doesn't fight it (that was the F6 jitter).
+                float k = 1f - Mathf.Exp(-Time.unscaledDeltaTime / 0.09f);
+                Yaw = Mathf.Repeat(Mathf.LerpAngle(Yaw, _showcaseYaw, k) + 180f, 360f) - 180f;
+                Pitch = Mathf.Lerp(Pitch, 12f, k);
+                LookDelta = Vector2.zero;
+            }
+            else if (CursorLocked)
             {
                 Vector2 d = _input.Look.ReadValue<Vector2>();
                 float k = _client.DegreesPerCount;
@@ -179,6 +189,8 @@ namespace Sculpt.Game.Player
             if (_input.Punch.WasPressedThisFrame()) _punchLatch = true;
             if (_client.SprintToggle && _input.Sprint.WasPressedThisFrame()) _sprintOn = !_sprintOn;
             if (_client.CrouchToggle && _input.Crouch.WasPressedThisFrame()) _crouchOn = !_crouchOn;
+            // Toggle mode: pressing sprint while toggled into a crouch stands you up and sprints.
+            if (_client.SprintToggle && _client.CrouchToggle && _input.Sprint.WasPressedThisFrame() && _crouchOn && State.Mode != MoveMode.Slide) _crouchOn = false;
             if (_client.ZoomToggle && !InSculptMode && _input.Aim.WasPressedThisFrame()) _zoomOn = !_zoomOn;
 
             if (!InSculptMode || clickToLock) return;
@@ -332,6 +344,8 @@ namespace Sculpt.Game.Player
             if (h0.Slot != _lastSlot) { _lastSlot = h0.Slot; _zoomOn = false; }
             if (sculpting) _zoomOn = false;
             if (move.sqrMagnitude < 0.01f) _sprintOn = false; // a toggled sprint ends when you stop
+            // ...and when you fire or aim (Ben: toggles end on their own, so you rarely press again to turn them off).
+            if (_client.SprintToggle && active && !sculpting && (_input.Fire.IsPressed() || _input.Aim.IsPressed())) _sprintOn = false;
             bool sprintHeld = active && (_client.SprintToggle ? _sprintOn : _input.Sprint.IsPressed());
             bool crouchHeld = active && (_client.CrouchToggle ? _crouchOn : _input.Crouch.IsPressed());
             bool aimHeld = active && !sculpting && (_client.ZoomToggle ? _zoomOn : _input.Aim.IsPressed());
@@ -395,20 +409,24 @@ namespace Sculpt.Game.Player
             if (_showcase != null)
             {
                 mi = _showcase.Next(State);
-                Yaw = (float)(mi.Yaw * Mathf.Rad2Deg);
-                Pitch = Mathf.MoveTowards(Pitch, 12f, 2f);
+                _showcaseYaw = (float)(mi.Yaw * Mathf.Rad2Deg); // the camera eases toward it per frame (SampleFrame)
                 if (_showcase.Finished) StopShowcase();
             }
 
+            MoveMode modeBefore = State.Mode;
             int before = Events.Count;
             Net.PredictTick(mi, Pitch, respawn, hand, confirm, action, Events);
+            // Toggle crouch: one press is a whole slide. When the slide runs out on the ground you stand back up instead
+            // of being left crouch-walking (jumping out of a slide keeps it on, so the landing slides again).
+            if (_client.CrouchToggle && _crouchOn && modeBefore == MoveMode.Slide && State.Mode == MoveMode.Ground) _crouchOn = false;
             for (int i = before; i < Events.Count; i++)
             {
                 if (Events[i].Type != MoveEventType.Respawned) continue;
+                _crouchOn = _sprintOn = false; // toggles never carry over a respawn
                 if (_warping && _course != null)
                 {
                     _warping = false;
-                    Yaw = (float)(_course.StartYaw * Mathf.Rad2Deg);
+                    Yaw = _showcaseYaw = (float)(_course.StartYaw * Mathf.Rad2Deg);
                     Pitch = 12f;
                     _showcase = new ShowcaseRun(_course, _cfg);
                     Debug.Log("[SCULPT] Movement showcase: started.");
@@ -416,6 +434,9 @@ namespace Sculpt.Game.Player
                 else FaceSpawn();
             }
         }
+
+        /// <summary>Turn to face the way your spawn faces (a new match moved you back there).</summary>
+        public void FaceSpawnNow() => FaceSpawn();
 
         private void StopShowcase()
         {
@@ -431,7 +452,10 @@ namespace Sculpt.Game.Player
         public void Render(float alpha)
         {
             MotorState prev = Net.PreviousPredicted, cur = Net.Predicted;
-            RenderFeet = Vector3.Lerp(prev.Position.ToUnity(), cur.Position.ToUnity(), alpha) + Net.CorrectionOffset.ToUnity();
+            // A warp or respawn jumps metres in one tick: draw the new spot, never a one-frame streak across the map.
+            Vector3 from = prev.Position.ToUnity(), to = cur.Position.ToUnity();
+            if ((to - from).sqrMagnitude > 16f) from = to;
+            RenderFeet = Vector3.Lerp(from, to, alpha) + Net.CorrectionOffset.ToUnity();
             RenderSpeed = Mathf.Lerp((float)prev.HorizontalSpeed, (float)cur.HorizontalSpeed, alpha);
             // Recoil kicks are instant (no lerp from the previous tick's value when it rose), recovery is smooth.
             float pp = (float)prev.Weapon.RecoilPitch, cp = (float)cur.Weapon.RecoilPitch;

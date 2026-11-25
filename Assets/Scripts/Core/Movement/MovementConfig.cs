@@ -8,14 +8,14 @@ namespace Sculpt.Core
         public double Dt = 1.0 / SimTime.TicksPerSecond;
 
         // Speeds
-        public double RunSpeed = 6.0;
-        public double SprintSpeed = 8.5;
+        public double RunSpeed = 6.4;
+        public double SprintSpeed = 9.2;
         public double CrouchSpeed = 3.0;
 
         // Acceleration: snappy, never floaty.
         public double GroundAccel = 60.0;     // 0 -> run in 0.1 s
         public double GroundDecel = 50.0;     // run -> stop in 0.12 s
-        public double OverspeedDecel = 30.0;  // bleeding speed above the target (e.g. after a slide or landing)
+        public double OverspeedDecel = 20.0;  // bleeding speed above the target (e.g. after a slide or landing)
         public double AirAccelFraction = 0.15;
 
         // Vertical
@@ -34,13 +34,13 @@ namespace Sculpt.Core
         public double CrouchEye = 0.95;
 
         // Slide
-        public double SlideBoostSpeed = 10.0;
-        public double SlideFriction = 7.0;          // 10 -> 3 m/s in ~1 s on flat ground
-        public double SlideMaxSpeed = 14.0;
+        public double SlideBoostSpeed = 11.0;
+        public double SlideFriction = 6.0;          // 11 -> 3 m/s in ~1.3 s on flat ground
+        public double SlideMaxSpeed = 15.0;
         public double SlideEndSpeed = 3.0;
         public double SlideMinStartSpeed = 5.0;     // must be sprinting at about this speed to slide
         public double SlideTurnRate = 1.6;          // rad/s of steering while sliding
-        public int SlideBoostCooldownTicks = 90;    // 1.5 s, flat ground only
+        public int SlideBoostCooldownTicks = 72;    // 1.2 s, flat ground only
         public int SlideLandWindowTicks = 9;        // 150 ms
         public double SlideLandMinSpeed = 5.0;
 
@@ -85,7 +85,7 @@ namespace Sculpt.Core
         // little, so flats slowly cost speed and slopes, ramps and stairs are where speed is built.
         public double SlideHopKeep = 0.95;            // speed kept by a slide-land that follows a slide-jump
         public int SlideHopChainTicks = 60;           // a slide-land this soon after a slide-jump counts as a hop
-        public double AirSoftCapSpeed = 14.0;         // above this, air speed bleeds (explosion boosts later)
+        public double AirSoftCapSpeed = 15.0;         // above this, air speed bleeds (explosion boosts later)
         public double AirSoftCapDecel = 4.0;
 
         // Sprint to aim
