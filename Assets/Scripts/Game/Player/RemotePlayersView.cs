@@ -160,7 +160,7 @@ namespace Sculpt.Game.Player
         }
 
         /// <summary>Unit box (bottom-centred unless centred) with per-face shading baked into vertex colours.</summary>
-        private static Mesh BuildBox(Color? colour = null, bool centred = false)
+        internal static Mesh BuildBox(Color? colour = null, bool centred = false)
         {
             Color c = colour ?? Color.grey;
             var verts = new List<Vector3>();

@@ -62,5 +62,37 @@ namespace Sculpt.Core.Tests
             Assert.That(a.run.Ticks, Is.EqualTo(b.run.Ticks));
             Assert.That(a.s.Position, Is.EqualTo(b.s.Position));
         }
+
+        [Test]
+        public void RaceGhostIsTheTasAndTheClockStartsAtGo()
+        {
+            var mc = new MovementConfig();
+            var ground = BreachMap.BuildGround();
+            var brushes = BreachMap.BuildBrushes(out BreachMapInfo info);
+            ITerrain t = BreachMap.Terrain(ground, brushes);
+            CourseRace race = CourseRace.Begin(t, info.Course, mc);
+            var (run, _, _, _) = Play(mc);
+            Assert.That(race.GhostFinishTicks, Is.EqualTo(run.FinishTicks), "the ghost is exactly the TAS");
+            Assert.That(race.GhostAt(0), Is.EqualTo(info.Course.Start));
+            Assert.That(race.GhostAt(1e9), Is.EqualTo(race.Ghost[race.Ghost.Length - 1]), "stays where it stopped");
+
+            // Countdown: 3, 2, 1, GO. Standing at the start through it finishes nothing.
+            MotorState me = MotorState.At(info.Course.Start);
+            var seen = new List<int>();
+            while (!race.Started) { if (seen.Count == 0 || seen[seen.Count - 1] != race.CountdownSeconds) seen.Add(race.CountdownSeconds); race.Step(me); }
+            Assert.That(seen, Is.EqualTo(new[] { 3, 2, 1 }));
+            Assert.That(race.CountdownSeconds, Is.EqualTo(0));
+            Assert.That(race.Tick, Is.EqualTo(CourseRace.CountdownTicks));
+            Assert.That(race.RunTicks, Is.EqualTo(0));
+
+            // Ten seconds of running elsewhere, then onto the pad: that tick is the time, and later visits don't change it.
+            for (int k = 0; k < SimTime.TicksPerSecond * 10; k++) race.Step(me);
+            Assert.That(race.PlayerFinished, Is.False);
+            MotorState onPad = MotorState.At((info.Course.Finish.Min + info.Course.Finish.Max) * 0.5 - new Vec3d(0, 1, 0));
+            race.Step(onPad);
+            Assert.That(race.PlayerFinishTicks, Is.EqualTo(SimTime.TicksPerSecond * 10 + 1));
+            race.Step(me); race.Step(onPad);
+            Assert.That(race.PlayerFinishTicks, Is.EqualTo(SimTime.TicksPerSecond * 10 + 1));
+        }
     }
 }

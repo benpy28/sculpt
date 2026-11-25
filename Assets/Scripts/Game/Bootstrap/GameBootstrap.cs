@@ -219,7 +219,11 @@ namespace Sculpt.Game.Bootstrap
 
             _player = new GameObject("Local Player").AddComponent<LocalPlayer>();
             _player.Init(_session, movement, movementSettings, _input, client);
-            if (breachInfo?.Course != null) _player.SetCourse(breachInfo.Course);
+            if (breachInfo?.Course != null)
+            {
+                _player.SetCourse(breachInfo.Course);
+                new GameObject("Course Race").AddComponent<CourseRaceView>().Init(_player, movement);
+            }
             _world.TrackPlayers(_player, _session);
 
             new GameObject("Remote Players").AddComponent<RemotePlayersView>().Init(_session, movement);

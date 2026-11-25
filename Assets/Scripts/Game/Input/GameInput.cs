@@ -46,6 +46,7 @@ namespace Sculpt.Game.Input
         public readonly InputAction DevRespawn;
         public readonly InputAction DevHud;
         public readonly InputAction DevShowcase;
+        public readonly InputAction DevShowcaseWatch;
         public readonly InputAction DevPerf;
         public readonly InputAction DevSimPing;
         public readonly InputAction DevSimLoss;
@@ -98,7 +99,8 @@ namespace Sculpt.Game.Input
             DevRespawn = Dev.AddAction("Respawn", InputActionType.Button, "<Keyboard>/f1");
             DevHud = Dev.AddAction("Dev HUD", InputActionType.Button, "<Keyboard>/f2");
             DevPerf = Dev.AddAction("Latency Panel", InputActionType.Button, "<Keyboard>/f3");
-            DevShowcase = Dev.AddAction("Movement Showcase", InputActionType.Button, "<Keyboard>/f6");
+            DevShowcase = Dev.AddAction("Race the TAS", InputActionType.Button, "<Keyboard>/f6");
+            DevShowcaseWatch = Dev.AddAction("Watch the TAS", InputActionType.Button, "<Keyboard>/f7");
             DevSimPing = Dev.AddAction("Sim Ping", InputActionType.Button, "<Keyboard>/f8");
             DevSimLoss = Dev.AddAction("Sim Loss", InputActionType.Button, "<Keyboard>/f9");
             DevSimJitter = Dev.AddAction("Sim Jitter", InputActionType.Button, "<Keyboard>/f10");
