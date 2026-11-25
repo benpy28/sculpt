@@ -74,7 +74,7 @@ namespace Sculpt.Core.Tests.Weapons
             var a = h.AddClient(SculptNetHarness.FeetIn(10, 5), team: 1);
             var b = h.AddClient(SculptNetHarness.FeetIn(10, 12), team: 2);
             a.Script = Shooter(Weapon.Pistol, () => b, k => k % 20 == 0);
-            h.RunSeconds(0.7 + 6 * 20.0 / SimTime.TicksPerSecond + 0.3);
+            h.RunSeconds(0.7 + 6 * 20.0 / 60 + 0.3); // the script counts sixtieths
 
             Assert.That(b.ServerSide.State.Dead, Is.True, "6 x 25.5 = 153 (5 x 25.5 = 127.5 is not enough)");
             Assert.That(CountHits(a, b.ServerSide.Id), Is.EqualTo(6), "the shooter gets a hit marker per shot");
