@@ -628,16 +628,18 @@ namespace Sculpt.Core
             return hit;
         }
 
-        /// <summary>Can a charge break this cell? Cracked plain cells (below half health) and patched cells; never
-        /// reinforced ones.</summary>
+        /// <summary>Has this cell been hit (a charge counts it)? Any damage on a plain cell, and every patched cell; never a
+        /// reinforced one (Ben 2026-11-25: "sprint through low health walls").</summary>
         public bool CellWeak(int tile, int cell)
         {
             WallTile t = _tiles[tile];
             ulong bit = 1ul << cell;
             if ((t.Steel & bit) != 0) return false;
             if ((t.Patch & bit) != 0) return true;
-            return _hp[tile * Cells + cell] < Config.IntactHealth * Config.DamagedBelowFraction;
+            return _hp[tile * Cells + cell] < Config.MaxCellHealth(false, false);
         }
+
+        public bool CellReinforced(int tile, int cell) => ((_tiles[tile].Steel >> cell) & 1) != 0;
 
         /// <summary>A charge breaks these cells (per tile), then the fairness tidy runs (ties go open).</summary>
         public void ChargeOpen(IReadOnlyList<ChargeCut> cuts, int by)
