@@ -86,7 +86,7 @@ namespace Sculpt.Game.Audio
         /// are local information: they fade out by maxDistance). Steals the oldest voice when the pool is full.
         /// </summary>
         public static void Play(AudioClip clip, Vector3 at, float volume = 1f, float pitch = 1f, bool spatial = true,
-                                float minDistance = 2f, float maxDistance = 45f, bool logarithmic = false, int priority = 128)
+                                float minDistance = 2f, float maxDistance = 45f, bool logarithmic = false, int priority = 128, float delay = 0f)
         {
             if (clip == null) return;
             AudioSource s = Voice();
@@ -99,7 +99,7 @@ namespace Sculpt.Game.Audio
             s.minDistance = minDistance;
             s.maxDistance = maxDistance;
             s.priority = spatial ? priority : Mathf.Min(priority, 16);
-            s.Play();
+            if (delay > 0f) s.PlayDelayed(delay); else s.Play();
         }
 
         private static AudioSource Voice()
@@ -108,7 +108,7 @@ namespace Sculpt.Game.Audio
             {
                 _root = new GameObject("Sfx Pool").transform;
                 UnityEngine.Object.DontDestroyOnLoad(_root.gameObject);
-                _pool = new AudioSource[48];
+                _pool = new AudioSource[64]; // guns play a dry layer plus one or two reflection layers per shot
                 for (int i = 0; i < _pool.Length; i++)
                 {
                     var go = new GameObject("Sfx " + i);
