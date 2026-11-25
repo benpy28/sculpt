@@ -136,7 +136,7 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
-        public void AFallSoonAfterBeingHurt_CountsAsTheEnemysKill_ALateFallIsJustADeath()
+        public void InA1v1_EveryFallIsTheOpponentsKill_HoweverLongAgoTheyHurtYou()
         {
             foreach (bool recent in new[] { true, false })
             {
@@ -159,7 +159,31 @@ namespace Sculpt.Core.Tests.Weapons
                 b.Script = t => new MoveInput { Yaw = -Math.PI / 2, MoveZ = 1 }; // west, off the edge
                 h.RunSeconds(2.0);
                 Assert.That(b.ServerSide.MatchDeaths, Is.EqualTo(1), $"the fall killed it (at {b.ServerSide.State.Position}, damage {b.ServerSide.State.Damage}, dead {b.ServerSide.State.Dead})");
-                Assert.That(a.ServerSide.MatchKills, Is.EqualTo(recent ? 1 : 0), recent ? "credited to the enemy who hurt it" : "too long ago: just a death");
+                // Ben 2026-11-25: "in a 1v1 if someone dies from fall damage or basically anything ... credit the other
+                // player" (the 8 s last-hurt window only applies outside a 1v1 match).
+                Assert.That(a.ServerSide.MatchKills, Is.EqualTo(1), recent ? "credited to the enemy who hurt it" : "long ago, still the opponent's kill");
+            }
+        }
+
+        [Test]
+        public void OutsideA1v1Match_AFallCountsAsTheEnemysKillOnlyWithin8Seconds()
+        {
+            foreach (bool recent in new[] { true, false })
+            {
+                DuelMap.BuildBrushes(out BreachMapInfo info);
+                Aabb hall = info.Block.Buildings[0];
+                var roofEdge = new Vec3d(hall.Min.X + 1.0, hall.Max.Y, hall.Min.Z + 2.5);
+                var h = new NetHarness(() => DuelMap.Terrain(DuelMap.BuildGround(), DuelMap.BuildBrushes(out _)), info.TeamSpawns[0][0]);
+                var a = h.AddClient(spawn: info.TeamSpawns[0][0]);
+                var b = h.AddClient(spawn: roofEdge, team: 2, seed: 2);
+                h.RunSeconds(0.5);
+                b.ServerSide.State.Damage = h.Server.Movement.Weapons.MaxHealth - 2;
+                b.ServerSide.LastHurtBy = a.ServerSide.Id;
+                b.ServerSide.LastHurtTick = recent ? h.Server.Tick : h.Server.Tick - NetServer.KillCreditTicks - 60 * SimTime.Per60;
+                b.Script = t => new MoveInput { Yaw = -Math.PI / 2, MoveZ = 1 };
+                h.RunSeconds(2.0);
+                Assert.That(b.ServerSide.Deaths, Is.EqualTo(1), "the fall killed it");
+                Assert.That(a.ServerSide.Kills, Is.EqualTo(recent ? 1 : 0), recent ? "credited to the enemy who hurt it" : "too long ago: just a death");
             }
         }
 

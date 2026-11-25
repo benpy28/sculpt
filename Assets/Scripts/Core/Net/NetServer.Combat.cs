@@ -218,6 +218,9 @@ namespace Sculpt.Core.Net
             // (Ben's play-test: fell on 10 health after a fight and nobody got the kill). Otherwise it is just a death.
             if ((killer == 0 || killer == victim.Id) && victim.LastHurtBy != 0 && Tick - victim.LastHurtTick <= KillCreditTicks)
                 killer = victim.LastHurtBy;
+            // In a 1v1 match every death is the other player's kill, however it happened and however long ago they last
+            // hurt you (Ben 2026-11-25: "its a 1v1 so credit the other player"). Other modes keep the 8 s rule above.
+            if ((killer == 0 || killer == victim.Id) && Match.CountsKills) killer = TheOpponent(victim);
             victim.LastHurtBy = 0;
             ServerPlayer k = killer != 0 && killer != victim.Id ? FindById(killer) : null;
             if (k != null) k.Kills++;
