@@ -46,6 +46,7 @@ namespace Sculpt.Game.World
         {
             Shader shader = Shader.Find("SCULPT/Voxel");
             if (shader == null) return;
+            BuildSkirt(cx, cz, shader);
             bool linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
             var v = new List<Vector3>();
             var col = new List<Color>();
@@ -65,6 +66,45 @@ namespace Sculpt.Game.World
             var r = go.AddComponent<MeshRenderer>();
             r.sharedMaterial = new Material(shader) { name = "Backdrop (runtime)" };
             r.sharedMaterial.SetFloat("_Detail", 0.03f);
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+        }
+
+        /// <summary>
+        /// Meadow ground from the map's edge out under the backdrop (visual only, nobody can go there), so the play
+        /// area doesn't end in a floating slab with sky under it. A square frame around the map at y 0, drawn with the
+        /// terrain's own ground look; the map's own ground fills the hole exactly.
+        /// </summary>
+        private static void BuildSkirt(float cx, float cz, Shader shader)
+        {
+            float sx = cx * 2, sz = cz * 2, far = 420f;
+            var v = new List<Vector3>();
+            var tri = new List<int>();
+            void Rect(float x0, float z0, float x1, float z1)
+            {
+                int i = v.Count;
+                v.Add(new Vector3(x0, 0, z0)); v.Add(new Vector3(x0, 0, z1)); v.Add(new Vector3(x1, 0, z1)); v.Add(new Vector3(x1, 0, z0));
+                tri.Add(i); tri.Add(i + 1); tri.Add(i + 2); tri.Add(i); tri.Add(i + 2); tri.Add(i + 3);
+            }
+            Rect(-far, -far, sx + far, 0);        // south
+            Rect(-far, sz, sx + far, sz + far);   // north
+            Rect(-far, 0, 0, sz);                 // west
+            Rect(sx, 0, sx + far, sz);            // east
+            var mesh = new Mesh { name = "Ground skirt" };
+            mesh.SetVertices(v);
+            mesh.SetTriangles(tri, 0);
+            var n = new Vector3[v.Count];
+            var c = new Color[v.Count];
+            var k = new Vector2[v.Count];
+            for (int i = 0; i < v.Count; i++) { n[i] = Vector3.up; c[i] = Color.white; k[i] = new Vector2(1f, 0f); } // kind: ground
+            mesh.normals = n;
+            mesh.colors = c;
+            mesh.SetUVs(1, k);
+            mesh.RecalculateBounds();
+            var go = new GameObject("Ground skirt");
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var r = go.AddComponent<MeshRenderer>();
+            r.sharedMaterial = new Material(shader) { name = "Ground skirt (runtime)" };
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             r.receiveShadows = false;
         }

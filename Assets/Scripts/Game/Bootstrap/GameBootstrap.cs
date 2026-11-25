@@ -160,7 +160,8 @@ namespace Sculpt.Game.Bootstrap
             _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
 
             _world = new GameObject("World").AddComponent<WorldView>();
-            _world.Init(_grid, sculptConfig, mapInfo);
+            GroundCover cover = brushes != null ? new GroundCover(_grid, breachInfo?.Block?.Buildings) : null;
+            _world.Init(_grid, sculptConfig, mapInfo, cover);
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             if (brushes != null)
@@ -218,6 +219,9 @@ namespace Sculpt.Game.Bootstrap
                 case Launch.Menu: menu.Open(); break;
             }
             ApplyCommandLine(); // sim ping/loss/jitter, and a non-default -port
+            string tour = Sculpt.Game.Dev.PhotoTour.RequestedFolder();
+            if (tour != null && breachInfo != null && (GameInput.DevBuild || Application.isEditor))
+                gameObject.AddComponent<Sculpt.Game.Dev.PhotoTour>().Init(tour, _rig.Camera, breachInfo, CurrentMap == MapChoice.Duel);
 
             Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {(NextMap == MapChoice.Duel ? "1v1 duel" : breachMap ? "Breach" : map.ToString())} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
         }
@@ -293,6 +297,7 @@ namespace Sculpt.Game.Bootstrap
                 else if (a == "-connect" && i + 1 < args.Length) { NextLaunch = Launch.Join; NextAddress = args[i + 1]; }
                 else if (a == "-offline") NextLaunch = Launch.Offline;
                 else if (a == "-breach") NextMap = MapChoice.Breach;
+                else if (a == "-phototour") NextLaunch = Launch.Offline;
             }
         }
 
