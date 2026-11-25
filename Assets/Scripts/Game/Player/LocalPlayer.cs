@@ -68,7 +68,7 @@ namespace Sculpt.Game.Player
         private MovementSettings _settingsAsset;
         private GameInput _input;
         private ClientSettings _client;
-        private bool _jumpLatch, _crouchLatch, _respawnLatch, _toggleLatch, _fireLatch, _reloadLatch, _punchLatch;
+        private bool _jumpLatch, _crouchLatch, _respawnLatch, _toggleLatch, _fireLatch, _aimLatch, _reloadLatch, _punchLatch;
         private bool _sprintOn, _crouchOn, _zoomOn;
         private int _lastSlot = -1;
 
@@ -80,6 +80,8 @@ namespace Sculpt.Game.Player
         /// <summary>0..1 progress of a held interact key toward dropping the held item (0 when not holding).</summary>
         public float DropHold { get; private set; }
         public string InteractKeyName => UI.SculptHud.Key(_input.Interact);
+        public string AimKeyName => UI.SculptHud.Key(_input.Aim);
+        public string FireKeyName => UI.SculptHud.Key(_input.Fire);
         private bool _pickupLatch, _dropLatch, _holdForDrop;
         private int _pickupId;
         private float _holdStart;
@@ -186,6 +188,7 @@ namespace Sculpt.Game.Player
             if (_input.LastWeapon.WasPressedThisFrame()) _weaponLatch = (byte)(State.Hand.PrevSlot + 1);
             if (!InSculptMode && !clickToLock && _input.Fire.WasPressedThisFrame()) _fireLatch = true;
             if (!InSculptMode && _input.Reload.WasPressedThisFrame()) _reloadLatch = true;
+            if (!InSculptMode && !clickToLock && _input.Aim.WasPressedThisFrame()) _aimLatch = true; // C4 detonator
             if (_input.Punch.WasPressedThisFrame()) _punchLatch = true;
             if (_client.SprintToggle && _input.Sprint.WasPressedThisFrame()) _sprintOn = !_sprintOn;
             if (_client.CrouchToggle && _input.Crouch.WasPressedThisFrame()) _crouchOn = !_crouchOn;
@@ -360,8 +363,10 @@ namespace Sculpt.Game.Player
                 WantsToShoot = active && !sculpting && (_input.Fire.IsPressed() || aimHeld),
                 FireHeld = active && !sculpting && _input.Fire.IsPressed(),
                 FirePressed = active && !sculpting && _fireLatch,
+                AimPressed = active && !sculpting && _aimLatch,
             };
             _fireLatch = false;
+            _aimLatch = false;
             var hand = new HandInput
             {
                 SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0, Reload = _reloadLatch && active,

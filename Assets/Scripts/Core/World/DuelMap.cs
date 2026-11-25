@@ -40,6 +40,14 @@ namespace Sculpt.Core
                 info.ItemSpawns.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = p });
                 info.ItemSpawns.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = Turn(p, size) });
             }
+            // One C4 pair and one launcher per side, further out than the grenades: picking one up swaps it for what you
+            // hold (the spawn bag is full), so taking it is a choice. Twins turned like everything else.
+            var c4 = new Vec3d(mid - 11, 0, 4);
+            var gl = new Vec3d(mid + 11, 0, 4);
+            info.ItemSpawns.Add(new GroundItem { Kind = Item.C4, Count = 2, Position = c4 });
+            info.ItemSpawns.Add(new GroundItem { Kind = Item.C4, Count = 2, Position = Turn(c4, size) });
+            info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 4, Position = gl });
+            info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 4, Position = Turn(gl, size) });
             return w;
         }
 

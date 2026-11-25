@@ -66,6 +66,44 @@ namespace Sculpt.Game.Config
         [Tooltip("Damage to every tile in the blast: 150 breaks anything but Reinforced (200).")]
         [Min(0)] public int grenadeTileDamage = 150;
 
+        [Header("Remote C4 (a breaching tool, not a kill weapon: fire throws, aim detonates)")]
+        [Min(0)] public int c4Carry = 2;
+        [Min(1f)] public float c4ThrowSpeed = 12f;
+        [Tooltip("It goes off by itself this long after it first landed, seconds.")]
+        [Range(1f, 30f)] public float c4FuseSeconds = 8f;
+        [Tooltip("The earliest you can set it off after the throw, seconds (a short tell).")]
+        [Range(0f, 2f)] public float c4ArmSeconds = 0.25f;
+        [Tooltip("Players within this distance of the charge (to the nearest point of their body) are affected, metres.")]
+        [Min(0.5f)] public float c4Radius = 2.5f;
+        [Min(0f)] public float c4FullRadius = 0.6f;
+        [Tooltip("Ben: it should only kill someone careless who walks over it on low health.")]
+        [Min(0f)] public float c4EnemyDamage = 45f;
+        [Min(0f)] public float c4SelfBoost = 12f;
+        [Min(0f)] public float c4OtherKnock = 4f;
+        [Range(0.76f, 2.2f)] public float c4TileRadius = 1.2f;
+        [Tooltip("Damage to every tile in the blast: 220 breaks Reinforced (200) too.")]
+        [Min(0)] public int c4TileDamage = 220;
+
+        [Header("Grenade launcher (slow and clunky up close, strong at range)")]
+        [Tooltip("Rounds carried (a launcher pickup comes with this many).")]
+        [Min(1)] public int launcherRounds = 4;
+        [Min(1f)] public float launcherRoundSpeed = 32f;
+        [Min(0f)] public float launcherGravity = 9f;
+        [Tooltip("A round that hits something before flying this far is a dud, metres.")]
+        [Min(0f)] public float launcherArmDistance = 8f;
+        [Tooltip("Time between rounds, seconds.")]
+        [Range(0.2f, 3f)] public float launcherCycleSeconds = 1.1f;
+        [Min(0.5f)] public float launcherRadius = 3.5f;
+        [Min(0f)] public float launcherFullRadius = 0.75f;
+        [Min(0f)] public float launcherEnemyDamage = 65f;
+        [Min(0f)] public float launcherSelfBoost = 9f;
+        [Min(0f)] public float launcherOtherKnock = 6f;
+        [Range(0.5f, 2.2f)] public float launcherTileRadius = 0.8f;
+        [Tooltip("110 breaks Intact, Damaged and Patched tiles; Reinforced keeps 90.")]
+        [Min(0)] public int launcherTileDamage = 110;
+        [Tooltip("Run and sprint speed while it is in hand.")]
+        [Range(0.5f, 1f)] public float launcherMoveSpeedScale = 0.9f;
+
         [Header("Punch (own bind, not an item)")]
         [Tooltip("Reach from the eye along the crosshair, metres.")]
         [Range(1f, 3.5f)] public float punchReach = 2f;
@@ -138,6 +176,32 @@ namespace Sculpt.Game.Config
             g.SelfBoost = grenadeSelfBoost;
             g.OtherKnock = grenadeOtherKnock;
             g.TileRadius = grenadeTileRadius;
+
+            items.C4Carry = c4Carry;
+            GrenadeConfig c = items.C4;
+            c.ThrowSpeed = c4ThrowSpeed;
+            c.StuckFuseTicks = Ticks(c4FuseSeconds);
+            c.DetonateArmTicks = Mathf.Max(0, Mathf.RoundToInt(c4ArmSeconds * SimTime.TicksPerSecond));
+            c.Radius = c4Radius;
+            c.FullRadius = Mathf.Min(c4FullRadius, c4Radius - 0.01f);
+            c.EnemyDamage = c4EnemyDamage;
+            c.SelfBoost = c4SelfBoost;
+            c.OtherKnock = c4OtherKnock;
+            c.TileRadius = c4TileRadius;
+
+            items.LauncherCarry = launcherRounds;
+            GrenadeConfig l = items.Launcher;
+            l.ThrowSpeed = launcherRoundSpeed;
+            l.Gravity = launcherGravity;
+            l.ArmDistance = launcherArmDistance;
+            l.ThrowRecoveryTicks = Ticks(launcherCycleSeconds);
+            l.Radius = launcherRadius;
+            l.FullRadius = Mathf.Min(launcherFullRadius, launcherRadius - 0.01f);
+            l.EnemyDamage = launcherEnemyDamage;
+            l.SelfBoost = launcherSelfBoost;
+            l.OtherKnock = launcherOtherKnock;
+            l.TileRadius = launcherTileRadius;
+            l.MoveSpeedScale = launcherMoveSpeedScale;
         }
 
         public void ApplyTo(PunchConfig p)
@@ -171,6 +235,8 @@ namespace Sculpt.Game.Config
             b.ArTileDamage = arTileDamage;
             b.PistolTileDamage = pistolTileDamage;
             b.GrenadeTileDamage = grenadeTileDamage;
+            b.C4TileDamage = c4TileDamage;
+            b.LauncherTileDamage = launcherTileDamage;
             b.PunchTileDamage = punchTileDamage;
             b.PunchReinforcedTileDamage = punchReinforcedTileDamage;
             b.ChargeSpeedFraction = chargeSpeedFraction;
