@@ -45,7 +45,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void PatchedAndReinforcedKeepTheirStateUntilTheyBreak()
         {
-            var w = Wall(out int[] t);
+            var w = Wall(out int[] t, new BreachConfig { BlastHoles = false }); // the state machine on its own
             TileWalls tw = w.Tiles;
             tw.Set(t[0], TileState.Patched, 50, TileCause.Heal);
             tw.Set(t[1], TileState.Reinforced, 200, TileCause.Reinforce);
@@ -160,7 +160,7 @@ namespace Sculpt.Core.Tests
         public void OneBrokenTileFitsASliderAndTwoStackedFitAStandingPlayer()
         {
             var m = new MovementConfig();
-            var w = Wall(out int[] t);
+            var w = Wall(out int[] t, new BreachConfig { BlastHoles = false }); // whole-tile geometry (blast holes: BlastHoleTests)
             TileWalls tw = w.Tiles;
             double hw = m.HalfWidth;
             Aabb slider = Box(2.25 - hw, 0, 10.15 - hw, 2.25 + hw, m.CrouchHeight, 10.15 + hw);
@@ -175,7 +175,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void ARayAlongTheSeamBetweenTwoTilesHitsOneOfThem()
         {
-            var w = Wall(out int[] t);
+            var w = Wall(out int[] t, new BreachConfig { BlastHoles = false });
             // x = 1.5 is the seam between tiles 0 and 1, y = 1.5 the seam between the rows.
             Assert.That(w.Raycast(new Vec3d(1.5, 0.75, 5), new Vec3d(0, 0, 1), 20).Hit, Is.True);
             Assert.That(w.Raycast(new Vec3d(1.5, 1.5, 5), new Vec3d(0, 0, 1), 20).Hit, Is.True, "four-tile corner");
@@ -216,7 +216,7 @@ namespace Sculpt.Core.Tests
                 var shot = new WeaponShot { Tick = n, ShooterId = 1, Weapon = gun, Origin = origin, Aim = new Vec3d(0, 0, 1), Spread = 0, Seed = (uint)n };
                 Hitscan.Resolve(w, shot, st, cfg, 1, new List<HitTarget>(), victims, pellets);
                 w.Tiles.ApplyShot(pellets, gun, 1);
-                if (w.Tiles[t[1]].State == TileState.Broken) return n;
+                if (w.Tiles[t[1]].State == TileState.Broken || w.Tiles[t[1]].Holed) return n; // the first hole (blast holes)
             }
             return -1;
         }

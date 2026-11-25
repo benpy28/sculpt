@@ -123,12 +123,23 @@ namespace Sculpt.Game.World
             if (_tiles == null || _mat == null) return;
             foreach (TileChange c in _tiles.Changes)
             {
-                // Bullet marks go when the tile breaks or is healed (a join snapshot counts too).
-                if ((c.From != c.To && c.To != TileState.Damaged) || c.Cause == TileCause.Heal || c.Cause == TileCause.Reinforce)
+                ulong before = _openFx[c.Tile];
+                ulong after = c.To == TileState.Broken ? Brush.AllCells : c.Open;
+                _openFx[c.Tile] = after;
+                // Bullet marks go when the tile breaks, loses cells or is healed (a join snapshot counts too).
+                if ((c.From != c.To && c.To != TileState.Damaged) || (after & ~before) != 0 || c.Cause == TileCause.Heal || c.Cause == TileCause.Reinforce)
                     _marks?.ClearTile(c.Tile);
                 if (c.Cause == TileCause.Server || c.Cause == TileCause.Built) continue;
-                Aabb b = _tiles.BoundsOf(c.Tile);
                 WallTile ct = _tiles[c.Tile];
+                if (_tiles.HasCells(c.Tile))
+                {
+                    // Blast holes: chunks and dust from exactly the cells that went.
+                    CellDebris(c.Tile, before, after, c.From);
+                    if (c.To == TileState.Damaged && c.From == TileState.Intact && after == before)
+                        _debris.Burst(_tiles.BoundsOf(c.Tile), ct.Facing, ct.Kind == TileKind.Wall ? BrickDamaged : ClayDamaged, 5, false);
+                    continue;
+                }
+                Aabb b = _tiles.BoundsOf(c.Tile);
                 Dir facing = ct.Facing;
                 bool thin = ct.Kind == TileKind.Frame; // frame pieces are small: fewer chunks
                 if (c.To == TileState.Broken) _debris.Burst(b, facing, DebrisColour(ct.Kind, c.From), thin ? 4 : 16, !thin);
@@ -141,8 +152,10 @@ namespace Sculpt.Game.World
             for (int i = 0; i < _tiles.Count; i++)
             {
                 int look = LookOf(_tiles[i]);
-                if (look == _look[i]) continue;
+                ulong open = _tiles[i].Open;
+                if (look == _look[i] && open == _openSeen[i]) continue;
                 _look[i] = look;
+                _openSeen[i] = open;
                 _dirty.Add(BlockOf(_tiles.World[_tiles[i].Brush]));
                 DirtyNeighbours(i); // a hole's rim is drawn by the broken tile and depends on the tiles around it
             }
@@ -180,6 +193,7 @@ namespace Sculpt.Game.World
         private void AddTile(MeshBits m, int id, in WallTile t)
         {
             if (t.State == TileState.Broken) { AddRims(m, id); return; }
+            bool holed = t.Holed;
             Brush shape = _tiles.World[t.Brush];
             bool damaged = t.State == TileState.Damaged;
             _surface = Rough;
@@ -203,8 +217,14 @@ namespace Sculpt.Game.World
             bool floor = t.Kind == TileKind.Floor;
             Color baseCol = floor ? (damaged ? ClayDamaged : Clay) : (damaged ? BrickDamaged : Brick);
             _surface = floor ? Rough : BrickSurface;
-            AddBox(m, lo, hi, baseCol);
+            if (holed)
+            {
+                // Blast holes: only the standing cells, as runs along each row (inner faces between runs never show).
+                foreach (Aabb run in shape.Solids) AddBox(m, run.Min.ToUnity(), run.Max.ToUnity(), baseCol);
+            }
+            else AddBox(m, lo, hi, baseCol);
             _surface = Rough;
+            if (holed) AddRims(m, id);
             Vector3 centre = (lo + hi) * 0.5f, size = hi - lo;
             // The two big faces: across the thin axis. Walls face North (thin in z) or East (thin in x); floors face Up.
             Vector3 n, up;
@@ -232,7 +252,7 @@ namespace Sculpt.Game.World
                     Panel(m, fc - up * (h * 0.55f), fn, up, 0.09f, w, SteelBand);
                     Panel(m, fc, fn, up, h, 0.09f, SteelBand);
                 }
-                if (crack > 0) AddCracks(m, id, fc + fn * 0.002f, fn, up, w, h, crack == 2 ? 6 : 3, baseCol, crack);
+                if (crack > 0) AddCracks(m, id, fc + fn * 0.002f, fn, up, w, h, crack == 2 ? 6 : 3, baseCol, crack, holed);
             }
         }
 
@@ -245,7 +265,7 @@ namespace Sculpt.Game.World
         }
 
         /// <summary>Jagged dark crack lines out from near the middle, the same for a tile every time (hashed from its id).</summary>
-        private void AddCracks(MeshBits m, int id, Vector3 c, Vector3 n, Vector3 up, float w, float h, int count, Color baseCol, int level)
+        private void AddCracks(MeshBits m, int id, Vector3 c, Vector3 n, Vector3 up, float w, float h, int count, Color baseCol, int level, bool holed = false)
         {
             uint seed = (uint)(id * 2654435761u + 0x9E3779B9u);
             float Rand()
@@ -256,8 +276,11 @@ namespace Sculpt.Game.World
             Vector3 r = Vector3.Cross(n, up).normalized;
             Vector3 start = c + r * ((Rand() - 0.5f) * w * 0.5f) + up * ((Rand() - 0.5f) * h * 0.5f);
             // A spalled crater where the cracks start (bigger when badly damaged), so damage reads from range.
-            Blob(m, start - n * 0.0015f, n, 0.13f + 0.07f * level, 0.35f, 9, seed, baseCol * 0.62f);
-            Blob(m, start - n * 0.0008f, n, 0.05f + 0.03f * level, 0.4f, 7, seed + 7, baseCol * 0.38f);
+            if (!holed) // the spall would hang over the hole; a holed tile shows its damage at the hole's edge already
+            {
+                Blob(m, start - n * 0.0015f, n, 0.13f + 0.07f * level, 0.35f, 9, seed, baseCol * 0.62f);
+                Blob(m, start - n * 0.0008f, n, 0.05f + 0.03f * level, 0.4f, 7, seed + 7, baseCol * 0.38f);
+            }
             for (int k = 0; k < count; k++)
             {
                 float a = (k + Rand() * 0.6f) * Mathf.PI * 2f / count;
@@ -271,7 +294,9 @@ namespace Sculpt.Game.World
                     // Keep inside the face.
                     q = c + r * Mathf.Clamp(Vector3.Dot(q - c, r), -w + 0.03f, w - 0.03f) + up * Mathf.Clamp(Vector3.Dot(q - c, up), -h + 0.03f, h - 0.03f);
                     Vector3 across = Vector3.Cross(n, (q - p).normalized) * (0.022f - seg * 0.005f);
-                    Quad(m, p - across, q - across, q + across, p + across, Crack);
+                    // Holed tiles: no crack drawn across open cells (it would float in the hole).
+                    if (!holed || (!OpenAt(id, p) && !OpenAt(id, q) && !OpenAt(id, (p + q) * 0.5f)))
+                        Quad(m, p - across, q - across, q + across, p + across, Crack);
                     p = q;
                 }
             }

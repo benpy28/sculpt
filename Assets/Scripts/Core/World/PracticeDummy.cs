@@ -58,7 +58,8 @@ namespace Sculpt.Core
             // Which watched tiles need healing, and since when.
             foreach (int t in _tiles)
             {
-                bool needs = walls[t].State == TileState.Broken || (Config.HealDamaged && walls[t].State == TileState.Damaged);
+                // Broken, or with a hole blown in it (blast holes leave the rest of a tile standing, cracked).
+                bool needs = walls[t].State == TileState.Broken || walls[t].Holed || (Config.HealDamaged && walls[t].State == TileState.Damaged);
                 if (!needs) _brokenSince.Remove(t);
                 else if (!_brokenSince.ContainsKey(t)) _brokenSince[t] = tick;
             }

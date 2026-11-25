@@ -5,39 +5,31 @@ using UnityEngine;
 namespace Sculpt.Game.World
 {
     /// <summary>
-    /// Wall-break visuals (Ben 2026-11-25: keep the grid in the simulation for fairness, hide it in the look; bullets
-    /// chip the wall where they hit; breaks blast out as rough, roundish holes). Everything here is drawn only: it never
-    /// changes collision, bullets or aiming.
+    /// Wall-break visuals (Ben 2026-11-25: holes follow the hit and are never grid squares; bullets chip the wall where
+    /// they hit; breaks blast out with rough edges and debris). The hole itself is the simulation's: each wall and floor
+    /// tile is an 8 x 8 grid of 19 cm cells (Core TileHoles), and a break blows out a rough disc of them. This file only
+    /// dresses its edges; it never changes collision, bullets or aiming.
     ///
-    /// Rules that keep it fair:
-    /// - The see-through part of a hole stays the real hole. Rough teeth along a hole's edge reach at most
-    ///   <see cref="TeethMax"/> into it, and the rounded hole corners fill at most about 0.17 m along the diagonal
-    ///   (radius up to <see cref="FilletMax"/>). Neither is big enough to hide a head (0.36 m), so nothing visual hides
-    ///   a player that bullets would reach.
-    /// - The rest of the "blast" look is surface only: a scorched, chipped band on the wall around the hole whose outer
-    ///   edge is rounded at the corners, so a square hole reads as a round crater without any geometry in the hole.
-    /// - A hole's rim is drawn by the broken tile, from the states of the tiles around it, so it updates the moment a
-    ///   neighbour breaks or is healed. Frame (columns, beams) keeps clean steel edges: it is the building's skeleton.
+    /// Rules that keep it fair: rough teeth reach at most <see cref="TeethMax"/> into an opening and corner rubble at
+    /// most ~4 cm (radius <see cref="FilletMax"/>), against a smallest opening of 37.5 cm, so nothing drawn hides a player
+    /// that bullets would reach. The scorched band lies on standing cells only (never wider than one cell), so it never
+    /// floats over a hole. Frame (columns, beams) keeps clean steel edges.
     /// </summary>
     public sealed partial class BrushView
     {
         /// <summary>Vertex alpha read by SCULPT/Greybox: which surface a face is.</summary>
         private const float Greybox = 1f, Rough = 0.5f, BrickSurface = 0f;
 
-        private const float TeethMin = 0.025f, TeethMax = 0.11f;
-        private const float FilletMin = 0.30f, FilletMax = 0.42f;
-        private const float BandMin = 0.10f, BandMax = 0.34f;
+        private const float TeethMin = 0.012f, TeethMax = 0.06f;
+        private const float FilletMin = 0.05f, FilletMax = 0.09f;
+        private const float BandMin = 0.05f, BandMax = 0.17f;
 
         private float _surface = Greybox;
         private BrushWorld _brushWorld;
         private WallMarks _marks;
 
-        // In-plane neighbours of every wall and floor tile: 0 +a1, 1 -a1, 2 +a2, 3 -a2, then the diagonals
-        // 4 (+a1,+a2), 5 (+a1,-a2), 6 (-a1,+a2), 7 (-a1,-a2). -1 = no tile of the same kind and plane there.
-        private int[] _nb;
-
-        private static readonly int[] EdgeAxis = { 1, 1, 2, 2 };
-        private static readonly int[] EdgeSign = { 1, -1, 1, -1 };
+        private ulong[] _openSeen;  // the open cells each tile was last drawn with
+        private ulong[] _openFx;    // the open cells each tile last threw debris for
 
         private void OnEnable() => WallImpacts.OnBullet = OnBullet;
 
@@ -46,23 +38,7 @@ namespace Sculpt.Game.World
             if (WallImpacts.OnBullet == OnBullet) WallImpacts.OnBullet = null;
         }
 
-        /// <summary>The plane of a wall or floor tile: n across the thin side, a1 and a2 along the face.</summary>
-        private static bool Basis(in WallTile t, out Vector3 n, out Vector3 a1, out Vector3 a2)
-        {
-            switch (t.Kind)
-            {
-                case TileKind.Wall:
-                    if (t.Facing == Dir.North) { n = Vector3.forward; a1 = Vector3.right; }
-                    else { n = Vector3.right; a1 = Vector3.forward; }
-                    a2 = Vector3.up;
-                    return true;
-                case TileKind.Floor:
-                    n = Vector3.up; a1 = Vector3.right; a2 = Vector3.forward;
-                    return true;
-            }
-            n = a1 = a2 = default;
-            return false;
-        }
+        private static Vector3 AxisVec(int a) => a == 0 ? Vector3.right : a == 1 ? Vector3.up : Vector3.forward;
 
         private static float Along(Vector3 size, Vector3 axis) => Mathf.Abs(Vector3.Dot(size, axis));
 
@@ -75,66 +51,49 @@ namespace Sculpt.Game.World
             }
             _marks.Init(_mat, _linear);
             _marks.ClearAll();
-            int count = _tiles.Count;
-            _nb = new int[count * 8];
-            for (int i = 0; i < _nb.Length; i++) _nb[i] = -1;
-
-            // Coarse 1.5 m hash of wall and floor tiles, for probing just past each edge and corner.
-            const float cell = 1.5f;
-            var grid = new Dictionary<Vector3Int, List<int>>();
-            for (int i = 0; i < count; i++)
+            _openSeen = new ulong[_tiles.Count];
+            _openFx = new ulong[_tiles.Count];
+            for (int i = 0; i < _tiles.Count; i++)
             {
-                if (!Basis(_tiles[i], out _, out _, out _)) continue;
-                Aabb b = _tiles.BoundsOf(i);
-                Vector3Int lo = Vector3Int.FloorToInt(b.Min.ToUnity() / cell + Vector3.one * 0.001f);
-                Vector3Int hi = Vector3Int.FloorToInt(b.Max.ToUnity() / cell - Vector3.one * 0.001f);
-                for (int x = lo.x; x <= hi.x; x++)
-                    for (int y = lo.y; y <= hi.y; y++)
-                        for (int z = lo.z; z <= hi.z; z++)
-                        {
-                            var k = new Vector3Int(x, y, z);
-                            if (!grid.TryGetValue(k, out var list)) grid[k] = list = new List<int>();
-                            list.Add(i);
-                        }
-            }
-            int Find(Vector3 p, in WallTile like)
-            {
-                if (!grid.TryGetValue(Vector3Int.FloorToInt(p / cell), out var list)) return -1;
-                foreach (int j in list)
-                {
-                    WallTile o = _tiles[j];
-                    if (o.Kind != like.Kind || o.Facing != like.Facing) continue;
-                    Aabb b = _tiles.BoundsOf(j);
-                    if (p.x > b.Min.X && p.x < b.Max.X && p.y > b.Min.Y && p.y < b.Max.Y && p.z > b.Min.Z && p.z < b.Max.Z) return j;
-                }
-                return -1;
-            }
-            for (int i = 0; i < count; i++)
-            {
-                WallTile t = _tiles[i];
-                if (!Basis(t, out _, out Vector3 a1, out Vector3 a2)) continue;
-                Aabb b = _tiles.BoundsOf(i);
-                Vector3 lo = b.Min.ToUnity(), hi = b.Max.ToUnity(), c = (lo + hi) * 0.5f, size = hi - lo;
-                float e1 = Along(size, a1) * 0.5f + 0.05f, e2 = Along(size, a2) * 0.5f + 0.05f;
-                _nb[i * 8 + 0] = Find(c + a1 * e1, t);
-                _nb[i * 8 + 1] = Find(c - a1 * e1, t);
-                _nb[i * 8 + 2] = Find(c + a2 * e2, t);
-                _nb[i * 8 + 3] = Find(c - a2 * e2, t);
-                _nb[i * 8 + 4] = Find(c + a1 * e1 + a2 * e2, t);
-                _nb[i * 8 + 5] = Find(c + a1 * e1 - a2 * e2, t);
-                _nb[i * 8 + 6] = Find(c - a1 * e1 + a2 * e2, t);
-                _nb[i * 8 + 7] = Find(c - a1 * e1 - a2 * e2, t);
+                _openSeen[i] = ulong.MaxValue - 1; // never a real mask of a drawn tile: forces the first draw
+                _openFx[i] = _tiles.OpenCells(i);
             }
         }
 
+        /// <summary>A hole's rim is drawn by its open cells from the cells around them: redraw the tiles around a change.</summary>
         private void DirtyNeighbours(int tile)
         {
-            if (_nb == null) return;
-            for (int k = 0; k < 8; k++)
+            if (!_tiles.HasCells(tile)) return;
+            for (int d = 0; d < 4; d++)
             {
-                int j = _nb[tile * 8 + k];
-                if (j >= 0) _dirty.Add(BlockOf(_tiles.World[_tiles[j].Brush]));
+                int j = _tiles.EdgeNeighbour(tile, d);
+                if (j < 0) continue;
+                _dirty.Add(BlockOf(_tiles.World[_tiles[j].Brush]));
+                for (int e = 0; e < 4; e++) // diagonals: corner rubble and bands look across them
+                {
+                    int k = _tiles.EdgeNeighbour(j, e);
+                    if (k >= 0) _dirty.Add(BlockOf(_tiles.World[_tiles[k].Brush]));
+                }
             }
+        }
+
+        /// <summary>Debris for cells that just went: chunks and dust from where they were, in the tile's colour.</summary>
+        private void CellDebris(int tile, ulong before, ulong after, TileState from)
+        {
+            ulong gone = after & ~before;
+            if (gone == 0) return;
+            Vector3 lo = Vector3.positiveInfinity, hi = Vector3.negativeInfinity;
+            for (int c = 0; c < Brush.CellCount; c++)
+            {
+                if (((gone >> c) & 1) == 0) continue;
+                Aabb cb = _tiles.CellBox(tile, c);
+                lo = Vector3.Min(lo, cb.Min.ToUnity());
+                hi = Vector3.Max(hi, cb.Max.ToUnity());
+            }
+            int cells = TileWalls.PopCount(gone);
+            WallTile t = _tiles[tile];
+            var box = new Aabb(new Vec3d(lo.x, lo.y, lo.z), new Vec3d(hi.x, hi.y, hi.z));
+            _debris.Burst(box, t.Facing, DebrisColour(t.Kind, from), Mathf.Clamp(cells / 3, 3, 18), cells >= 8);
         }
 
         /// <summary>The colour a tile's surface is drawn in (what its rim, chips and marks take).</summary>
@@ -152,42 +111,80 @@ namespace Sculpt.Game.World
             }
         }
 
-        // ---- the rim of a hole ----
+        /// <summary>Is the cell of a celled tile under this point open? (Decals skip open cells.)</summary>
+        private bool OpenAt(int tile, Vector3 p)
+        {
+            ulong open = _tiles.OpenCells(tile);
+            if (open == 0) return false;
+            Brush b = _tiles.ShapeOf(tile);
+            Vector3 lo = b.Bounds.Min.ToUnity(), hi = b.Bounds.Max.ToUnity();
+            Vector3 a1 = AxisVec(b.CellA1), a2 = AxisVec(b.CellA2);
+            float u = Vector3.Dot(p - lo, a1) / Vector3.Dot(hi - lo, a1), v = Vector3.Dot(p - lo, a2) / Vector3.Dot(hi - lo, a2);
+            int i = Mathf.Clamp(Mathf.FloorToInt(u * Brush.CellsPerSide), 0, Brush.CellsPerSide - 1);
+            int j = Mathf.Clamp(Mathf.FloorToInt(v * Brush.CellsPerSide), 0, Brush.CellsPerSide - 1);
+            return ((open >> (i + Brush.CellsPerSide * j)) & 1) != 0;
+        }
 
+        // ---- the rim of a hole, cell by cell ----
+
+        private static readonly int[] DirAxis = { 1, 1, 2, 2 };
+        private static readonly int[] DirSign = { 1, -1, 1, -1 };
+
+        /// <summary>Is this neighbour cell standing wall or floor of the same kind (what gets a rim)?</summary>
+        private bool StandingLike(int t2, int c2, TileKind kind)
+        {
+            if (t2 < 0) return false;
+            WallTile o = _tiles[t2];
+            if (o.Kind != kind || o.State == TileState.Broken) return false;
+            return ((o.Open >> c2) & 1) == 0;
+        }
+
+        /// <summary>Rims for every open cell of a broken or holed wall or floor tile that borders standing cells.</summary>
         private void AddRims(MeshBits m, int id)
         {
-            if (_nb == null) return;
+            if (!_tiles.HasCells(id)) return;
             WallTile t = _tiles[id];
-            if (!Basis(t, out Vector3 n, out Vector3 a1, out Vector3 a2)) return;
-            Aabb b = _tiles.BoundsOf(id);
-            Vector3 lo = b.Min.ToUnity(), hi = b.Max.ToUnity(), c = (lo + hi) * 0.5f, size = hi - lo;
-            float e1 = Along(size, a1) * 0.5f, e2 = Along(size, a2) * 0.5f, th = Along(size, n) * 0.5f;
-            var solid = new bool[8];
-            var col = new Color[8];
-            for (int k = 0; k < 8; k++)
+            Brush b = _tiles.ShapeOf(id);
+            Vector3 a1 = AxisVec(b.CellA1), a2 = AxisVec(b.CellA2), n = AxisVec(3 - b.CellA1 - b.CellA2);
+            float th = Along(b.Bounds.Max.ToUnity() - b.Bounds.Min.ToUnity(), n) * 0.5f;
+            ulong open = _tiles.OpenCells(id);
+            var solid = new bool[4];
+            var col = new Color[4];
+            var nbT = new int[4];
+            var nbC = new int[4];
+            for (int c = 0; c < Brush.CellCount; c++)
             {
-                int j = _nb[id * 8 + k];
-                solid[k] = j >= 0 && _tiles[j].State != TileState.Broken;
-                if (solid[k]) col[k] = SurfaceColour(_tiles[j]);
-            }
-            for (int k = 0; k < 4; k++)
-            {
-                if (!solid[k]) continue;
-                Vector3 A = EdgeAxis[k] == 1 ? a1 : a2, B = EdgeAxis[k] == 1 ? a2 : a1;
-                float eA = EdgeAxis[k] == 1 ? e1 : e2, eB = EdgeAxis[k] == 1 ? e2 : e1;
-                RimEdge(m, c + A * (EdgeSign[k] * eA), B, eB, -A * EdgeSign[k], n, th, col[k]);
-            }
-            // Corners: k1 along a1 (0 or 1), k2 along a2 (2 or 3); diagonal index 4 + 2*(k1) + (k2 - 2).
-            for (int k1 = 0; k1 < 2; k1++)
-                for (int k2 = 2; k2 < 4; k2++)
+                if (((open >> c) & 1) == 0) continue;
+                Aabb cb = _tiles.CellBox(id, c);
+                Vector3 lo = cb.Min.ToUnity(), hi = cb.Max.ToUnity(), cc = (lo + hi) * 0.5f, size = hi - lo;
+                float e1 = Along(size, a1) * 0.5f, e2 = Along(size, a2) * 0.5f;
+                bool any = false;
+                for (int d = 0; d < 4; d++)
                 {
-                    if (!solid[k1] || !solid[k2]) continue;
-                    float s1 = EdgeSign[k1], s2 = EdgeSign[k2];
-                    Vector3 K = c + a1 * (s1 * e1) + a2 * (s2 * e2);
-                    Fillet(m, K, -a1 * s1, -a2 * s2, n, th, col[k1]);
-                    int diag = 4 + 2 * k1 + (k2 - 2);
-                    if (solid[diag]) CornerBand(m, K, a1 * s1, a2 * s2, n, th, col[diag]);
+                    nbT[d] = _tiles.CellNeighbour(id, c, d, out nbC[d]);
+                    solid[d] = StandingLike(nbT[d], nbC[d], t.Kind);
+                    if (solid[d]) { col[d] = SurfaceColour(_tiles[nbT[d]]); any = true; }
                 }
+                if (!any) continue;
+                for (int d = 0; d < 4; d++)
+                {
+                    if (!solid[d]) continue;
+                    Vector3 A = DirAxis[d] == 1 ? a1 : a2, B = DirAxis[d] == 1 ? a2 : a1;
+                    float eA = DirAxis[d] == 1 ? e1 : e2, eB = DirAxis[d] == 1 ? e2 : e1;
+                    RimEdge(m, cc + A * (DirSign[d] * eA), B, eB, -A * DirSign[d], n, th, col[d]);
+                }
+                for (int d1 = 0; d1 < 2; d1++)
+                    for (int d2 = 2; d2 < 4; d2++)
+                    {
+                        if (!solid[d1] || !solid[d2]) continue;
+                        float s1 = DirSign[d1], s2 = DirSign[d2];
+                        Vector3 K = cc + a1 * (s1 * e1) + a2 * (s2 * e2);
+                        Fillet(m, K, -a1 * s1, -a2 * s2, n, th, col[d1]);
+                        // The diagonal cell, through the first neighbour.
+                        int dt = _tiles.CellNeighbour(nbT[d1], nbC[d1], d2, out int dc);
+                        if (StandingLike(dt, dc, t.Kind)) CornerBand(m, K, a1 * s1, a2 * s2, n, th, SurfaceColour(_tiles[dt]));
+                    }
+            }
         }
 
         /// <summary>
@@ -402,7 +399,18 @@ namespace Sculpt.Game.World
                 _debris.transform.SetParent(transform, false);
             }
             _debris.Chip(at, normal, col, amount);
-            if (_marks != null) _marks.Add(at, normal, tile, shape.Bounds, !shape.IsRamp, col);
+            Aabb face = shape.Bounds;
+            if (tile >= 0 && _tiles[tile].Holed)
+            {
+                // Keep the mark on the cell it hit, so it never hangs over the hole beside it.
+                Brush b = _tiles.ShapeOf(tile);
+                Vector3 lo = b.Bounds.Min.ToUnity(), hi = b.Bounds.Max.ToUnity(), p = at - normal * 0.01f;
+                Vector3 a1 = AxisVec(b.CellA1), a2 = AxisVec(b.CellA2);
+                int i = Mathf.Clamp(Mathf.FloorToInt(Vector3.Dot(p - lo, a1) / Vector3.Dot(hi - lo, a1) * Brush.CellsPerSide), 0, Brush.CellsPerSide - 1);
+                int j = Mathf.Clamp(Mathf.FloorToInt(Vector3.Dot(p - lo, a2) / Vector3.Dot(hi - lo, a2) * Brush.CellsPerSide), 0, Brush.CellsPerSide - 1);
+                face = _tiles.CellBox(tile, i + Brush.CellsPerSide * j);
+            }
+            if (_marks != null) _marks.Add(at, normal, tile, face, !shape.IsRamp, col);
             return true;
         }
     }
