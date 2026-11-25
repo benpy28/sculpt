@@ -44,7 +44,7 @@ namespace Sculpt.Core.Tests.World
         private static MotorState Settled(ITerrain t, Vec3d feet)
         {
             var s = MotorState.At(feet);
-            for (int k = 1; k <= 30; k++)
+            for (int k = 1; k <= 30 * SimTime.Per60; k++)
             {
                 s.Tick = k - 1;
                 PlayerMovement.Step(t, Mc, ref s, default, null);
@@ -83,7 +83,7 @@ namespace Sculpt.Core.Tests.World
             Crack(w, lo);
             Crack(w, hi, TileState.Patched);
             MotorState s = Settled(t, new Vec3d(LaneX, 0, 2));
-            Go(t, ref s, 150, k => Run(0), new ServerChargeBreaker { By = 1 }, out double before, out double after);
+            Go(t, ref s, 150 * SimTime.Per60, k => Run(0), new ServerChargeBreaker { By = 1 }, out double before, out double after);
             Assert.That(w[lo].State, Is.EqualTo(TileState.Broken));
             Assert.That(w[hi].State, Is.EqualTo(TileState.Broken));
             Assert.That(s.Position.Z, Is.GreaterThan(13), "ran on through");
@@ -105,7 +105,7 @@ namespace Sculpt.Core.Tests.World
                 w.Set(lo, st, w.Config.MaxHealthOf(st), TileCause.Server);
                 w.Set(hi, st, w.Config.MaxHealthOf(st), TileCause.Server);
                 MotorState s = Settled(t, new Vec3d(LaneX, 0, 2));
-                Go(t, ref s, 150, k => Run(0), new ServerChargeBreaker(), out _, out double after);
+                Go(t, ref s, 150 * SimTime.Per60, k => Run(0), new ServerChargeBreaker(), out _, out double after);
                 Assert.That(after, Is.EqualTo(-1), st.ToString());
                 Assert.That(s.Position.Z, Is.LessThan(12), st + " stops you");
                 Assert.That(w[lo].State, Is.EqualTo(st));
@@ -119,7 +119,7 @@ namespace Sculpt.Core.Tests.World
             int lo = Tile(w, LaneX, 0.75);
             Crack(w, lo);
             MotorState s = Settled(t, new Vec3d(LaneX, 0, 2));
-            Go(t, ref s, 150, k => Run(0), new ServerChargeBreaker(), out _, out _);
+            Go(t, ref s, 150 * SimTime.Per60, k => Run(0), new ServerChargeBreaker(), out _, out _);
             Assert.That(w[lo].State, Is.EqualTo(TileState.Damaged), "the intact tile above stops a standing charge, so nothing breaks");
             Assert.That(s.Position.Z, Is.LessThan(12));
 
@@ -128,7 +128,7 @@ namespace Sculpt.Core.Tests.World
             Crack(w, lo);
             s = Settled(t, new Vec3d(LaneX, 0, 4));
             // Sprint up, then slide the last few metres into the wall.
-            Go(t, ref s, 150, k => k < 40 ? Run(0) : Run(0, true, k == 40, true), new ServerChargeBreaker(), out double before, out _);
+            Go(t, ref s, 150 * SimTime.Per60, k => k < 40 * SimTime.Per60 ? Run(0) : Run(0, true, k == 40 * SimTime.Per60, true), new ServerChargeBreaker(), out double before, out _);
             Assert.That(w[lo].State, Is.EqualTo(TileState.Broken), "a sliding player fits through one tile");
             Assert.That(s.Position.Z, Is.GreaterThan(12.5));
             Assert.That(before, Is.GreaterThanOrEqualTo(0.8 * Mc.SprintSpeed), "above the charge threshold");
@@ -143,7 +143,7 @@ namespace Sculpt.Core.Tests.World
             Crack(w, lo);
             Crack(w, hi);
             MotorState s = Settled(t, new Vec3d(LaneX, 0, 2));
-            Go(t, ref s, 150, k => Run(0, sprint: false), new ServerChargeBreaker(), out _, out _);
+            Go(t, ref s, 150 * SimTime.Per60, k => Run(0, sprint: false), new ServerChargeBreaker(), out _, out _);
             Assert.That(Mc.RunSpeed, Is.LessThan(0.8 * Mc.SprintSpeed), "run speed is below the charge threshold");
             Assert.That(w[lo].State, Is.EqualTo(TileState.Damaged));
             Assert.That(s.Position.Z, Is.LessThan(12));
@@ -156,7 +156,7 @@ namespace Sculpt.Core.Tests.World
             for (int k = 0; k < w.Count; k++) if (w.BoundsOf(k).Min.Y < 2.9) Crack(w, k);
             MotorState s = Settled(t, new Vec3d(7, 0, 9));
             // 70 degrees off head-on (yaw from north toward east).
-            Go(t, ref s, 120, k => Run(70 * Math.PI / 180), new ServerChargeBreaker(), out _, out double after);
+            Go(t, ref s, 120 * SimTime.Per60, k => Run(70 * Math.PI / 180), new ServerChargeBreaker(), out _, out double after);
             Assert.That(after, Is.EqualTo(-1));
             for (int k = 0; k < w.Count; k++) Assert.That(w[k].State, Is.Not.EqualTo(TileState.Broken));
         }
@@ -170,7 +170,7 @@ namespace Sculpt.Core.Tests.World
             MotorState s = Settled(t, new Vec3d(LaneX, 0, 2));
             var breaker = new PredictedChargeBreaker();
             int start = s.Tick + 1;
-            for (int k = 0; k < 150; k++)
+            for (int k = 0; k < 150 * SimTime.Per60; k++)
             {
                 InputCmd c = InputCmd.Quantize(Run(0));
                 c.Tick = start + k;

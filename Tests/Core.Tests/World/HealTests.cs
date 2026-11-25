@@ -66,7 +66,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void StartingNumbers_MatchBensSpec()
         {
-            Assert.That(C.HealTicks, Is.EqualTo(48), "0.8 s");
+            Assert.That(C.HealTicks, Is.EqualTo(SimTime.SecondsToTicks(0.8)), "0.8 s");
             Assert.That(C.HealCost, Is.EqualTo(1000), "10%");
             Assert.That(C.PatchedHealth, Is.EqualTo(50));
             Assert.That(C.ReinforceCost, Is.EqualTo(2500), "25%");
@@ -90,11 +90,12 @@ namespace Sculpt.Core.Tests
             Assert.That(h.TryBegin(w, me, t[1], HealKind.Heal, bar, 100), Is.EqualTo(HealResult.Ok));
             Assert.That(bar.Value, Is.EqualTo(SculptConfig.BarMax - 1000), "10% at the start");
             Assert.That(h.Events[0].Type, Is.EqualTo(HealEventType.Began));
-            Assert.That(h.Events[0].EndTick, Is.EqualTo(148));
-            Run(h, 101, 147, who, bar);
+            int end = 100 + C.HealTicks;
+            Assert.That(h.Events[0].EndTick, Is.EqualTo(end));
+            Run(h, 101, end - 1, who, bar);
             Assert.That(w.Tiles[t[1]].State, Is.EqualTo(TileState.Broken), "the hole stays open during the heal");
             Assert.That(w.BoxOverlapsSolid(hole.Expand(-0.05)), Is.False, "and you can still go through it");
-            h.Step(148, who, _ => bar);
+            h.Step(end, who, _ => bar);
             Assert.That(w.Tiles[t[1]].State, Is.EqualTo(TileState.Patched));
             Assert.That(w.Tiles[t[1]].Health, Is.EqualTo(50));
             Assert.That(w.BoxOverlapsSolid(hole.Expand(-0.05)), Is.True, "solid again");
@@ -112,7 +113,7 @@ namespace Sculpt.Core.Tests
             SculptBar bar = Bar();
             h.TryBegin(w, me, t[0], HealKind.Heal, bar, 10);
             w.Tiles.Damage(t[0], 100, TileCause.Bullet); // shot out mid-heal
-            Run(h, 11, 58, new List<HealerStatus> { me }, bar);
+            Run(h, 11, 10 + C.HealTicks, new List<HealerStatus> { me }, bar);
             Assert.That(w.Tiles[t[0]].State, Is.EqualTo(TileState.Patched));
             Assert.That(w.Tiles[t[0]].Health, Is.EqualTo(50));
         }
@@ -127,7 +128,7 @@ namespace Sculpt.Core.Tests
             h.TryBegin(w, me, t[2], HealKind.Heal, bar, 0);
             Aabb tile = w.Tiles.BoundsOf(t[2]);
             var runner = Healer(2, new Vec3d((tile.Min.X + tile.Max.X) / 2, 0, tile.Min.Z - 0.2)); // half in the hole
-            Run(h, 1, 48, new List<HealerStatus> { me, runner }, bar);
+            Run(h, 1, C.HealTicks, new List<HealerStatus> { me, runner }, bar);
             Assert.That(w.Tiles[t[2]].State, Is.EqualTo(TileState.Broken), "never closes on a player");
             Assert.That(bar.Value, Is.EqualTo(SculptConfig.BarMax), "refunded");
             HealEvent e = h.Events[h.Events.Count - 1];
@@ -146,9 +147,9 @@ namespace Sculpt.Core.Tests
             Aabb tile = w.Tiles.BoundsOf(t[2]);
             var runner = Healer(2, new Vec3d((tile.Min.X + tile.Max.X) / 2, 0, tile.Min.Z - 0.2));
             var who = new List<HealerStatus> { me, runner };
-            Run(h, 1, 30, who, bar);
+            Run(h, 1, C.HealTicks * 5 / 8, who, bar);
             who[1] = Healer(2, new Vec3d((tile.Min.X + tile.Max.X) / 2, 0, tile.Max.Z + 0.45)); // through, just clear of the wall
-            Run(h, 31, 48, who, bar);
+            Run(h, C.HealTicks * 5 / 8 + 1, C.HealTicks, who, bar);
             Assert.That(w.Tiles[t[2]].State, Is.EqualTo(TileState.Patched));
         }
 
@@ -353,13 +354,13 @@ namespace Sculpt.Core.Tests
         {
             var s = new SculptConfig();
             C.ApplyBarTo(s);
-            Assert.That(s.RegenFullTicks, Is.EqualTo(3000), "empty to full in 50 s");
+            Assert.That(s.RegenFullTicks, Is.EqualTo(50 * SimTime.TicksPerSecond), "empty to full in 50 s");
             Assert.That(s.RegenDelayTicks, Is.Zero);
             var bar = new SculptBar();
             bar.Spend(SculptConfig.BarMax, 0);
-            for (int k = 1; k <= 60; k++) bar.Tick(k, s);
+            for (int k = 1; k <= SimTime.TicksPerSecond; k++) bar.Tick(k, s);
             Assert.That(bar.Value, Is.EqualTo(200), "2% after one second");
-            for (int k = 61; k <= 3000; k++) bar.Tick(k, s);
+            for (int k = SimTime.TicksPerSecond + 1; k <= 50 * SimTime.TicksPerSecond; k++) bar.Tick(k, s);
             Assert.That(bar.Value, Is.EqualTo(SculptConfig.BarMax), "full after 50 s, no drift");
         }
 

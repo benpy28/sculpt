@@ -9,12 +9,16 @@ namespace Sculpt.Core.Tests.Net
     public class HandRulesTests
     {
         private static readonly HandConfig Cfg = new HandConfig();
+        private const int P = SimTime.Per60; // the approved hand timings are in sixtieths of a second
 
         private static HandState Run(HandState h, int from, int to, Func<int, HandInput> input)
         {
             for (int t = from; t <= to; t++) HandRules.Step(ref h, t, input(t), Cfg);
             return h;
         }
+
+        /// <summary>Enters sculpt mode on tick 0 and runs through tick 10/60 s.</summary>
+        private static HandState InSculpt(HandState h) => Run(h, 0, 10 * P, t => new HandInput { SculptToggle = t == 0 });
 
         [Test]
         public void EnteringSculptModeTakesSixTicks()
@@ -23,80 +27,84 @@ namespace Sculpt.Core.Tests.Net
             HandRules.Step(ref h, 100, new HandInput { SculptToggle = true }, Cfg);
             Assert.That(h.Mode, Is.EqualTo(HandMode.SculptEnter));
             Assert.That(h.InSculptMode, Is.True, "aiming and the ghost work at once");
-            for (int t = 101; t < 106; t++)
+            for (int t = 101; t < 100 + 6 * P; t++)
             {
                 HandRules.Step(ref h, t, default, Cfg);
                 Assert.That(h.CanConfirmSculpt, Is.False, $"no confirm on tick {t}");
             }
-            HandRules.Step(ref h, 106, default, Cfg);
-            Assert.That(h.CanConfirmSculpt, Is.True, "confirms from tick +6");
+            HandRules.Step(ref h, 100 + 6 * P, default, Cfg);
+            Assert.That(h.CanConfirmSculpt, Is.True, "confirms from 0.1 s");
         }
 
         [TestCase(Weapon.Pistol, 6)]
         [TestCase(Weapon.Smg, 9)]
         [TestCase(Weapon.Ar, 10)]
         [TestCase(Weapon.Pump, 12)]
-        public void LeavingSculptModePaysTheWeaponsExitTime(Weapon w, int exit)
+        public void LeavingSculptModePaysTheWeaponsExitTime(Weapon w, int exit60)
         {
+            int exit = exit60 * P;
+            int leave = 10 * P + 1;
             var h = HandState.Initial;
             h.Held = w;
-            h = Run(h, 0, 10, t => new HandInput { SculptToggle = t == 0 });
+            h = InSculpt(h);
             Assert.That(h.Mode, Is.EqualTo(HandMode.Sculpt));
-            HandRules.Step(ref h, 11, new HandInput { SculptToggle = true }, Cfg);
+            HandRules.Step(ref h, leave, new HandInput { SculptToggle = true }, Cfg);
             Assert.That(h.Mode, Is.EqualTo(HandMode.SculptExit));
-            h = Run(h, 12, 11 + exit - 1, _ => default);
+            h = Run(h, leave + 1, leave + exit - 1, _ => default);
             Assert.That(h.CanFire, Is.False);
-            HandRules.Step(ref h, 11 + exit, default, Cfg);
-            Assert.That(h.CanFire, Is.True, $"ready {exit} ticks after leaving");
+            HandRules.Step(ref h, leave + exit, default, Cfg);
+            Assert.That(h.CanFire, Is.True, $"ready {exit60}/60 s after leaving");
         }
 
         [Test]
         public void GunLockKeepsYouInSculptModeUntilTheActionLandsThenPaysTheExit()
         {
+            int leave = 10 * P + 1, unlock = 30 * P;
             var h = HandState.Initial;
             h.Held = Weapon.Pump;
-            h = Run(h, 0, 10, t => new HandInput { SculptToggle = t == 0 });
-            HandRules.LockGun(ref h, 30);
-            HandRules.Step(ref h, 11, new HandInput { SculptToggle = true }, Cfg);
+            h = InSculpt(h);
+            HandRules.LockGun(ref h, unlock);
+            HandRules.Step(ref h, leave, new HandInput { SculptToggle = true }, Cfg);
             Assert.That(h.Mode, Is.EqualTo(HandMode.Sculpt), "locked: still sculpting");
-            h = Run(h, 12, 29, _ => default);
+            h = Run(h, leave + 1, unlock - 1, _ => default);
             Assert.That(h.Mode, Is.EqualTo(HandMode.Sculpt));
-            HandRules.Step(ref h, 30, default, Cfg);
+            HandRules.Step(ref h, unlock, default, Cfg);
             Assert.That(h.Mode, Is.EqualTo(HandMode.SculptExit), "leaves as soon as the lock ends");
-            Assert.That(h.ReadyTick, Is.EqualTo(42));
+            Assert.That(h.ReadyTick, Is.EqualTo(unlock + 12 * P), "then the pump's exit time");
         }
 
         [Test]
         public void WeaponKeyInSculptModeLeavesToThatWeapon()
         {
-            var h = HandState.Initial;
-            h = Run(h, 0, 10, t => new HandInput { SculptToggle = t == 0 });
-            HandRules.Step(ref h, 11, new HandInput { WeaponKey = 4 }, Cfg);
+            int leave = 10 * P + 1;
+            var h = InSculpt(HandState.Initial);
+            HandRules.Step(ref h, leave, new HandInput { WeaponKey = 4 }, Cfg);
             Assert.That(h.Mode, Is.EqualTo(HandMode.SculptExit));
             Assert.That(h.Held, Is.EqualTo(Weapon.Pistol));
-            Assert.That(h.ReadyTick, Is.EqualTo(11 + 12), "a different gun pays its full draw (ISSUE-11)");
+            Assert.That(h.ReadyTick, Is.EqualTo(leave + 12 * P), "a different gun pays its full draw (ISSUE-11)");
         }
 
         [Test]
         public void WeaponKeyForTheGunYouCameFromUsesTheExitTime()
         {
-            var h = HandState.Initial; // pump out
-            h = Run(h, 0, 10, t => new HandInput { SculptToggle = t == 0 });
-            HandRules.Step(ref h, 11, new HandInput { WeaponKey = 1 }, Cfg);
+            int leave = 10 * P + 1;
+            var h = InSculpt(HandState.Initial); // pump out
+            HandRules.Step(ref h, leave, new HandInput { WeaponKey = 1 }, Cfg);
             Assert.That(h.Mode, Is.EqualTo(HandMode.SculptExit));
-            Assert.That(h.ReadyTick, Is.EqualTo(11 + 12), "pump exit time");
+            Assert.That(h.ReadyTick, Is.EqualTo(leave + 12 * P), "pump exit time");
         }
 
         [Test]
         public void EnteringSculptModeMidDrawStillOwesTheDraw()
         {
+            int leave = 10 * P;
             var h = HandState.Initial;
-            HandRules.Step(ref h, 0, new HandInput { WeaponKey = 3 }, Cfg); // AR draw, 21 ticks
+            HandRules.Step(ref h, 0, new HandInput { WeaponKey = 3 }, Cfg); // AR draw, 0.35 s
             HandRules.Step(ref h, 1, new HandInput { SculptToggle = true }, Cfg);
-            h = Run(h, 2, 9, _ => default);
-            HandRules.Step(ref h, 10, new HandInput { SculptToggle = true }, Cfg);
+            h = Run(h, 2, leave - 1, _ => default);
+            HandRules.Step(ref h, leave, new HandInput { SculptToggle = true }, Cfg);
             Assert.That(h.Mode, Is.EqualTo(HandMode.SculptExit));
-            Assert.That(h.ReadyTick, Is.EqualTo(10 + 21), "the AR was never out, so leaving draws it");
+            Assert.That(h.ReadyTick, Is.EqualTo(leave + 21 * P), "the AR was never out, so leaving draws it");
         }
 
         [Test]
@@ -105,25 +113,26 @@ namespace Sculpt.Core.Tests.Net
             var h = HandState.Initial;
             HandRules.Step(ref h, 5, new HandInput { WeaponKey = 3 }, Cfg);
             Assert.That(h.Mode, Is.EqualTo(HandMode.Drawing));
-            Assert.That(h.ReadyTick, Is.EqualTo(5 + 21));
+            Assert.That(h.ReadyTick, Is.EqualTo(5 + 21 * P));
             HandRules.Step(ref h, 6, new HandInput { WeaponKey = 3 }, Cfg);
-            Assert.That(h.ReadyTick, Is.EqualTo(5 + 21), "pressing the held weapon again changes nothing");
+            Assert.That(h.ReadyTick, Is.EqualTo(5 + 21 * P), "pressing the held weapon again changes nothing");
         }
 
         [Test]
         public void DisarmBlocksEverythingThenRedrawsTheHeldWeapon()
         {
+            int at = 10 * P + 1, end = at + 20 * P;
             var h = HandState.Initial;
             h.Held = Weapon.Smg;
-            h = Run(h, 0, 10, t => new HandInput { SculptToggle = t == 0 });
-            HandRules.Disarm(ref h, 11, 20);
+            h = InSculpt(h);
+            HandRules.Disarm(ref h, at, 20 * P);
             Assert.That(h.CanConfirmSculpt, Is.False);
-            h = Run(h, 11, 30, t => new HandInput { SculptToggle = t == 15, WeaponKey = (byte)(t == 16 ? 1 : 0) });
+            h = Run(h, at, end - 1, t => new HandInput { SculptToggle = t == at + 4 * P, WeaponKey = (byte)(t == at + 5 * P ? 1 : 0) });
             Assert.That(h.Mode, Is.EqualTo(HandMode.Disarmed), "presses do nothing while disarmed");
-            HandRules.Step(ref h, 31, default, Cfg);
+            HandRules.Step(ref h, end, default, Cfg);
             Assert.That(h.Mode, Is.EqualTo(HandMode.Drawing));
             Assert.That(h.Held, Is.EqualTo(Weapon.Smg));
-            Assert.That(h.ReadyTick, Is.EqualTo(31 + 18));
+            Assert.That(h.ReadyTick, Is.EqualTo(end + 18 * P));
         }
     }
 
@@ -288,7 +297,7 @@ namespace Sculpt.Core.Tests.Net
                 if (peer.Client.Predicted.Hand.CanConfirmSculpt)
                 {
                     if (start < 0) start = t;
-                    if (t - start < 12 && (t - start) % 3 == 0 && SculptNetHarness.Aim(peer, new Vec3d(8.5 * SubGrid.TileSize, 0, 6.6), out Int3 sub, out Vec3d aim))
+                    if (t - start < 12 * SimTime.Per60 && (t - start) % (3 * SimTime.Per60) == 0 && SculptNetHarness.Aim(peer, new Vec3d(8.5 * SubGrid.TileSize, 0, 6.6), out Int3 sub, out Vec3d aim))
                     {
                         i.Confirm = true;
                         i.Action = SculptAction.Raise(sub, aim);
@@ -316,7 +325,8 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(p.SculptEvents.Any(e => e.Type == ClientSculptEventType.Rejected), Is.False, "nothing rejected");
             int windup = h.SculptConfig.ScaledWindup(96);
             // The script for tick T + windup + 1 is the first to see it: it landed in BeforeMove(T + windup).
-            Assert.That(seen[0] - 1 - seen[1], Is.InRange(9, 9), "lands exactly one windup after the confirm, at any ping");
+            Assert.That(windup, Is.EqualTo(9 * SimTime.Per60), "0.15 s");
+            Assert.That(seen[0] - 1 - seen[1], Is.EqualTo(windup), "lands exactly one windup after the confirm, at any ping");
             Assert.That(p.SculptEvents.Count(e => e.Type == ClientSculptEventType.LocalLanded), Is.EqualTo(1));
             Assert.That(p.Sculpt.Mispredictions, Is.EqualTo(0));
             Assert.That(p.Sculpt.ServerRejections, Is.EqualTo(0));
@@ -483,7 +493,7 @@ namespace Sculpt.Core.Tests.Net
             h.RunSeconds(6);
             Assert.That(attackTick, Is.GreaterThan(0));
             Assert.That(a.SculptEvents.Any(e => e.Type == ClientSculptEventType.Rejected), Is.False);
-            Assert.That(lockSeen - 1 - attackTick, Is.EqualTo(9), "stays in sculpt mode until the windup ends, then exits");
+            Assert.That(lockSeen - 1 - attackTick, Is.EqualTo(9 * SimTime.Per60), "stays in sculpt mode until the windup ends, then exits");
             Assert.That(a.Client.Corrections, Is.EqualTo(0), "the server agreed with the predicted hand");
             h.AssertConverged();
         }

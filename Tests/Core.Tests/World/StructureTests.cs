@@ -216,10 +216,10 @@ namespace Sculpt.Core.Tests
             var at = new Vec3d((tb.Min.X + tb.Max.X) / 2, p.Y, (tb.Min.Z + tb.Max.Z) / 2);
             MotorState s = MotorState.At(at);
             s.Tick = 1000;
-            for (int k = 0; k < 20; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput());
+            for (int k = 0; k < 20 * SimTime.Per60; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput());
             Assert.That(s.Position.Y, Is.EqualTo(GreyboxBlock.StoreyHeight).Within(1e-6), "standing on it");
             T.Damage(tile, 1000, TileCause.Bullet);
-            for (int k = 0; k < 60; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput());
+            for (int k = 0; k < 60 * SimTime.Per60; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput());
             Assert.That(s.Position.Y, Is.EqualTo(0).Within(1e-6), "through a 1.5 m hole to the ground floor");
         }
 
@@ -262,10 +262,10 @@ namespace Sculpt.Core.Tests
             Vec3d c = (s5.Bounds.Min + s5.Bounds.Max) * 0.5;
             MotorState st = MotorState.At(new Vec3d(c.X, s5.Bounds.Max.Y + 0.1, c.Z));
             st.Tick = 1000;
-            for (int i = 0; i < 30; i++) PlayerMovement.Step(_t, _c, ref st, new MoveInput());
+            for (int i = 0; i < 30 * SimTime.Per60; i++) PlayerMovement.Step(_t, _c, ref st, new MoveInput());
             Assert.That(st.Position.Y, Is.GreaterThan(s5.Bounds.Min.Y), "stands on the flight");
             T.Damage(tile, 1000, TileCause.Bullet);
-            for (int i = 0; i < 90; i++) PlayerMovement.Step(_t, _c, ref st, new MoveInput());
+            for (int i = 0; i < 90 * SimTime.Per60; i++) PlayerMovement.Step(_t, _c, ref st, new MoveInput());
             Assert.That(st.Position.Y, Is.EqualTo(0).Within(1e-6), "through the stair to the floor under it");
             foreach (int t in seg) if (t != tile) Assert.That(T[t].State, Is.EqualTo(TileState.Intact));
         }
@@ -287,7 +287,7 @@ namespace Sculpt.Core.Tests
             var start = new Vec3d((flight.Bounds.Min.X + flight.Bounds.Max.X) / 2, 0, flight.Bounds.Min.Z - 2.2);
             MotorState s = MotorState.At(start);
             s.Tick = 1000;
-            for (int k = 0; k < 150; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = 0, MoveZ = 1, SprintHeld = true });
+            for (int k = 0; k < 150 * SimTime.Per60; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = 0, MoveZ = 1, SprintHeld = true });
             foreach (int t in B.ClimbTiles[0]) Assert.That(T[t].State, Is.EqualTo(TileState.Damaged));
             foreach (int t in cracked) Assert.That(T[t].State, Is.EqualTo(TileState.Damaged));
             Assert.That(s.Position.Z, Is.GreaterThan(flight.Bounds.Max.Z + 1), "ran on over the cracked floor");

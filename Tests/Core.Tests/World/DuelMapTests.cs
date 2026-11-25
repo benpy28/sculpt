@@ -29,7 +29,7 @@ namespace Sculpt.Core.Tests
         {
             MotorState s = MotorState.At(at);
             s.Tick = 1000;
-            for (int k = 0; k < 30; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw });
+            for (int k = 0; k < 30 * SimTime.Per60; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw });
             for (int k = 0; k < ticks; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw, MoveZ = 1, SprintHeld = true });
             return s;
         }
@@ -114,7 +114,7 @@ namespace Sculpt.Core.Tests
                 Vec3d start = Lerp(s, 0, 0.5, -0.02) - DirVec(s.Rise) * 1.0;
                 start = new Vec3d(start.X, s.Bounds.Min.Y, start.Z);
                 // Stairs arrive on a floor; the roof ramps end on a 3 m walkway, so stop a step past the top.
-                int ticks = s.Kind == BrushKind.Ramp ? (int)Math.Ceiling((len + 1.5) / _c.SprintSpeed * SimTime.TicksPerSecond) : (int)Math.Ceiling((len + 2) / _c.SprintSpeed * 60) + 30;
+                int ticks = s.Kind == BrushKind.Ramp ? (int)Math.Ceiling((len + 1.5) / _c.SprintSpeed * SimTime.TicksPerSecond) : (int)Math.Ceiling((len + 2) / _c.SprintSpeed * SimTime.TicksPerSecond) + 30 * SimTime.Per60;
                 MotorState end = Run(start, YawOf(s.Rise), ticks);
                 Assert.That(end.Position.Y, Is.EqualTo(s.Bounds.Max.Y).Within(0.05), $"ran up the {s.Kind} at {s.Bounds.Min} (ended at {end.Position})");
             }
@@ -148,7 +148,7 @@ namespace Sculpt.Core.Tests
             Aabb west = B.Buildings[1], hall = B.Buildings[0];
             Aabb br = B.Bridges[2]; // after the two ramp walkways
             double z = (br.Min.Z + br.Max.Z) / 2;
-            MotorState s = Run(new Vec3d(west.Max.X - 3, west.Max.Y, z), Math.PI / 2, 180);
+            MotorState s = Run(new Vec3d(west.Max.X - 3, west.Max.Y, z), Math.PI / 2, 180 * SimTime.Per60);
             Assert.That(s.Position.X, Is.GreaterThan(hall.Min.X + 2), "across to the hall's roof");
             Assert.That(s.Position.Y, Is.EqualTo(hall.Max.Y).Within(1e-6));
         }

@@ -30,7 +30,7 @@ namespace Sculpt.Core.Tests
         {
             MotorState s = MotorState.At(at);
             s.Tick = 1000;
-            for (int k = 0; k < 30; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw }); // settle
+            for (int k = 0; k < 30 * SimTime.Per60; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw }); // settle
             for (int k = 0; k < ticks; k++)
             {
                 var i = new MoveInput { Yaw = yaw, MoveZ = 1, SprintHeld = sprint };
@@ -153,7 +153,7 @@ namespace Sculpt.Core.Tests
             double minSpeed = double.MaxValue;
             MotorState st = MotorState.At(start);
             st.Tick = 1000;
-            for (int k = 0; k < 150; k++)
+            for (int k = 0; k < 150 * SimTime.Per60; k++)
             {
                 PlayerMovement.Step(_t, _c, ref st, new MoveInput { Yaw = North, MoveZ = 1, SprintHeld = true });
                 if (k > 60 && st.Position.Z > s.Bounds.Min.Z + 0.5 && st.Position.Z < s.Bounds.Max.Z - 0.5) minSpeed = Math.Min(minSpeed, st.HorizontalSpeed);
@@ -180,7 +180,7 @@ namespace Sculpt.Core.Tests
         {
             Aabb hall = B.Buildings[0];
             // Hall A's south wide door is segment 1 of its south wall (x 98.6..104.6).
-            MotorState s = Run(new Vec3d(101.6, 0, hall.Min.Z - 4), North, 90);
+            MotorState s = Run(new Vec3d(101.6, 0, hall.Min.Z - 4), North, 90 * SimTime.Per60);
             Assert.That(s.Position.Z, Is.GreaterThan(hall.Min.Z + 3), "inside the hall");
 
             Aabb longBlock = B.Buildings[2];
@@ -196,7 +196,7 @@ namespace Sculpt.Core.Tests
             Aabb a = B.Buildings[0], c = B.Buildings[1];
             Aabb ac = B.Bridges[0];
             double z = (ac.Min.Z + ac.Max.Z) / 2;
-            MotorState s = Run(new Vec3d(a.Max.X - 3, a.Max.Y, z), East, 90);
+            MotorState s = Run(new Vec3d(a.Max.X - 3, a.Max.Y, z), East, 90 * SimTime.Per60);
             Assert.That(s.Position.X, Is.GreaterThan(c.Min.X + 2), "across to C's roof");
             Assert.That(s.Position.Y, Is.EqualTo(c.Max.Y).Within(1e-6));
         }
@@ -208,8 +208,8 @@ namespace Sculpt.Core.Tests
             Assert.That(slope.IsRamp, Is.True);
             double z = (slope.Bounds.Min.Z + slope.Bounds.Max.Z) / 2;
             // Sprint west off the top, slide down.
-            MotorState s = Run(new Vec3d(slope.Bounds.Max.X + 3, slope.Bounds.Max.Y, z), West, 120,
-                tweak: (k, i) => { if (k == 30) i.CrouchPressed = true; if (k >= 30) i.CrouchHeld = true; return i; });
+            MotorState s = Run(new Vec3d(slope.Bounds.Max.X + 3, slope.Bounds.Max.Y, z), West, 120 * SimTime.Per60,
+                tweak: (k, i) => { if (k == 30 * SimTime.Per60) i.CrouchPressed = true; if (k >= 30 * SimTime.Per60) i.CrouchHeld = true; return i; });
             Assert.That(s.HorizontalSpeed, Is.GreaterThan(_c.SprintSpeed), "downhill slides gain speed");
         }
 

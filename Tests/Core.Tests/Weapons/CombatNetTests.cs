@@ -30,10 +30,15 @@ namespace Sculpt.Core.Tests.Weapons
             pitch = (float)(-Math.Asin(d.Y / d.Length) * 180 / Math.PI);
         }
 
-        /// <summary>Shooter script: equip a gun at tick 1, then aim at the target as drawn (its chest) and fire when told.</summary>
+        /// <summary>
+        /// Shooter script: equip a gun at tick 1, then aim at the target as drawn (its chest) and fire when told.
+        /// <paramref name="fire"/> is asked with the time since the start in sixtieths of a second (the scripts were
+        /// written at 60 Hz); a press lands on the first tick of that sixtieth, holding covers all of it.
+        /// </summary>
         private static Func<SculptNetHarness.Peer, int, SculptTickInput> Shooter(Weapon w, Func<SculptNetHarness.Peer> target, Func<int, bool> fire, double chest = 1.0)
         {
             int start = int.MinValue;
+            bool wants = false;
             return (p, t) =>
             {
                 if (start == int.MinValue) start = t;
@@ -45,9 +50,11 @@ namespace Sculpt.Core.Tests.Weapons
                     AimAt(p.Client, v.Position + new Vec3d(0, chest, 0), out double yaw, out i.Pitch);
                     i.Move.Yaw = yaw;
                 }
-                bool f = t > start + 40 && fire(t - start);
+                int kk = t - start;
+                if (kk % SimTime.Per60 == 0) wants = fire(kk / SimTime.Per60); // asked once per sixtieth (scripts count shots)
+                bool f = kk > 40 * SimTime.Per60 && wants;
                 i.Move.FireHeld = f;
-                i.Move.FirePressed = f;
+                i.Move.FirePressed = f && kk % SimTime.Per60 == 0;
                 i.Move.WantsToShoot = f;
                 return i;
             };
@@ -123,7 +130,7 @@ namespace Sculpt.Core.Tests.Weapons
             a.Script = (p, t) =>
             {
                 SculptTickInput i = aim(p, t);
-                i.Move.MoveX = Math.Sin(t * 0.05); // strafing while spraying
+                i.Move.MoveX = Math.Sin(t * 0.05 / SimTime.Per60); // strafing while spraying
                 return i;
             };
             h.RunSeconds(1); // join: the clock settles (one resync is normal here)
@@ -145,7 +152,7 @@ namespace Sculpt.Core.Tests.Weapons
             h.Movement.Weapons.Of(Weapon.Pistol).MagSize = 250; // every press is a shot (no reload pauses)
             var a = h.AddClient(SculptNetHarness.FeetIn(10, 5), team: 1, up: SculptNetHarness.Lag(75), down: SculptNetHarness.Lag(75));
             var b = h.AddClient(SculptNetHarness.FeetIn(10, 14), team: 2);
-            b.Script = (p, t) => new SculptTickInput { Move = new MoveInput { MoveX = (t / 50) % 2 == 0 ? 1 : -1 } };
+            b.Script = (p, t) => new SculptTickInput { Move = new MoveInput { MoveX = (t / (50 * SimTime.Per60)) % 2 == 0 ? 1 : -1 } };
             int shots = 0;
             a.Script = Shooter(Weapon.Pistol, () => b, k => { bool f = k % 15 == 0 && k > 60; if (f) shots++; return f; });
             h.RunSeconds(6);
@@ -161,7 +168,7 @@ namespace Sculpt.Core.Tests.Weapons
             var h = Arena();
             var a = h.AddClient(SculptNetHarness.FeetIn(10, 5), team: 1, up: SculptNetHarness.Lag(60), down: SculptNetHarness.Lag(60));
             var b = h.AddClient(SculptNetHarness.FeetIn(10, 14), team: 2);
-            b.Script = (p, t) => new SculptTickInput { Move = new MoveInput { MoveX = (t / 37) % 2 == 0 ? 1 : -1, MoveZ = 0.4 } };
+            b.Script = (p, t) => new SculptTickInput { Move = new MoveInput { MoveX = (t / (37 * SimTime.Per60)) % 2 == 0 ? 1 : -1, MoveZ = 0.4 } };
             double worst = 0;
             int samples = 0;
             a.Script = (p, t) =>
@@ -193,6 +200,7 @@ namespace Sculpt.Core.Tests.Weapons
             a.Script = (p, t) =>
             {
                 if (start == int.MinValue) start = t;
+                const int P = SimTime.Per60;
                 int k = t - start;
                 var i = new SculptTickInput();
                 if (p.Client.TryGetRemote(b.ServerSide.Id, out RemoteView v))
@@ -200,9 +208,9 @@ namespace Sculpt.Core.Tests.Weapons
                     AimAt(p.Client, v.Position + new Vec3d(0, 1.0, 0), out double yaw, out i.Pitch);
                     i.Move.Yaw = yaw;
                 }
-                if (k == 60 || (k > 64 && k < 140)) { i.Move.FireHeld = true; i.Move.FirePressed = k == 60; i.Move.WantsToShoot = true; }
-                if (k == 62) i.Hand.WeaponKey = 2; // SMG
-                if (k == 64) i.Hand.WeaponKey = 1; // back to the pump at once
+                if (k == 60 * P || (k > 64 * P && k < 140 * P)) { i.Move.FireHeld = true; i.Move.FirePressed = k == 60 * P; i.Move.WantsToShoot = true; }
+                if (k == 62 * P) i.Hand.WeaponKey = 2; // SMG
+                if (k == 64 * P) i.Hand.WeaponKey = 1; // back to the pump at once
                 return i;
             };
             h.RunSeconds(1);
@@ -211,7 +219,7 @@ namespace Sculpt.Core.Tests.Weapons
             foreach (var kv in b.Client.Combat)
                 if (kv.Value.Type == CombatEventType.Shot) shotTicks.Add(kv.Key);
             Assert.That(shotTicks.Count, Is.EqualTo(2), "pump, then pump again (the SMG never got drawn)");
-            Assert.That(shotTicks[1] - shotTicks[0], Is.EqualTo(54));
+            Assert.That(shotTicks[1] - shotTicks[0], Is.EqualTo(54 * SimTime.Per60));
             Assert.That(a.Client.Corrections - c0, Is.EqualTo(0));
         }
 

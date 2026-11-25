@@ -547,7 +547,7 @@ namespace Sculpt.Core.Tests.Fuzz
             foreach (int seed in Seeds())
             {
                 var s = new Scenario(seed + 1, 8, move: false, crouchChance: 0.4) { InfiniteBar = true, ActionChance = 0.4, AimAtPlayersChance = 0.8 };
-                s.Run(900);
+                s.Run(900 * SimTime.Per60);
                 throws += s.Throws; hits += s.ThrowHits; falls += s.Falls; shoves += s.Shoves; drags += s.Drags;
                 raises += s.Raises; sinks += s.Sinks; moves += s.Moves; cancelled += s.Cancelled;
                 foreach (var k in s.Rejected.Keys) rej.Add(k);

@@ -37,7 +37,7 @@ namespace Sculpt.Core.Tests.World
             var s = MotorState.At(feet);
             s.Hand.Bag.S4 = item;
             s.Hand.Bag.N4 = (byte)count;
-            for (int k = 1; k <= 30; k++)
+            for (int k = 1; k <= 30 * SimTime.Per60; k++)
             {
                 s.Tick = k - 1;
                 PlayerMovement.Step(t, Mc, ref s, default, null);
@@ -76,7 +76,7 @@ namespace Sculpt.Core.Tests.World
             CompositeTerrain t = Arena(out _, out _);
             MotorState s = Settled(t, new Vec3d(9, 0, 7), Item.C4, 1);
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.C4DrawTicks;
-            var ev = Run(t, ref s, 90, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
+            var ev = Run(t, ref s, 90 * SimTime.Per60, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
             List<GrenadeEvent> stuck = Of(ev, GrenadeEventType.Stuck);
             Assert.That(Of(ev, GrenadeEventType.Thrown).Count, Is.EqualTo(1));
             Assert.That(stuck.Count, Is.EqualTo(1), "it sticks instead of going off");
@@ -88,7 +88,7 @@ namespace Sculpt.Core.Tests.World
             Assert.That(s.Nade0.Stuck && s.Nade0.Velocity.Equals(Vec3d.Zero), Is.True);
 
             int det = s.Tick + 1;
-            ev = Run(t, ref s, 3, k => Cmd(k, false, aim: k == det));
+            ev = Run(t, ref s, 3 * SimTime.Per60, k => Cmd(k, false, aim: k == det));
             List<GrenadeEvent> boom = Of(ev, GrenadeEventType.Exploded);
             Assert.That(boom.Count, Is.EqualTo(1));
             Assert.That(boom[0].Tick, Is.EqualTo(det), "goes off on the press tick");
@@ -103,11 +103,11 @@ namespace Sculpt.Core.Tests.World
             CompositeTerrain t = Arena(out _, out _);
             MotorState s = Settled(t, new Vec3d(9, 0, 7), Item.C4, 1);
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.C4DrawTicks;
-            var ev = Run(t, ref s, 700, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
+            var ev = Run(t, ref s, 700 * SimTime.Per60, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
             GrenadeEvent stuck = Of(ev, GrenadeEventType.Stuck)[0];
             List<GrenadeEvent> boom = Of(ev, GrenadeEventType.Exploded);
             Assert.That(boom.Count, Is.EqualTo(1));
-            Assert.That(boom[0].Tick - stuck.Tick, Is.EqualTo(480), "8 s after it landed");
+            Assert.That(boom[0].Tick - stuck.Tick, Is.EqualTo(8 * SimTime.TicksPerSecond), "8 s after it landed");
         }
 
         [Test]
@@ -116,8 +116,8 @@ namespace Sculpt.Core.Tests.World
             CompositeTerrain t = Arena(out _, out _);
             MotorState s = Settled(t, new Vec3d(9, 0, 7), Item.C4, 1);
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.C4DrawTicks;
-            int early = ready + C4.DetonateArmTicks - 3, late = ready + C4.DetonateArmTicks + 10;
-            var ev = Run(t, ref s, 60, k => Cmd(k, k == ready || k == late, aim: k == early, key: (byte)(k == t0 ? 5 : 0)));
+            int early = ready + C4.DetonateArmTicks - 3 * SimTime.Per60, late = ready + C4.DetonateArmTicks + 10 * SimTime.Per60;
+            var ev = Run(t, ref s, 60 * SimTime.Per60, k => Cmd(k, k == ready || k == late, aim: k == early, key: (byte)(k == t0 ? 5 : 0)));
             List<GrenadeEvent> boom = Of(ev, GrenadeEventType.Exploded);
             Assert.That(boom.Count, Is.EqualTo(1), "the early press did nothing");
             Assert.That(boom[0].Tick, Is.EqualTo(late), "fire with no charge in hand is the detonator");
@@ -129,7 +129,7 @@ namespace Sculpt.Core.Tests.World
             CompositeTerrain t = Arena(out _, out _);
             MotorState s = Settled(t, new Vec3d(9, 0, 7), Item.C4, 2);
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.C4DrawTicks, second = ready + C4.ThrowRecoveryTicks + 1;
-            int det = second + 60;
+            int det = second + 60 * SimTime.Per60;
             var ev = Run(t, ref s, det - t0 + 5, k => Cmd(k, k == ready || k == second, aim: k == det, key: (byte)(k == t0 ? 5 : 0), yaw: k < second ? -0.2 : 0.2));
             Assert.That(Of(ev, GrenadeEventType.Thrown).Count, Is.EqualTo(2));
             Assert.That(Of(ev, GrenadeEventType.Stuck).Count, Is.EqualTo(2));
@@ -144,8 +144,8 @@ namespace Sculpt.Core.Tests.World
         {
             CompositeTerrain t = Arena(out _, out _);
             MotorState s = Settled(t, new Vec3d(9, 0, 7), Item.C4, 2);
-            int t0 = s.Tick + 1, ready = t0 + Mc.Hand.C4DrawTicks, det = ready + 50, again = det + 5;
-            var ev = Run(t, ref s, again - t0 + 40, k => Cmd(k, k == ready || k == again, aim: k == det, key: (byte)(k == t0 ? 5 : 0)));
+            int t0 = s.Tick + 1, ready = t0 + Mc.Hand.C4DrawTicks, det = ready + 50 * SimTime.Per60, again = det + 5 * SimTime.Per60;
+            var ev = Run(t, ref s, again - t0 + 40 * SimTime.Per60, k => Cmd(k, k == ready || k == again, aim: k == det, key: (byte)(k == t0 ? 5 : 0)));
             Assert.That(Of(ev, GrenadeEventType.Exploded)[0].Tick, Is.EqualTo(det));
             Assert.That(Of(ev, GrenadeEventType.Thrown).Count, Is.EqualTo(2));
             Assert.That(s.Hand.HeldItem, Is.EqualTo(Item.C4));
@@ -157,19 +157,19 @@ namespace Sculpt.Core.Tests.World
             CompositeTerrain t = Arena(out TileWalls walls, out _);
             MotorState s = Settled(t, new Vec3d(9, 0, 7), Item.C4, 1);
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.C4DrawTicks;
-            var ev = Run(t, ref s, 60, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
+            var ev = Run(t, ref s, 60 * SimTime.Per60, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
             GrenadeEvent first = Of(ev, GrenadeEventType.Stuck)[0];
             var near = new List<int>();
             walls.TilesNear(new Aabb(first.Position - new Vec3d(0.2, 0.2, 0.2), first.Position + new Vec3d(0.2, 0.2, 0.2)), near);
             Assert.That(near.Count, Is.GreaterThan(0));
             foreach (int k in near) walls.Set(k, TileState.Broken, 0, TileCause.Bullet);
-            ev = Run(t, ref s, 200, k => Cmd(k, false));
+            ev = Run(t, ref s, 200 * SimTime.Per60, k => Cmd(k, false));
             List<GrenadeEvent> stuck = Of(ev, GrenadeEventType.Stuck);
             Assert.That(stuck.Count, Is.EqualTo(1), "lands again");
             Assert.That(stuck[0].Position.Y, Is.EqualTo(0.05).Within(1e-6), "on the floor");
             Assert.That(s.Nade0.StuckTick, Is.EqualTo(first.Tick), "the fuse counts from the first landing");
-            ev = Run(t, ref s, 300, k => Cmd(k, false));
-            Assert.That(Of(ev, GrenadeEventType.Exploded)[0].Tick - first.Tick, Is.EqualTo(480));
+            ev = Run(t, ref s, 300 * SimTime.Per60, k => Cmd(k, false));
+            Assert.That(Of(ev, GrenadeEventType.Exploded)[0].Tick - first.Tick, Is.EqualTo(8 * SimTime.TicksPerSecond));
         }
 
         [Test]
@@ -178,10 +178,10 @@ namespace Sculpt.Core.Tests.World
             CompositeTerrain t = Arena(out _, out _);
             MotorState s = Settled(t, new Vec3d(9, 0, 7), Item.C4, 1);
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.C4DrawTicks;
-            Run(t, ref s, 60, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
+            Run(t, ref s, 60 * SimTime.Per60, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
             Assert.That(s.Nade0.Active, Is.True);
             WeaponRules.ApplyDamage(ref s, 500, s.Tick, Mc.Weapons);
-            var ev = Run(t, ref s, 2, k => Cmd(k, false));
+            var ev = Run(t, ref s, 2 * SimTime.Per60, k => Cmd(k, false));
             Assert.That(Of(ev, GrenadeEventType.Fizzled).Count, Is.EqualTo(1));
             Assert.That(Of(ev, GrenadeEventType.Exploded), Is.Empty);
             Assert.That(s.Nade0.Active, Is.False);
@@ -209,7 +209,7 @@ namespace Sculpt.Core.Tests.World
             CompositeTerrain t = Arena(out TileWalls walls, out _);
             MotorState s = Settled(t, new Vec3d(9, 0, 7), Item.Launcher, 4);
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.LauncherDrawTicks;
-            var ev = Run(t, ref s, 80, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
+            var ev = Run(t, ref s, 80 * SimTime.Per60, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
             Assert.That(Of(ev, GrenadeEventType.Thrown).Count, Is.EqualTo(1));
             Assert.That(Of(ev, GrenadeEventType.Fizzled).Count, Is.EqualTo(1), "5 m: not armed");
             Assert.That(Of(ev, GrenadeEventType.Exploded), Is.Empty);
@@ -223,12 +223,12 @@ namespace Sculpt.Core.Tests.World
             CompositeTerrain t = Arena(out _, out _);
             MotorState s = Settled(t, new Vec3d(9, 0, 1), Item.Launcher, 4);
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.LauncherDrawTicks;
-            var ev = Run(t, ref s, 80, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
+            var ev = Run(t, ref s, 80 * SimTime.Per60, k => Cmd(k, k == ready, key: (byte)(k == t0 ? 5 : 0)));
             List<GrenadeEvent> boom = Of(ev, GrenadeEventType.Exploded);
             Assert.That(boom.Count, Is.EqualTo(1));
             Assert.That(boom[0].Kind, Is.EqualTo(ThrowKind.Launcher));
             Assert.That(boom[0].Position.Z, Is.EqualTo(12 - 0.05).Within(1e-6));
-            Assert.That(boom[0].Tick - ready, Is.LessThan(25), "fast round: 11 m in well under half a second");
+            Assert.That(boom[0].Tick - ready, Is.LessThan(25 * SimTime.Per60), "fast round: 11 m in well under half a second");
         }
 
         [Test]
@@ -238,7 +238,7 @@ namespace Sculpt.Core.Tests.World
             MotorState s = Settled(t, new Vec3d(9, 0, 1), Item.Launcher, 2);
             int t0 = s.Tick + 1, ready = t0 + Mc.Hand.LauncherDrawTicks;
             // Hold fire from the moment it is out: rounds leave exactly one cycle apart.
-            var ev = Run(t, ref s, 200, k => new InputCmd
+            var ev = Run(t, ref s, 200 * SimTime.Per60, k => new InputCmd
             {
                 Tick = k,
                 Move = new MoveInput { FireHeld = k >= ready, FirePressed = k == ready, WantsToShoot = k >= ready },
@@ -250,21 +250,21 @@ namespace Sculpt.Core.Tests.World
             s = Settled(t, new Vec3d(9, 0, 1), Item.Launcher, 2);
             t0 = s.Tick + 1;
             ready = t0 + Mc.Hand.LauncherDrawTicks;
-            int second = ready + 10, third = ready + Gl.ThrowRecoveryTicks + 2;
-            ev = Run(t, ref s, 200, k => Cmd(k, k == ready || k == second || k == third, key: (byte)(k == t0 ? 5 : 0)));
+            int second = ready + 10 * SimTime.Per60, third = ready + Gl.ThrowRecoveryTicks + 2 * SimTime.Per60;
+            ev = Run(t, ref s, 200 * SimTime.Per60, k => Cmd(k, k == ready || k == second || k == third, key: (byte)(k == t0 ? 5 : 0)));
             thrown = Of(ev, GrenadeEventType.Thrown);
             Assert.That(thrown.Count, Is.EqualTo(2));
-            Assert.That(thrown[1].Tick - thrown[0].Tick, Is.EqualTo(Gl.ThrowRecoveryTicks + 2), "the press inside the cycle is dropped");
+            Assert.That(thrown[1].Tick - thrown[0].Tick, Is.EqualTo(Gl.ThrowRecoveryTicks + 2 * SimTime.Per60), "the press inside the cycle is dropped");
             Assert.That(s.Hand.Bag[4], Is.EqualTo(Item.None), "out of rounds");
             Assert.That(s.Hand.HeldItem, Is.EqualTo(Item.Pump));
 
             s = Settled(t, new Vec3d(20, 0, 1), Item.Launcher, 2);
             t0 = s.Tick + 1;
             ready = t0 + Mc.Hand.LauncherDrawTicks;
-            ev = Run(t, ref s, 60, k => new InputCmd
+            ev = Run(t, ref s, 60 * SimTime.Per60, k => new InputCmd
             {
                 Tick = k,
-                Move = new MoveInput { SprintHeld = true, MoveZ = 1, FirePressed = k == ready + 6, FireHeld = k == ready + 6 },
+                Move = new MoveInput { SprintHeld = true, MoveZ = 1, FirePressed = k == ready + 6 * SimTime.Per60, FireHeld = k == ready + 6 * SimTime.Per60 },
                 Hand = new HandInput { WeaponKey = (byte)(k == t0 ? 5 : 0) },
             });
             Assert.That(Of(ev, GrenadeEventType.Thrown), Is.Empty, "a fire press while still sprinting does nothing");
@@ -278,7 +278,7 @@ namespace Sculpt.Core.Tests.World
             {
                 MotorState s = Settled(t, new Vec3d(20, 0, 1), item, 2);
                 int t0 = s.Tick + 1;
-                Run(t, ref s, 90, k => Cmd(k, false, key: (byte)(k == t0 ? 5 : 0), sprint: true, forward: 1));
+                Run(t, ref s, 90 * SimTime.Per60, k => Cmd(k, false, key: (byte)(k == t0 ? 5 : 0), sprint: true, forward: 1));
                 double expect = Mc.SprintSpeed * (item == Item.Launcher ? Gl.MoveSpeedScale : 1);
                 Assert.That(s.Velocity.HorizontalLength, Is.EqualTo(expect).Within(0.05), item.ToString());
             }

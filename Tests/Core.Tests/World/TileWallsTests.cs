@@ -366,7 +366,7 @@ namespace Sculpt.Core.Tests
                 Vec3d d = target - eye;
                 i.Move.Yaw = Math.Atan2(d.X, d.Z);
                 i.Pitch = (float)(-Math.Asin(d.Y / d.Length) * 180 / Math.PI);
-                bool fire = t > start + 40 && (t - start) % 20 == 0;
+                bool fire = t > start + 40 * SimTime.Per60 && (t - start) % (20 * SimTime.Per60) == 0;
                 i.Move.FireHeld = fire;
                 i.Move.FirePressed = fire;
                 i.Move.WantsToShoot = fire;

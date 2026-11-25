@@ -147,7 +147,8 @@ namespace Sculpt.Core
         {
             int extra = Math.Max(0, subCells - ReferenceSubCells);
             int eighth = Math.Max(1, ReferenceSubCells / 8);
-            return Math.Min(MaxWindupTicks, WindupTicks + (extra + eighth - 1) / eighth);
+            // +1/60 s per extra eighth of the reference piece (one tick at 60 Hz, SimTime.Per60 ticks now).
+            return Math.Min(MaxWindupTicks, WindupTicks + SimTime.Per60 * ((extra + eighth - 1) / eighth));
         }
 
         public int ThrowWindup(int subCells) =>
