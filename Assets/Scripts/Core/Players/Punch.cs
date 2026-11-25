@@ -14,8 +14,11 @@ namespace Sculpt.Core
         public double Reach = 2.0;
         /// <summary>The hit lands this long after the press (the wind-up you can see; was 0.1 s).</summary>
         public double HitSeconds = 0.2;
-        /// <summary>The whole swing: the gun can't fire and you can't punch again until it ends (was 0.45 s).</summary>
+        /// <summary>The whole swing: you can't punch again until it ends (was 0.45 s).</summary>
         public double TotalSeconds = 0.8;
+        /// <summary>The gun can't fire (and nothing can be thrown) for this long after the press: the hit plus a short
+        /// recovery (balance pass 2026-11-25, Ben: was the whole 0.8 s swing, which made a punch never worth it in a fight).</summary>
+        public double GunLockSeconds = 0.35;
         public int PlayerDamage = 30;
         /// <summary>Besides the centre ray, a ring of rays this many degrees out finds players (a punch is forgiving
         /// against players; walls only take the centre ray, so you always hit the spot under the crosshair).</summary>
@@ -25,6 +28,7 @@ namespace Sculpt.Core
 
         public int HitTicks { get => SimTime.SecondsToTicks(HitSeconds); set => HitSeconds = value / (double)SimTime.TicksPerSecond; }
         public int TotalTicks { get => Math.Max(1, SimTime.SecondsToTicks(TotalSeconds)); set => TotalSeconds = value / (double)SimTime.TicksPerSecond; }
+        public int GunLockTicks => Math.Max(1, Math.Min(TotalTicks, SimTime.SecondsToTicks(GunLockSeconds)));
         public int BufferTicks { get => SimTime.SecondsToTicks(BufferSeconds); set => BufferSeconds = value / (double)SimTime.TicksPerSecond; }
     }
 
@@ -39,8 +43,10 @@ namespace Sculpt.Core
 
     public static class PunchRules
     {
-        /// <summary>True while a punch is playing (gun locked, no new punch).</summary>
+        /// <summary>True while a punch is playing (no new punch).</summary>
         public static bool Punching(in MotorState s, int tick, PunchConfig c) => tick - s.PunchTick < c.TotalTicks;
+        /// <summary>True while a punch keeps your hands busy (no shots, no throws): the first <see cref="PunchConfig.GunLockSeconds"/>.</summary>
+        public static bool HandsBusy(in MotorState s, int tick, PunchConfig c) => tick - s.PunchTick < c.GunLockTicks;
 
         /// <summary>
         /// One tick of the punch, inside the player's simulation after movement and before guns: a press starts it (or is
@@ -64,7 +70,7 @@ namespace Sculpt.Core
             if (s.Hand.Mode == HandMode.Disarmed || s.Hand.InSculptMode || s.Mode == MoveMode.Mantle) return;
             s.PunchTick = tick;
             s.PunchBufferTick = int.MinValue / 2;
-            s.ShootReadyTick = Math.Max(s.ShootReadyTick, s.Tick + c.TotalTicks); // on the motor's own clock (CanShoot reads s.Tick, which restarts at a respawn)
+            s.ShootReadyTick = Math.Max(s.ShootReadyTick, s.Tick + c.GunLockTicks); // on the motor's own clock (CanShoot reads s.Tick, which restarts at a respawn)
         }
 
         /// <summary>What a punch hit: the nearest player within reach (centre ray or the forgiving ring), else the terrain

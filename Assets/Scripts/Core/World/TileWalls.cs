@@ -129,6 +129,9 @@ namespace Sculpt.Core
         /// <summary>A charge bursts through when at least this share of the wall in your way has been hit (and none of it
         /// is reinforced). 0.4: one AR bullet at chest height lets a sprinting player through, any hit a sliding one.</summary>
         public double ChargeHitShare = 0.4;
+        /// <summary>A charge counts every patched cell as hit (the old rule). Off (balance pass 2026-11-25, Ben): a freshly
+        /// healed spot is sound again until something hits it, so a heal really keeps a sprint out.</summary>
+        public bool ChargePatchedCounts = false;
         /// <summary>You must hit the wall within this many degrees of head-on (a glancing scrape along it never breaks it).</summary>
         public double ChargeMaxAngleDegrees = 60;
 

@@ -116,6 +116,61 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
+        public void AFreshHeal_StopsASprint_UntilTheSpotIsHitAgain()
+        {
+            // Balance pass 2026-11-25 (Ben): healed (patched) cells don't count as hit for a charge until something hits
+            // them again, so a heal really keeps a sprint out. One bullet on the healed spot opens the way again.
+            CompositeTerrain t = Arena(out TileWalls w);
+            int lo = Tile(w, LaneX, 0.75), hi = Tile(w, LaneX, 2.25);
+            foreach (double y in new[] { 0.4, 0.9, 1.4, 1.9 })
+                w.Damage(y < 1.5 ? lo : hi, 60, new Vec3d(LaneX, y, 12), TileCause.Bullet, 1, 0.6);
+            var plan = new System.Collections.Generic.Dictionary<int, ulong>();
+            for (int pass = 0; pass < 3; pass++)
+                foreach (int tile in new[] { lo, hi })
+                    for (int c = 0; c < 64; c++)
+                        if (w.CellHealth(tile, c) < w.Config.PatchedHealth && w.HasHealWork(tile, c, HealKind.Heal))
+                        {
+                            w.HealPlan(tile, c, HealKind.Heal, plan);
+                            w.ApplyHeal(plan, HealKind.Heal, 2);
+                        }
+            Assert.That(w[lo].Patch, Is.Not.EqualTo(0ul), "the heal patched the spot");
+
+            MotorState s = Settled(t, new Vec3d(LaneX, 0, 2));
+            Go(t, ref s, 150 * SimTime.Per60, k => Run(0), new ServerChargeBreaker { By = 1 }, out _, out double after);
+            Assert.That(after, Is.EqualTo(-1), "a fresh heal stops the sprint");
+            Assert.That(s.Position.Z, Is.LessThan(12));
+
+            w.Config.ChargePatchedCounts = true;   // the old rule: every patched cell counts
+            MotorState s2 = Settled(t, new Vec3d(LaneX, 0, 2));
+            Go(t, ref s2, 150 * SimTime.Per60, k => Run(0), new ServerChargeBreaker { By = 1 }, out _, out double after2);
+            Assert.That(after2, Is.GreaterThan(0), "old rule: straight through the healed wall");
+        }
+
+        [Test]
+        public void AHealedSpot_HitAgain_LetsASprintThrough()
+        {
+            CompositeTerrain t = Arena(out TileWalls w);
+            int lo = Tile(w, LaneX, 0.75), hi = Tile(w, LaneX, 2.25);
+            foreach (double y in new[] { 0.4, 0.9, 1.4, 1.9 })
+                w.Damage(y < 1.5 ? lo : hi, 60, new Vec3d(LaneX, y, 12), TileCause.Bullet, 1, 0.6);
+            var plan = new System.Collections.Generic.Dictionary<int, ulong>();
+            for (int pass = 0; pass < 3; pass++)
+                foreach (int tile in new[] { lo, hi })
+                    for (int c = 0; c < 64; c++)
+                        if (w.CellHealth(tile, c) < w.Config.PatchedHealth && w.HasHealWork(tile, c, HealKind.Heal))
+                        {
+                            w.HealPlan(tile, c, HealKind.Heal, plan);
+                            w.ApplyHeal(plan, HealKind.Heal, 2);
+                        }
+            // One light hit at chest height (less than a patched cell's 50, so it cracks and doesn't open).
+            w.Damage(Tile(w, LaneX, 1.2), 20, new Vec3d(LaneX, 1.2, 12), TileCause.Bullet, 1, 0.6);
+            MotorState s = Settled(t, new Vec3d(LaneX, 0, 2));
+            Go(t, ref s, 150 * SimTime.Per60, k => Run(0), new ServerChargeBreaker { By = 1 }, out _, out double after);
+            Assert.That(after, Is.GreaterThan(0), "hit again: a sprint bursts through");
+            Assert.That(s.Position.Z, Is.GreaterThan(13));
+        }
+
+        [Test]
         public void StandingNeedsBothTilesCracked_SlidingFitsThroughOne()
         {
             CompositeTerrain t = Arena(out TileWalls w);

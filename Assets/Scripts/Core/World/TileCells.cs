@@ -628,15 +628,18 @@ namespace Sculpt.Core
             return hit;
         }
 
-        /// <summary>Has this cell been hit (a charge counts it)? Any damage on a plain cell, and every patched cell; never a
-        /// reinforced one (Ben 2026-11-25: "sprint through low health walls").</summary>
+        /// <summary>Has this cell been hit (a charge counts it)? Any damage on a plain cell; a patched cell only once it has
+        /// been hit again since the heal (balance pass 2026-11-25, Ben: a fresh heal keeps a sprint out; set
+        /// <see cref="BreachConfig.ChargePatchedCounts"/> for the old rule, every patched cell); never a reinforced one
+        /// (Ben 2026-11-25: "sprint through low health walls").</summary>
         public bool CellWeak(int tile, int cell)
         {
             WallTile t = _tiles[tile];
             ulong bit = 1ul << cell;
             if ((t.Steel & bit) != 0) return false;
-            if ((t.Patch & bit) != 0) return true;
-            return _hp[tile * Cells + cell] < Config.MaxCellHealth(false, false);
+            bool patched = (t.Patch & bit) != 0;
+            if (patched && Config.ChargePatchedCounts) return true;
+            return _hp[tile * Cells + cell] < Config.MaxCellHealth(patched, false);
         }
 
         public bool CellReinforced(int tile, int cell) => ((_tiles[tile].Steel >> cell) & 1) != 0;

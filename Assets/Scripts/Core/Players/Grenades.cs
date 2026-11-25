@@ -207,7 +207,7 @@ namespace Sculpt.Core
                 if (count == 0) return;
             }
 
-            if (!s.Hand.ItemReady || s.Mode == MoveMode.Mantle || PunchRules.Punching(s, tick, mc.Punch)) return;
+            if (!s.Hand.ItemReady || s.Mode == MoveMode.Mantle || PunchRules.HandsBusy(s, tick, mc.Punch)) return;
             if (!buffered || count <= 0) return;
             if (c.NeedsAim && !s.CanShoot) return;
             if (kind == ThrowKind.Launcher && tick < s.LauncherReadyTick) return;

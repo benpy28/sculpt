@@ -24,6 +24,8 @@ namespace Sculpt.Core
     public static class Items
     {
         public const int Slots = 5;
+        /// <summary>The utility slot (slot 5 on the keys): grenades, C4 or the launcher, one kind at a time.</summary>
+        public const int UtilitySlot = 4;
         /// <summary>The snapshot carries the held item in 3 bits, so this stays at most 7.</summary>
         public const Item Last = Item.Launcher;
 
@@ -183,7 +185,10 @@ namespace Sculpt.Core
         /// <summary>Most C4 charges one player carries.</summary>
         public int C4Carry = 2;
         /// <summary>Most launcher rounds one player carries.</summary>
-        public int LauncherCarry = 4;
+        public int LauncherCarry = 6;   // was 4 (Ben 2026-11-25, balance pass)
+        /// <summary>Grenades, C4 and the launcher all live in the utility slot (picking one swaps out the kind you had),
+        /// so a pickup never costs a gun (Ben 2026-11-25). Off = the old rule: held, empty, or swap with the held item.</summary>
+        public bool UtilityShareSlot = true;
         /// <summary>Pickup reach, eye to the item.</summary>
         public double Reach = 2.5;
         /// <summary>An item counts as aimed at within this angle of the crosshair (the closest one to the crosshair wins).</summary>
@@ -407,6 +412,28 @@ namespace Sculpt.Core
                 p.Take = 1;
             }
             int held = s.Hand.Slot;
+            if (cfg.UtilityShareSlot)
+            {
+                // Ben 2026-11-25: grenades, C4 and the launcher share the utility slot, so taking one never costs a gun;
+                // guns stay in the gun slots.
+                int u = Items.UtilitySlot;
+                if (Items.Throws(g.Kind))
+                {
+                    p.Slot = u;
+                    if (b[u] == Item.None || b.CountIn(u) == 0) return p;
+                    p.SwapOut = b[u];
+                    p.Result = PickupResult.Swapped;
+                    return p;
+                }
+                if (held != u && b[held] == Item.None) { p.Slot = held; return p; }
+                for (int k = 0; k < Items.Slots; k++)
+                    if (k != u && b[k] == Item.None) { p.Slot = k; return p; }
+                int into = held != u ? held : (s.Hand.PrevSlot != u ? s.Hand.PrevSlot : 0);
+                p.Slot = into;
+                p.SwapOut = b[into];
+                p.Result = PickupResult.Swapped;
+                return p;
+            }
             if (b[held] == Item.None) { p.Slot = held; return p; }
             int empty = b.FirstEmpty();
             if (empty >= 0) { p.Slot = empty; return p; }

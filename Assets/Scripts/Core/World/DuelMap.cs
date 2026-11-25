@@ -46,8 +46,8 @@ namespace Sculpt.Core
             var gl = new Vec3d(mid + 11, 0, 4);
             info.ItemSpawns.Add(new GroundItem { Kind = Item.C4, Count = 2, Position = c4 });
             info.ItemSpawns.Add(new GroundItem { Kind = Item.C4, Count = 2, Position = Turn(c4, size) });
-            info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 4, Position = gl });
-            info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 4, Position = Turn(gl, size) });
+            info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 6, Position = gl });
+            info.ItemSpawns.Add(new GroundItem { Kind = Item.Launcher, Count = 6, Position = Turn(gl, size) });
             return w;
         }
 

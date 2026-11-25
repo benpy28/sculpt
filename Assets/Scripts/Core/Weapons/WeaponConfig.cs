@@ -109,13 +109,13 @@ namespace Sculpt.Core
 
         public WeaponStats[] Stats =
         {
-            // Pump: 9 x 9.4, head pellets 1.5x (Ben 2026-11-25: gun damage ~15% lower; was 11), 0.9 s cycle, falloff from 5 m, heavy past 12 m; fairly accurate in air/slide.
+            // Pump: 9 x 9.4, head pellets 1.5x (Ben 2026-11-25: gun damage ~15% lower; was 11), 0.75 s cycle (balance pass 2026-11-25, was 0.9: it lost to the SMG even at 3 m), falloff from 5 m, heavy past 12 m; wider in the air and sliding.
             new WeaponStats
             {
-                Name = "Pump", Pellets = 9, BodyDamage = 9.4, HeadDamage = 14.1, FireIntervalMilliTicks = 54000 * SimTime.Per60, Automatic = true,
+                Name = "Pump", Pellets = 9, BodyDamage = 9.4, HeadDamage = 14.1, FireIntervalMilliTicks = 45000 * SimTime.Per60, Automatic = true,
                 FireBufferTicks = 6 * SimTime.Per60, Range = 60,
                 FalloffDistances = new double[] { 5, 12, 25 }, FalloffFactors = new double[] { 1.0, 0.65, 0.2 },
-                BaseSpread = 0.0, MoveSpread = 0.3, CrouchFactor = 1, SlideSpread = 0.6, AirSpread = 0.8, PatternSpread = 2.6,
+                BaseSpread = 0.0, MoveSpread = 0.3, CrouchFactor = 1, SlideSpread = 1.5, AirSpread = 1.5, PatternSpread = 2.6, // slide/air 1.5 (balance pass 2026-11-25, were 0.6/0.8): running stays accurate, slide-pumping is a risk
                 SwapBloom = 0.3, BloomRecoveryPerSecond = 4,
                 MagSize = 5, ShellReload = true, ShellStartTicks = 6 * SimTime.Per60, ShellTicks = 30 * SimTime.Per60,
                 RecoilPitchPerShot = 3.5, RecoilYawPerShot = 0.6, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 11, RecoilRecoveryDelayTicks = 8 * SimTime.Per60,
@@ -123,7 +123,7 @@ namespace Sculpt.Core
             // SMG: 12.75 (was 15), 12 shots/s, heavy falloff past 10 m; head 1.25x (Ben 2026-11-20).
             new WeaponStats
             {
-                Name = "SMG", BodyDamage = 12.75, HeadDamage = 15.9375, MagSize = 30, ReloadTicks = 96 * SimTime.Per60, SwapBloom = 0.3, FireIntervalMilliTicks = 5000 * SimTime.Per60, Automatic = true, Range = 120,
+                Name = "SMG", BodyDamage = 12.75, HeadDamage = 15.9375, MagSize = 30, ReloadTicks = 96 * SimTime.Per60, SwapBloom = 0.3, FireIntervalMilliTicks = 5455 * SimTime.Per60, Automatic = true, Range = 120,
                 FalloffDistances = new double[] { 10, 20, 35 }, FalloffFactors = new double[] { 1.0, 0.6, 0.4 },
                 BaseSpread = 0.9, MoveSpread = 0.7, CrouchFactor = 0.8, SlideSpread = 1.2, AirSpread = 1.8,
                 BloomPerShot = 0.12, BloomMax = 1.6, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 7 * SimTime.Per60,
@@ -137,14 +137,14 @@ namespace Sculpt.Core
                 BloomPerShot = 0.45, BloomMax = 3.0, BloomRecoveryPerSecond = 6, BloomRecoveryDelayTicks = 13 * SimTime.Per60,
                 RecoilPitchPerShot = 0.7, RecoilYawPerShot = 0.3, RecoilMaxPitch = 7, RecoilRecoveryPerSecond = 9, RecoilRecoveryDelayTicks = 13 * SimTime.Per60,
             },
-            // Pistol: 25.5 body / 42.5 head (was 30/50), semi-auto, max 5 shots/s, accurate; falloff from 25 m to 70% at 50 m.
+            // Pistol: 25.5 body / 37 head (balance pass 2026-11-25: 5 heads to kill, was 42.5; bloom 0.8/shot cap 2.5, was 0.5/2.0; it beat the AR at 10-25 m), semi-auto, max 5 shots/s, accurate; falloff from 25 m to 70% at 50 m.
             new WeaponStats
             {
-                Name = "Pistol", BodyDamage = 25.5, HeadDamage = 42.5, MagSize = 12, ReloadTicks = 78 * SimTime.Per60, SwapBloom = 0.3, AimFovScale = 0.87, FireIntervalMilliTicks = 12000 * SimTime.Per60, Automatic = false,
+                Name = "Pistol", BodyDamage = 25.5, HeadDamage = 37, MagSize = 12, ReloadTicks = 78 * SimTime.Per60, SwapBloom = 0.3, AimFovScale = 0.87, FireIntervalMilliTicks = 12000 * SimTime.Per60, Automatic = false,
                 FireBufferTicks = 6 * SimTime.Per60, Range = 250,
                 FalloffDistances = new double[] { 25, 50 }, FalloffFactors = new double[] { 1.0, 0.7 },
                 BaseSpread = 0.1, MoveSpread = 0.5, CrouchFactor = 0.8, SlideSpread = 1.5, AirSpread = 2.0,
-                BloomPerShot = 0.5, BloomMax = 2.0, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 14 * SimTime.Per60,
+                BloomPerShot = 0.8, BloomMax = 2.5, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 14 * SimTime.Per60,
                 RecoilPitchPerShot = 1.4, RecoilYawPerShot = 0.25, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 14, RecoilRecoveryDelayTicks = 4 * SimTime.Per60,
             },
         };

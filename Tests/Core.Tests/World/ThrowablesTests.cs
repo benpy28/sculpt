@@ -287,8 +287,57 @@ namespace Sculpt.Core.Tests.World
         // ================================================================ Bag, pickups, wire
 
         [Test]
-        public void Pickups_StackUpToTheCarryLimit_DetonatorIsReplacedNotDropped()
+        public void UtilitySlot_GrenadesC4AndLauncherShareSlotFive_NeverCostAGun()
         {
+            // Ben 2026-11-25 (balance pass): C4 and the launcher share slot 5 with the grenades, so taking one swaps out
+            // the utility you had and never a gun. Guns never go into slot 5.
+            var items = new GroundItems();
+            var s = MotorState.At(new Vec3d(0, 0, 0));      // standard bag: pump, SMG, AR, pistol, 2 grenades
+            Vec3d eye = new Vec3d(0, 1.62, 0);
+            int gl = items.Add(new GroundItem { Kind = Item.Launcher, Count = Mc.Items.LauncherCarry, Position = new Vec3d(0, 0, 1) });
+            Assert.That(ItemRules.TryPickup(ref s, items, gl, null, eye, 1, 100, Mc), Is.EqualTo(PickupResult.Swapped));
+            Assert.That(s.Hand.Bag[4], Is.EqualTo(Item.Launcher));
+            Assert.That(s.Hand.Bag.N4, Is.EqualTo(6), "a launcher comes with 6 rounds");
+            Assert.That((s.Hand.Bag[0], s.Hand.Bag[1], s.Hand.Bag[2], s.Hand.Bag[3]), Is.EqualTo((Item.Pump, Item.Smg, Item.Ar, Item.Pistol)), "every gun kept");
+            Assert.That(items.Count, Is.EqualTo(1));
+            Assert.That((items[0].Kind, items[0].Count), Is.EqualTo((Item.Grenade, 2)), "the grenades land where the launcher lay");
+
+            // A second launcher only tops up rounds.
+            s.Hand.Bag.N4 = 2;
+            int gl2 = items.Add(new GroundItem { Kind = Item.Launcher, Count = 6, Position = new Vec3d(0, 0, 1) });
+            Assert.That(ItemRules.TryPickup(ref s, items, gl2, null, eye, 1, 100, Mc), Is.EqualTo(PickupResult.Ok));
+            Assert.That(s.Hand.Bag.N4, Is.EqualTo(6));
+
+            // C4 swaps the launcher out, wherever you hold.
+            s.Hand.Slot = 1;
+            int c4 = items.Add(new GroundItem { Kind = Item.C4, Count = 2, Position = new Vec3d(0, 0, 1) });
+            Assert.That(ItemRules.TryPickup(ref s, items, c4, null, eye, 1, 100, Mc), Is.EqualTo(PickupResult.Swapped));
+            Assert.That((s.Hand.Bag[4], s.Hand.Bag.N4, s.Hand.Bag[1]), Is.EqualTo((Item.C4, 2, Item.Smg)));
+
+            // An empty C4 detonator in slot 5 is replaced by a utility pickup, nothing with a count of 0 goes down.
+            s.Hand.Bag.N4 = 0;
+            int nade = items.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = new Vec3d(0, 0, 1) });
+            PickupPlan plan = ItemRules.Plan(s, items[items.IndexOf(nade)], 1, 100, Mc.Items);
+            Assert.That((plan.Slot, plan.SwapOut), Is.EqualTo((4, Item.None)));
+
+            // A gun pickup with slot 5 in hand and a full gun row swaps with the gun you had out before, never slot 5.
+            s.Hand.Bag.N4 = 2;
+            s.Hand.Bag.S2 = Item.None;
+            s.Hand.Slot = 4; s.Hand.PrevSlot = 3;
+            int ar = items.Add(new GroundItem { Kind = Item.Ar, Count = 1, Position = new Vec3d(0, 0, 1) });
+            plan = ItemRules.Plan(s, items[items.IndexOf(ar)], 1, 100, Mc.Items);
+            Assert.That((plan.Slot, plan.SwapOut), Is.EqualTo((2, Item.None)), "an empty gun slot first");
+            s.Hand.Bag.S0 = Item.Pump; s.Hand.Bag.S1 = Item.Pistol; s.Hand.Bag.S2 = Item.Ar; s.Hand.Bag.S3 = Item.Pump; // no SMG, gun row full
+            int smg = items.Add(new GroundItem { Kind = Item.Smg, Count = 1, Position = new Vec3d(0, 0, 1) });
+            plan = ItemRules.Plan(s, items[items.IndexOf(smg)], 1, 100, Mc.Items);
+            Assert.That((plan.Slot, plan.SwapOut), Is.EqualTo((3, Item.Pump)), "swaps with the gun you had out before");
+        }
+
+        [Test]
+        public void OldSlotRule_Pickups_StackUpToTheCarryLimit_DetonatorIsReplacedNotDropped()
+        {
+            // The rule before the 2026-11-25 balance pass (UtilityShareSlot off): a pickup can take any slot.
+            var Mc = new MovementConfig(); Mc.Items.UtilityShareSlot = false;
             var items = new GroundItems();
             var s = MotorState.At(new Vec3d(0, 0, 0));
             s.Hand.Bag.S4 = Item.C4;
@@ -305,7 +354,7 @@ namespace Sculpt.Core.Tests.World
             Assert.That(s.Hand.Bag[0], Is.EqualTo(Item.Launcher));
             Assert.That(s.Hand.Bag.N0, Is.EqualTo(4));
             s.Hand.Bag.N0 = 1;
-            int gl2 = items.Add(new GroundItem { Kind = Item.Launcher, Count = 4, Position = new Vec3d(0, 0, 1) });
+            int gl2 = items.Add(new GroundItem { Kind = Item.Launcher, Count = 6, Position = new Vec3d(0, 0, 1) });
             Assert.That(ItemRules.TryPickup(ref s, items, gl2, null, eye, 1, 100, Mc), Is.EqualTo(PickupResult.Ok));
             Assert.That(s.Hand.Bag.N0, Is.EqualTo(Mc.Items.LauncherCarry));
 

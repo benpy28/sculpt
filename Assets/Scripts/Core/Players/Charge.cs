@@ -63,7 +63,8 @@ namespace Sculpt.Core
                 if (tile.State == TileState.Broken) continue;
                 if (!w.HasCells(t))
                 {
-                    if (tile.Kind != TileKind.Door && tile.State != TileState.Damaged && tile.State != TileState.Patched) return false; // a solid wall stops you (a door never does)
+                    bool patchedWeak = tile.State == TileState.Patched && (c.ChargePatchedCounts || tile.Health < c.PatchedHealth);
+                    if (tile.Kind != TileKind.Door && tile.State != TileState.Damaged && !patchedWeak) return false; // a solid wall stops you (a door never does); a fresh heal too
                     if (!HeadOn(tile, dir, minCos)) return false;
                     hit.Add(new ChargeCut { Tile = t, Cells = ulong.MaxValue });
                     continue;
