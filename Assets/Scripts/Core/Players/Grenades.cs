@@ -29,9 +29,9 @@ namespace Sculpt.Core
         public double InheritVelocity = 1.0;
         public double Gravity = 15;
         /// <summary>It goes off on the first thing it touches, or after this long in the air.</summary>
-        public int MaxFuseTicks = 180;
+        public int MaxFuseTicks = 180 * SimTime.Per60;
         /// <summary>Time from a throw until the next one is ready (the launcher: between rounds).</summary>
-        public int ThrowRecoveryTicks = 24;
+        public int ThrowRecoveryTicks = 24 * SimTime.Per60;
         /// <summary>Most hand grenades of one player in the air at once (the old fixed limit; <see cref="MaxActive"/> is per kind).</summary>
         public const int MaxInFlight = 2;
         /// <summary>Most of this kind one player has out at once (flying or stuck).</summary>
@@ -60,9 +60,9 @@ namespace Sculpt.Core
         /// <summary>Sticks to the first surface it touches instead of going off (C4).</summary>
         public bool Sticks;
         /// <summary>Sticky kinds go off by themselves this long after they first landed (C4: 8 s, Ben).</summary>
-        public int StuckFuseTicks = 480;
+        public int StuckFuseTicks = 480 * SimTime.Per60;
         /// <summary>Sticky kinds can be set off this long after the throw at the earliest (a short tell, no instant blasts).</summary>
-        public int DetonateArmTicks = 15;
+        public int DetonateArmTicks = 15 * SimTime.Per60;
         /// <summary>A round that hits something before flying this far is a dud: no blast at all (launcher: no point-blank use).</summary>
         public double ArmDistance;
         /// <summary>Firing follows the gun rules: not while sprinting, and the sprint-to-aim delay applies (launcher).</summary>
@@ -77,10 +77,10 @@ namespace Sculpt.Core
         /// </summary>
         public static GrenadeConfig DefaultC4() => new GrenadeConfig
         {
-            ThrowSpeed = 12, ThrowUpDegrees = 8, InheritVelocity = 1.0, Gravity = 15, MaxFuseTicks = 180,
-            ThrowRecoveryTicks = 30, MaxActive = 2,
+            ThrowSpeed = 12, ThrowUpDegrees = 8, InheritVelocity = 1.0, Gravity = 15, MaxFuseTicks = 180 * SimTime.Per60,
+            ThrowRecoveryTicks = 30 * SimTime.Per60, MaxActive = 2,
             Radius = 2.5, FullRadius = 0.6, EnemyDamage = 45, SelfBoost = 12, OtherKnock = 4, UpBias = 0.35, TileRadius = 1.2,
-            MeasureToBox = true, Sticks = true, StuckFuseTicks = 480, DetonateArmTicks = 15,
+            MeasureToBox = true, Sticks = true, StuckFuseTicks = 480 * SimTime.Per60, DetonateArmTicks = 15 * SimTime.Per60,
         };
 
         /// <summary>
@@ -90,8 +90,8 @@ namespace Sculpt.Core
         /// </summary>
         public static GrenadeConfig DefaultLauncher() => new GrenadeConfig
         {
-            ThrowSpeed = 32, ThrowUpDegrees = 2, InheritVelocity = 0.5, Gravity = 9, MaxFuseTicks = 150,
-            ThrowRecoveryTicks = 66, MaxActive = 2,
+            ThrowSpeed = 32, ThrowUpDegrees = 2, InheritVelocity = 0.5, Gravity = 9, MaxFuseTicks = 150 * SimTime.Per60,
+            ThrowRecoveryTicks = 66 * SimTime.Per60, MaxActive = 2,
             Radius = 3.5, FullRadius = 0.75, EnemyDamage = 65, SelfBoost = 9, OtherKnock = 6, UpBias = 0.35, TileRadius = 0.8,
             ArmDistance = 8, NeedsAim = true, MoveSpeedScale = 0.9,
         };
@@ -147,7 +147,7 @@ namespace Sculpt.Core
 
     public static class GrenadeRules
     {
-        public const int ThrowBufferTicks = 6;
+        public const int ThrowBufferTicks = 6 * SimTime.Per60;
         /// <summary>Flight slots per player (shared by every kind; each kind also has its own <see cref="GrenadeConfig.MaxActive"/>).</summary>
         public const int Flights = 4;
         /// <summary>A stuck charge checks this far behind it for its surface; with nothing there it drops.</summary>

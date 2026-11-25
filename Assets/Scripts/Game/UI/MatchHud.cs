@@ -108,7 +108,7 @@ namespace Sculpt.Game.UI
                     break;
                 }
                 case MatchPhase.Playing:
-                    if (_session.Client.ServerTimeEstimate - m.PhaseStartTick < 90) // the first moments: GO
+                    if (_session.Client.ServerTimeEstimate - m.PhaseStartTick < 90 * SimTime.Per60) // the first moments: GO
                         HudDraw.Label(new Rect(mid.x, mid.y, mid.width, mid.height), "GO", Mathf.RoundToInt(80 * s), HudDraw.Amber, TextAnchor.MiddleCenter, true);
                     break;
                 case MatchPhase.Ended:

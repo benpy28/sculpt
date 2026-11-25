@@ -160,7 +160,7 @@ namespace Sculpt.Core.Tests
             // One tile in each wall, bottom and top rows.
             int[] hits = { info.Room[1], info.Room[12 + 9], info.Room[24 + 2], info.Room[36 + 10] };
             foreach (int t in hits) w.Tiles.Damage(t, 1000, TileCause.Grenade);
-            for (int k = 0; k < 60 * 9; k++) server.Step();
+            for (int k = 0; k < SimTime.TicksPerSecond * 9; k++) server.Step();
             foreach (int t in hits) Assert.That(w.Tiles[t].State, Is.EqualTo(TileState.Patched), $"tile {t}");
         }
 

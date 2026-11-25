@@ -36,7 +36,7 @@ namespace Sculpt.Core.Tests.Net
         private readonly Dictionary<int, Peer> _byConn = new Dictionary<int, Peer>();
         private int _nextConn = 1;
 
-        public const double TickMs = 1000.0 / 60.0;
+        public const double TickMs = 1000.0 / SimTime.TicksPerSecond;
 
         public NetHarness(Func<ITerrain> makeGrid, Vec3d spawn, Action<NetConfig> tweak = null)
         {

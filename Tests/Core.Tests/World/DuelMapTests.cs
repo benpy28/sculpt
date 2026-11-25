@@ -114,7 +114,7 @@ namespace Sculpt.Core.Tests
                 Vec3d start = Lerp(s, 0, 0.5, -0.02) - DirVec(s.Rise) * 1.0;
                 start = new Vec3d(start.X, s.Bounds.Min.Y, start.Z);
                 // Stairs arrive on a floor; the roof ramps end on a 3 m walkway, so stop a step past the top.
-                int ticks = s.Kind == BrushKind.Ramp ? (int)Math.Ceiling((len + 1.5) / _c.SprintSpeed * 60) : (int)Math.Ceiling((len + 2) / _c.SprintSpeed * 60) + 30;
+                int ticks = s.Kind == BrushKind.Ramp ? (int)Math.Ceiling((len + 1.5) / _c.SprintSpeed * SimTime.TicksPerSecond) : (int)Math.Ceiling((len + 2) / _c.SprintSpeed * 60) + 30;
                 MotorState end = Run(start, YawOf(s.Rise), ticks);
                 Assert.That(end.Position.Y, Is.EqualTo(s.Bounds.Max.Y).Within(0.05), $"ran up the {s.Kind} at {s.Bounds.Min} (ended at {end.Position})");
             }
@@ -137,7 +137,7 @@ namespace Sculpt.Core.Tests
         {
             Aabb hall = B.Buildings[0];
             double doorX = (hall.Min.X + hall.Max.X) / 2;
-            MotorState s = Run(new Vec3d(doorX, 0, 4), 0, 60 * 6);
+            MotorState s = Run(new Vec3d(doorX, 0, 4), 0, SimTime.TicksPerSecond * 6);
             Assert.That(s.Position.Z, Is.GreaterThan(hall.Min.Z + 3), $"inside the hall (ended at {s.Position})");
         }
 

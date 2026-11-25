@@ -521,7 +521,7 @@ namespace Sculpt.Game.Weapons
             Vector3 cam = _rig.Camera.transform.position;
             if (s.PunchTick != _lastPunch)
             {
-                if (_lastPunch != int.MinValue && on && t < 4f)
+                if (_lastPunch != int.MinValue && on && t < 4f * SimTime.Per60)
                 {
                     GunAudio.Play(Whoosh, cam, 0.55f, Random.Range(0.93f, 1.07f), false);
                     _punchHitDone = false;

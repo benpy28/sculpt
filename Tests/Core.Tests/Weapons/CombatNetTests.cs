@@ -92,7 +92,7 @@ namespace Sculpt.Core.Tests.Weapons
             a.Script = Shooter(Weapon.Pistol, () => b, k => k % 20 == 0 && k <= 140);
             h.RunSeconds(3.0);
             Assert.That(b.ServerSide.State.Dead, Is.True);
-            h.RunSeconds(h.Movement.Weapons.RespawnDelayTicks / 60.0);
+            h.RunSeconds(h.Movement.Weapons.RespawnDelayTicks / (double)SimTime.TicksPerSecond);
             Assert.That(b.ServerSide.State.Dead, Is.False);
             Assert.That(b.ServerSide.State.Damage, Is.EqualTo(0));
             Assert.That((b.ServerSide.State.Position - b.ServerSide.Spawn).HorizontalLength, Is.LessThan(0.01));

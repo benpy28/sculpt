@@ -93,7 +93,7 @@ namespace Sculpt.Core.Tests
             Assert.That(s.Position.Z, Is.LessThan(_flight.Bounds.Max.Z), "landed on the flight");
             Assert.That(s.Mode, Is.Not.EqualTo(MoveMode.Air));
             // Same airtime as a jump on flat ground (relative to the slope, a jump is a normal jump): ~2 * 8.8 / 30 s.
-            int flat = (int)Math.Round(2 * _c.JumpSpeed / _c.Gravity * 60);
+            int flat = (int)Math.Round(2 * _c.JumpSpeed / _c.Gravity * SimTime.TicksPerSecond);
             Assert.That(air, Is.InRange(flat - 3, flat + 3));
         }
 

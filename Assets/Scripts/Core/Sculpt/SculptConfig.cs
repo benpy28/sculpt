@@ -21,10 +21,10 @@ namespace Sculpt.Core
         public double RangeMeters = 6.0;
 
         // ---- Windups (at or below the reference size) ----
-        public int WindupTicks = 9;                    // 0.15 s (Ben 2026-11-20, was 0.2 s)
-        public int ReinforcedCasterWindupTicks = 21;   // 0.35 s, a minimum
-        public int EnemyReinforcedWindupTicks = 24;    // 0.4 s, a minimum (balance sim: must stay below a pro counter-break, ~0.5 s)
-        public int MaxWindupTicks = 15;                // size scaling cap for normal actions (0.25 s; was 20 with the 0.2 s base)
+        public int WindupTicks = 9 * SimTime.Per60;                    // 0.15 s (Ben 2026-11-20, was 0.2 s)
+        public int ReinforcedCasterWindupTicks = 21 * SimTime.Per60;   // 0.35 s, a minimum
+        public int EnemyReinforcedWindupTicks = 24 * SimTime.Per60;    // 0.4 s, a minimum (balance sim: must stay below a pro counter-break, ~0.5 s)
+        public int MaxWindupTicks = 15 * SimTime.Per60;                // size scaling cap for normal actions (0.25 s; was 20 with the 0.2 s base)
 
         // ---- Distances, in sub-cells ----
         /// <summary>Push/pull travel: 5 sub-cells = 1.5 m (Ben 2026-11-20: "30% further" than one tile; 1.5 m is the nearest exact step).</summary>
@@ -45,14 +45,14 @@ namespace Sculpt.Core
         public int MaxCostScalePercent = 200;
 
         // ---- Bar ----
-        public int RegenDelayTicks = 90;      // 1.5 s after the last sculpt
-        public int RegenFullTicks = 1200;     // 0 to 100% in 20 s
+        public int RegenDelayTicks = 90 * SimTime.Per60;      // 1.5 s after the last sculpt
+        public int RegenFullTicks = 1200 * SimTime.Per60;     // 0 to 100% in 20 s
 
-        public int ReinforceDurationTicks = 1200; // 20 s
-        public int TintFadeTicks = 600;           // 10 s (cosmetic)
+        public int ReinforceDurationTicks = 1200 * SimTime.Per60; // 20 s
+        public int TintFadeTicks = 600 * SimTime.Per60;           // 10 s (cosmetic)
 
         /// <summary>A confirm rejected as Locked or Busy is retried for this many ticks (the click buffer).</summary>
-        public int ConfirmBufferTicks = 3;
+        public int ConfirmBufferTicks = 3 * SimTime.Per60;
 
         // ---- Height range, in sub-cells: tops from level -2 to +4 ----
         public int MinSubY = SubGrid.SculptMinY;         // -12: a slab here tops out at level -2, the range floor
@@ -67,7 +67,7 @@ namespace Sculpt.Core
         public int SupportNumerator = 1;
         public int SupportDenominator = 3;
         /// <summary>Unsupported pieces drop one sub-cell every this many ticks (one level per 4 ticks).</summary>
-        public int FallTicksPerSubCell = 1;
+        public int FallTicksPerSubCell = 1 * SimTime.Per60;
         /// <summary>Loose natural rock larger than this is treated as attached to the world (never falls).</summary>
         public int NaturalGroundedLimit = 2048;
 
@@ -86,8 +86,8 @@ namespace Sculpt.Core
         public double AimTolerance = 0.2;
 
         // ---- Throw (balance sim re-base, s = N / ReferenceSubCells) ----
-        public int ThrowWindupBaseTicks = 24;        // + 12 x s
-        public int ThrowWindupPerRefTicks = 12;
+        public int ThrowWindupBaseTicks = 24 * SimTime.Per60;        // + 12 x s
+        public int ThrowWindupPerRefTicks = 12 * SimTime.Per60;
         public double ThrowSpeedBase = 20.0;         // - 3 x s m/s
         public double ThrowSpeedPerRef = 3.0;
         public double ThrowMinSpeed = 8.0;
@@ -103,12 +103,12 @@ namespace Sculpt.Core
         public double ThrowSplashRadius = 1.0;       // metres around the impact box
         public double ThrowSplashFraction = 0.4;
         public double ThrowRiderKick = 4.0;          // m/s along the throw for anyone standing on the piece
-        public int ThrowRiderIgnoreTicks = 12;       // the piece ignores its riders this long after launch
-        public int ThrowMaxFlightTicks = 600;
+        public int ThrowRiderIgnoreTicks = 12 * SimTime.Per60;       // the piece ignores its riders this long after launch
+        public int ThrowMaxFlightTicks = 600 * SimTime.Per60;
         public double ThrowShrink = 0.15;            // flight box = piece bounds shrunk by this on each side
-        public int ThrowFollowThroughTicks = 6;      // weapon layer: after launch
+        public int ThrowFollowThroughTicks = 6 * SimTime.Per60;      // weapon layer: after launch
         /// <summary>Disarm ticks = DisarmMaxTicks x clamp((damage - DisarmMinDamage) / DisarmRangeDamage, 0, 1).</summary>
-        public int DisarmMaxTicks = 30;
+        public int DisarmMaxTicks = 30 * SimTime.Per60;
         public double DisarmMinDamage = 30.0;
         public double DisarmRangeDamage = 60.0;
 

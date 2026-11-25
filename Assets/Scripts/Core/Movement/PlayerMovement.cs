@@ -655,7 +655,7 @@ namespace Sculpt.Core
         private static void RecordWallHit(ref MotorState s, Vec3d normal, double speed)
         {
             // Still against the same wall: keep the first hit (the speed before it stopped you, and when).
-            if (s.WallHitNormal.Equals(normal) && s.Tick - s.WallHitTick <= 30) return;
+            if (s.WallHitNormal.Equals(normal) && s.Tick - s.WallHitTick <= 30 * SimTime.Per60) return;
             s.WallHitTick = s.Tick;
             s.WallHitSpeed = speed;
             s.WallHitNormal = normal;

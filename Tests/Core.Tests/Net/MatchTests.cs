@@ -96,7 +96,7 @@ namespace Sculpt.Core.Tests.Weapons
             Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Countdown));
             Assert.That(b.ServerSide.State.Health(h.Server.Movement.Weapons), Is.EqualTo(h.Server.Movement.Weapons.MaxHealth), "protected in the countdown");
 
-            h.RunSeconds(1.5 + 5 * 15 / 60.0 + 0.5);
+            h.RunSeconds(1.5 + 5 * 15 / 60.0 + 0.5); // 15 sixtieths apart
             Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Playing));
             Assert.That(b.ServerSide.MatchDeaths, Is.GreaterThanOrEqualTo(1));
             Assert.That(a.ServerSide.MatchKills, Is.EqualTo(b.ServerSide.MatchDeaths));

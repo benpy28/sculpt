@@ -546,7 +546,7 @@ namespace Sculpt.Core.Tests.Net
                 var link = SculptNetHarness.Lag(20 + rng.Next(80), rng.Next(15), rng.Next(10));
                 peers.Add(h.AddClient(SculptNetHarness.FeetIn(6 + k * 3, 4 + k), 1 + k % 2, link, link, frameMs: 1000.0 / (60 + rng.Next(150)), seed: seed * 10 + k));
             }
-            int stopAt = 1000 + 60 * 12;
+            int stopAt = 1000 + SimTime.TicksPerSecond * 12;
             foreach (var peer in peers)
             {
                 var r = new Random(rng.Next());

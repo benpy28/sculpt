@@ -16,7 +16,7 @@ namespace Sculpt.Core.Tests.Fuzz
     public class NetFuzzTests
     {
         private const double B = VoxelGrid.BlockSize;
-        private const double TickMs = 1000.0 / 60.0;
+        private const double TickMs = 1000.0 / SimTime.TicksPerSecond;
 
         private static IEnumerable<ulong> Seeds()
         {

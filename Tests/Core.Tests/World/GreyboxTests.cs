@@ -136,7 +136,7 @@ namespace Sculpt.Core.Tests
                 Vec3d start = Lerp(s, 0, 0.5, -0.02) - DirVec(s.Rise) * 1.0; // a step before the bottom
                 start = new Vec3d(start.X, s.Bounds.Min.Y, start.Z);
                 double run = Math.Max(s.Bounds.Max.X - s.Bounds.Min.X, s.Bounds.Max.Z - s.Bounds.Min.Z);
-                int ticks = (int)Math.Ceiling((run + 2) / _c.SprintSpeed * 60) + 30; // to the top and a few steps on
+                int ticks = (int)Math.Ceiling((run + 2) / _c.SprintSpeed * SimTime.TicksPerSecond) + 30 * SimTime.Per60; // to the top and a few steps on
                 MotorState end = Run(start, YawOf(s.Rise), ticks);
                 Assert.That(end.Position.Y, Is.EqualTo(s.Bounds.Max.Y).Within(0.05), $"ran to the top of the {s.Kind} at {s.Bounds.Min} (ended at {end.Position})");
                 Assert.That(end.Mode, Is.Not.EqualTo(MoveMode.Air), "and stood on the floor it leads to");
@@ -185,7 +185,7 @@ namespace Sculpt.Core.Tests
 
             Aabb longBlock = B.Buildings[2];
             double corridorZ = longBlock.Min.Z + 0.3 + 3.0;
-            MotorState c = Run(new Vec3d(longBlock.Min.X - 4, 0, corridorZ), East, 60 * 7);
+            MotorState c = Run(new Vec3d(longBlock.Min.X - 4, 0, corridorZ), East, SimTime.TicksPerSecond * 7);
             Assert.That(c.Position.X, Is.GreaterThan(longBlock.Max.X), "straight through the 38 m corridor and out the far wide door");
         }
 

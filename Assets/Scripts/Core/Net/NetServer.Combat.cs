@@ -212,7 +212,7 @@ namespace Sculpt.Core.Net
         }
 
         /// <summary>How long after an enemy last hurt you a death with no killer still counts as their kill (8 s).</summary>
-        public const int KillCreditTicks = 8 * 60;
+        public const int KillCreditTicks = (8 * 60) * SimTime.Per60;
 
         private void OnKilled(ServerPlayer victim, int killer, DamageSource source, bool headshot)
         {

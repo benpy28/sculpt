@@ -219,11 +219,11 @@ namespace Sculpt.Core.Tests
         {
             StartSlideFromSprint();
             Assert.That(_s.Mode, Is.EqualTo(MoveMode.Slide));
-            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.SlideBoostSpeed - _c.SlideFriction / 60).Within(1e-6));
+            Assert.That(_s.HorizontalSpeed, Is.EqualTo(_c.SlideBoostSpeed - _c.SlideFriction / SimTime.TicksPerSecond).Within(1e-6));
             Assert.That(_events.Any(e => e.Type == MoveEventType.SlideStarted && e.Value == 1), Is.True);
             int ticks = 1;
             while (_s.Mode == MoveMode.Slide && ticks < 200) { Tick(Fwd(crouch: true)); ticks++; }
-            double expect = (_c.SlideBoostSpeed - _c.SlideEndSpeed) / _c.SlideFriction * 60;
+            double expect = (_c.SlideBoostSpeed - _c.SlideEndSpeed) / _c.SlideFriction * SimTime.TicksPerSecond;
             Assert.That(ticks, Is.InRange(expect - 5, expect + 5), "boost to the end speed at the slide friction (about 1.3 s)");
             Assert.That(_s.Crouched, Is.True);
         }

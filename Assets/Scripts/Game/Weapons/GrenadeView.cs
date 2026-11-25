@@ -178,14 +178,14 @@ namespace Sculpt.Game.Weapons
                     r.Clock -= (float)dt;
                     if (GrenadeRules.ObserveStep(net.Grid, c, dt, ref r.Pos, ref r.Vel, ref r.Travel)) r.Landed = true;
                 }
-                float limit = r.Kind == ThrowKind.C4 ? c.StuckFuseTicks / 60f + c.MaxFuseTicks / 60f + 2f : 4f;
+                float limit = r.Kind == ThrowKind.C4 ? (c.StuckFuseTicks + c.MaxFuseTicks) / (float)SimTime.TicksPerSecond + 2f : 4f;
                 if (r.Age > limit) { Give(r.Kind, r.View); _remote.RemoveAt(i); continue; } // the server's word never came
                 r.View.gameObject.SetActive(true);
                 r.View.position = r.Pos.ToUnity();
                 if (!r.Landed || r.StuckAt <= 0) r.View.rotation = Spin(r.Kind, r.Vel, r.Seq);
                 if (r.Kind == ThrowKind.C4 && r.StuckAt > 0)
                 {
-                    float left = c.StuckFuseTicks / 60f - (Time.time - r.StuckAt);
+                    float left = c.StuckFuseTicks / (float)SimTime.TicksPerSecond - (Time.time - r.StuckAt);
                     BlinkAndBeep(r.View, left, ref r.Beep);
                 }
                 _remote[i] = r;
@@ -216,7 +216,7 @@ namespace Sculpt.Game.Weapons
             o.View.rotation = b.Stuck ? Quaternion.FromToRotation(Vector3.up, b.Normal.ToUnity()) : Spin(b.Kind, b.Velocity, b.Seq);
             if (b.Kind == ThrowKind.C4 && b.Landed)
             {
-                float left = (net.Movement.Items.C4.StuckFuseTicks - (tickNow - b.StuckTick)) / 60f;
+                float left = (net.Movement.Items.C4.StuckFuseTicks - (tickNow - b.StuckTick)) / (float)SimTime.TicksPerSecond;
                 BlinkAndBeep(o.View, left, ref o.NextBeep);
             }
         }

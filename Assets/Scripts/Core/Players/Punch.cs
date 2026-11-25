@@ -12,15 +12,15 @@ namespace Sculpt.Core
         /// <summary>Reach from the eye along the crosshair.</summary>
         public double Reach = 2.0;
         /// <summary>The hit lands this many ticks after the press (wind-up you can see).</summary>
-        public int HitTicks = 6;
+        public int HitTicks = 6 * SimTime.Per60;
         /// <summary>The whole punch: the gun can't fire and you can't punch again until it ends (0.45 s).</summary>
-        public int TotalTicks = 27;
+        public int TotalTicks = 27 * SimTime.Per60;
         public int PlayerDamage = 30;
         /// <summary>Besides the centre ray, a ring of rays this many degrees out finds players (a punch is forgiving
         /// against players; tiles only take the centre ray, so you always break the tile under the crosshair).</summary>
         public double PlayerConeDegrees = 6;
         /// <summary>A press up to this many ticks before the punch is ready is kept and fires when it is.</summary>
-        public int BufferTicks = 6;
+        public int BufferTicks = 6 * SimTime.Per60;
     }
 
     /// <summary>One punch landing: from the eye along the aim at the hit tick. The server resolves what it hits.</summary>

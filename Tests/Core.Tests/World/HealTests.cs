@@ -389,7 +389,7 @@ namespace Sculpt.Core.Tests
             C.ApplyBarTo(s);
             var bar = new SculptBar();
             int heals = 0;
-            for (int k = 0; k < 60 * 60; k++)
+            for (int k = 0; k < SimTime.TicksPerSecond * 60; k++)
             {
                 if (k % 60 == 0 && bar.CanAfford(C.HealCost)) { bar.Spend(C.HealCost, k); heals++; }
                 bar.Tick(k, s);

@@ -9,7 +9,7 @@ namespace Sculpt.Core.Net
     public sealed class DuelBotConfig
     {
         /// <summary>The bot acts on what it saw or heard this many ticks ago (12 = 200 ms).</summary>
-        public int ReactionTicks = 12;
+        public int ReactionTicks = 12 * SimTime.Per60;
         /// <summary>Fastest turn, degrees per second.</summary>
         public double TurnDegPerSec = 360;
         /// <summary>Share of the remaining aim error closed each tick (smooth, so tracking a strafing target lags a little).</summary>
@@ -22,7 +22,7 @@ namespace Sculpt.Core.Net
         /// <summary>Share of the recoil it pulls down against.</summary>
         public double RecoilComp = 0.6;
         /// <summary>Extra random wait before the first shot at a newly seen target (on top of the reaction time).</summary>
-        public int FirstShotDelayMaxTicks = 9;
+        public int FirstShotDelayMaxTicks = 9 * SimTime.Per60;
         /// <summary>It only sees inside this horizontal cone around its view (like a screen plus a little side vision).</summary>
         public double ViewConeDeg = 110;
         /// <summary>Hears gunshots this far away, and running or sprinting footsteps this far.</summary>
@@ -39,9 +39,9 @@ namespace Sculpt.Core.Net
             switch (level)
             {
                 case BotLevel.Easy:
-                    return new DuelBotConfig { ReactionTicks = 18, TurnDegPerSec = 220, AimGain = 0.13, WobbleDeg = 2.4, Lead = 0.55, RecoilComp = 0.3, FirstShotDelayMaxTicks = 18, ViewConeDeg = 95, HeadChance = 0, StrafeMin = 0.6, StrafeMax = 1.4, FightHopChance = 0 };
+                    return new DuelBotConfig { ReactionTicks = 18 * SimTime.Per60, TurnDegPerSec = 220, AimGain = 0.13, WobbleDeg = 2.4, Lead = 0.55, RecoilComp = 0.3, FirstShotDelayMaxTicks = 18 * SimTime.Per60, ViewConeDeg = 95, HeadChance = 0, StrafeMin = 0.6, StrafeMax = 1.4, FightHopChance = 0 };
                 case BotLevel.Hard:
-                    return new DuelBotConfig { ReactionTicks = 10, TurnDegPerSec = 540, AimGain = 0.28, WobbleDeg = 0.7, Lead = 0.95, RecoilComp = 0.85, FirstShotDelayMaxTicks = 5, ViewConeDeg = 120, HeadChance = 0.25, StrafeMin = 0.25, StrafeMax = 0.7, FightHopChance = 0.01 };
+                    return new DuelBotConfig { ReactionTicks = 10 * SimTime.Per60, TurnDegPerSec = 540, AimGain = 0.28, WobbleDeg = 0.7, Lead = 0.95, RecoilComp = 0.85, FirstShotDelayMaxTicks = 5 * SimTime.Per60, ViewConeDeg = 120, HeadChance = 0.25, StrafeMin = 0.25, StrafeMax = 0.7, FightHopChance = 0.01 };
                 default:
                     return new DuelBotConfig();
             }
@@ -70,7 +70,7 @@ namespace Sculpt.Core.Net
         public readonly DuelBotConfig Config;
         public readonly BotNav Nav;
         private readonly Random _rng;
-        private readonly Obs[] _ring = new Obs[64];
+        private readonly Obs[] _ring = new Obs[64 * SimTime.Per60];
 
         // Aim (what the bot is trying to look at, before recoil compensation and wobble).
         private double _yaw;
@@ -182,7 +182,7 @@ namespace Sculpt.Core.Net
             else _engaged = false;
             if (p.Heard) { _lastHeardPos = p.HeardPos; _lastHeardTick = p.Tick; }
 
-            bool recentlySeen = tick - _lastSeenTick < 90;
+            bool recentlySeen = tick - _lastSeenTick < 90 * SimTime.Per60;
             double dist = recentlySeen ? (_lastSeenPos - s.Position).Length : 30;
 
             // ---- Aim.
@@ -215,13 +215,13 @@ namespace Sculpt.Core.Net
             // ---- Move (and, when not fighting, look where it walks).
             Vec3d wish = Vec3d.Zero;
             bool sprint = false, jump = false, crouch = false;
-            if (_engaged || (recentlySeen && tick - _lastSeenTick < 36))
+            if (_engaged || (recentlySeen && tick - _lastSeenTick < 36 * SimTime.Per60))
                 wish = FightMove(server, s, tick, dist, ref jump);
             else
             {
                 Vec3d goal;
-                if (recentlySeen || tick - _lastSeenTick < 600) goal = _lastSeenPos;
-                else if (tick - _lastHeardTick < 600) goal = _lastHeardPos;
+                if (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60) goal = _lastSeenPos;
+                else if (tick - _lastHeardTick < 600 * SimTime.Per60) goal = _lastHeardPos;
                 else goal = RoamGoal(s.Position);
                 wish = FollowPath(s, goal, tick, ref jump, out Vec3d lookAt, out bool arrived);
                 if (arrived)
@@ -243,6 +243,8 @@ namespace Sculpt.Core.Net
             }
             if (tick < _jumpUntil) jump = true;
 
+            // The aim gains are tuned as "share of the error closed per sixtieth of a second": same pull at any tick rate.
+            gain = 1 - Math.Pow(1 - Clamp(gain, 0, 1), 1.0 / SimTime.Per60);
             double dyaw = Wrap(wantYaw - _yaw);
             _yaw = Wrap(_yaw + Clamp(dyaw * gain, -turnCap, turnCap));
             _pitch += Clamp((wantPitch - _pitch) * gain, -turnCap * 180 / Math.PI, turnCap * 180 / Math.PI);
@@ -263,7 +265,7 @@ namespace Sculpt.Core.Net
                 Vec3d look = WeaponRules.AimDir(_yaw + WobYaw(tick), _pitch + WobPitch(tick), 0, 0);
                 double err = Math.Acos(Clamp(look.Dot((chest - eye) / Math.Max(1e-6, dTrue)), -1, 1)) * 180 / Math.PI;
                 double tol = Math.Atan2(0.4, Math.Max(0.5, dTrue)) * 180 / Math.PI + 0.5 + (held == Weapon.Pump ? 2.0 : 0);
-                bool burstPause = held == Weapon.Ar && dTrue > 20 && ((tick - _fireOkTick) % 30) >= 15;
+                bool burstPause = held == Weapon.Ar && dTrue > 20 && ((tick - _fireOkTick) % (30 * SimTime.Per60)) >= 15 * SimTime.Per60;
                 fire = err < tol && dTrue < range && !burstPause && s.Weapon.UsedOf(held) < wc.Stats[(int)held].MagSize;
             }
             cmd.Move.WantsToShoot = _engaged;
@@ -398,12 +400,12 @@ namespace Sculpt.Core.Net
             // Empty in a fight: swap instead of reloading (pump <-> SMG).
             if (_engaged && s.Hand.HasGun && s.Weapon.UsedOf(s.Hand.Held) >= Stats(s.Hand.Held).MagSize)
                 want = s.Hand.Held == Weapon.Pump ? Weapon.Smg : Weapon.Pump;
-            if (want != cur && tick - _switchTick >= 60) { WantGun = want; _switchTick = tick; }
+            if (want != cur && tick - _switchTick >= 60 * SimTime.Per60) { WantGun = want; _switchTick = tick; }
 
             int slot = s.Hand.Bag.SlotOf(Items.Of(WantGun));
             bool holding = s.Hand.HasGun && s.Hand.Held == WantGun;
-            if (!holding && slot >= 0 && tick % 20 == 0) cmd.Hand.WeaponKey = (byte)(slot + 1);
-            else if (holding && !_engaged && !s.Weapon.Reloading && tick - _reloadTick > 60
+            if (!holding && slot >= 0 && tick % (20 * SimTime.Per60) == 0) cmd.Hand.WeaponKey = (byte)(slot + 1);
+            else if (holding && !_engaged && !s.Weapon.Reloading && tick - _reloadTick > 60 * SimTime.Per60
                      && s.Weapon.UsedOf(WantGun) * 10 >= Stats(WantGun).MagSize * 4)
             {
                 cmd.Hand.Reload = true;
@@ -443,7 +445,7 @@ namespace Sculpt.Core.Net
                 wish = dist > pref + 5 ? fwd * 0.8 + side * 0.5 : dist < pref - 2 ? side * 0.7 - fwd * 0.7 : side;
                 if (!Walkable(server.Grid, s.Position, wish)) wish = Walkable(server.Grid, s.Position, side) ? side : Vec3d.Zero;
             }
-            if (s.Grounded && dist < 8 && _rng.NextDouble() < Config.FightHopChance) jump = true;
+            if (s.Grounded && dist < 8 && _rng.NextDouble() < Config.FightHopChance / SimTime.Per60) jump = true; // the chance is per sixtieth of a second
             return wish;
         }
 
@@ -489,13 +491,13 @@ namespace Sculpt.Core.Net
             Vec3d feet = s.Position;
             if ((feet - goal).HorizontalLength < 1.2 && Math.Abs(feet.Y - goal.Y) < 1.5) { arrived = true; _path.Clear(); return Vec3d.Zero; }
 
-            bool replan = _path.Count == 0 || _pathAt >= _path.Count || (goal - _pathGoal).Length > 2.5 || tick - _pathTick > 120;
+            bool replan = _path.Count == 0 || _pathAt >= _path.Count || (goal - _pathGoal).Length > 2.5 || tick - _pathTick > 120 * SimTime.Per60;
             if (!replan)
             {
                 Vec3d next = Nav.Feet(_path[_pathAt]);
                 if ((next - feet).HorizontalLength > 4 || feet.Y < next.Y - 2.2) replan = true; // fell off or got pushed
             }
-            if (replan && tick - _pathTick >= 15)
+            if (replan && tick - _pathTick >= 15 * SimTime.Per60)
             {
                 _pathTick = tick;
                 _pathGoal = goal;
@@ -533,13 +535,13 @@ namespace Sculpt.Core.Net
         private void Unstick(in MotorState s, int tick, Vec3d wish, ref bool jump)
         {
             if (wish.LengthSquared < 0.01) { _stuckFrom = s.Position; _stuckCheck = tick; return; }
-            if (tick - _stuckCheck < 45) return;
+            if (tick - _stuckCheck < 45 * SimTime.Per60) return;
             bool stuck = (s.Position - _stuckFrom).HorizontalLength < 0.6;
             _stuckFrom = s.Position;
             _stuckCheck = tick;
             if (!stuck) { _stuckCount = 0; return; }
             _stuckCount++;
-            _jumpUntil = tick + 2;
+            _jumpUntil = tick + 2 * SimTime.Per60;
             _pathTick = int.MinValue / 2; // re-plan from here
             _path.Clear();
             if (_stuckCount >= 3) { _hasRoam = false; _lastSeenTick = _lastHeardTick = int.MinValue / 2; _stuckCount = 0; }

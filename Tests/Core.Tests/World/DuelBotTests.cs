@@ -97,7 +97,7 @@ namespace Sculpt.Core.Tests
 
             public void Run(double seconds)
             {
-                int n = (int)(seconds * 60);
+                int n = (int)(seconds * SimTime.TicksPerSecond);
                 for (int k = 0; k < n; k++)
                 {
                     Vec3d pa = A.State.Position, pb = B.State.Position;

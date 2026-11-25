@@ -95,9 +95,9 @@ namespace Sculpt.Core
 
         // ---- Healing and the bar (Ben 2026-11-21). Bar values are basis points (10000 = 100%). ----
         /// <summary>A heal takes this long (0.8 s) and the tile comes back Patched.</summary>
-        public int HealTicks = 48;
+        public int HealTicks = 48 * SimTime.Per60;
         /// <summary>Reinforcing takes this long (Claude: same as a heal; Ben only set the cost).</summary>
-        public int ReinforceTicks = 48;
+        public int ReinforceTicks = 48 * SimTime.Per60;
         public int HealCost = 1000;      // 10%
         public int ReinforceCost = 2500; // 25%
         /// <summary>Sculpt range for healing, metres (eye to the nearest point of the tile).</summary>

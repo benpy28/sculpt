@@ -47,7 +47,7 @@ namespace Sculpt.Core
             bool jump = false;
             Vec3d p = s.Position;
 
-            if (Ticks > 60 * 30) Fail("took longer than 30 s");
+            if (Ticks > SimTime.TicksPerSecond * 30) Fail("took longer than 30 s");
             if (!Finished && p.Y < 3.0 && Current != Phase.Start) Fail($"fell off in {Current}");
 
             switch (Current)

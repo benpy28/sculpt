@@ -111,18 +111,18 @@ namespace Sculpt.Core
     /// <summary>Hand timings (Ben approved 2026-11-20). Ticks at 60 Hz.</summary>
     public sealed class HandConfig
     {
-        public int SculptEnterTicks = 6;
-        public int[] DrawTicks = { 24, 18, 21, 12 };  // pump, SMG, AR, pistol
-        public int[] ExitTicks = { 12, 9, 10, 6 };    // sculpt mode back to that weapon
+        public int SculptEnterTicks = 6 * SimTime.Per60;
+        public int[] DrawTicks = { 24 * SimTime.Per60, 18 * SimTime.Per60, 21 * SimTime.Per60, 12 * SimTime.Per60 };  // pump, SMG, AR, pistol
+        public int[] ExitTicks = { 12 * SimTime.Per60, 9 * SimTime.Per60, 10 * SimTime.Per60, 6 * SimTime.Per60 };    // sculpt mode back to that weapon
         /// <summary>Grenades out of the bag, and back out of sculpt mode (tuning, Claude 2026-11-21).</summary>
-        public int GrenadeDrawTicks = 12;
-        public int GrenadeExitTicks = 6;
+        public int GrenadeDrawTicks = 12 * SimTime.Per60;
+        public int GrenadeExitTicks = 6 * SimTime.Per60;
         /// <summary>C4 (and its detonator) out of the bag and back out of sculpt mode.</summary>
-        public int C4DrawTicks = 12;
-        public int C4ExitTicks = 6;
+        public int C4DrawTicks = 12 * SimTime.Per60;
+        public int C4ExitTicks = 6 * SimTime.Per60;
         /// <summary>The launcher is heavy: a long draw (0.6 s), so it is a commitment, never a quick swap up close.</summary>
-        public int LauncherDrawTicks = 36;
-        public int LauncherExitTicks = 18;
+        public int LauncherDrawTicks = 36 * SimTime.Per60;
+        public int LauncherExitTicks = 18 * SimTime.Per60;
 
         public int Draw(Weapon w) => DrawTicks[(int)w];
         public int Exit(Weapon w) => ExitTicks[(int)w];
