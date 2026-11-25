@@ -56,7 +56,7 @@ namespace Sculpt.Core
             foreach (int t in near)
             {
                 WallTile tile = w[t];
-                if (tile.Kind != TileKind.Wall) continue; // floors, stairs and frame never take a charge (collision still stops you)
+                if (tile.Kind != TileKind.Wall && tile.Kind != TileKind.Door) continue; // floors, stairs and frame never take a charge (collision still stops you)
                 if (tile.State == TileState.Broken)
                 {
                     if (w.ChargedAt(t) == tick) charged = true; // replaying the tick we charged through it
@@ -64,7 +64,7 @@ namespace Sculpt.Core
                 }
                 // Blast holes: only the part of the tile still standing is in your way.
                 if (tile.Holed && !BrushWorld.Overlaps(w.ShapeOf(t), swept)) continue;
-                if (tile.State != TileState.Damaged && tile.State != TileState.Patched) return false; // a solid wall stops you
+                if (tile.Kind != TileKind.Door && tile.State != TileState.Damaged && tile.State != TileState.Patched) return false; // a solid wall stops you (a door never does)
                 bool thinInX = tile.Facing == Dir.East || tile.Facing == Dir.West;
                 double headOn = Math.Abs(thinInX ? dir.X : dir.Z);
                 if (headOn < minCos) return false; // a glancing scrape: the wall wins

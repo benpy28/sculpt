@@ -31,6 +31,10 @@ namespace Sculpt.Core
         Ramp = 3,
         /// <summary>Frame: column pieces, beam strips over the wall lines, and the nodes where they meet.</summary>
         Frame = 4,
+        /// <summary>A door leaf (1.5 m wide, 3 m tall, two to a doorway): weak on purpose, an easy way in (Ben 2026-11-25:
+        /// "they usually just get broken instantly"). Takes <see cref="BreachConfig.DoorDamageScale"/> times the damage,
+        /// breaks whole (no blast holes), and a charge goes through one even when it isn't cracked.</summary>
+        Door = 5,
     }
 
     /// <summary>Why a tile changed (for effects and logs).</summary>
@@ -63,6 +67,8 @@ namespace Sculpt.Core
         public double DamagedBelowFraction = 0.5;
         public int PatchedHealth = 50;
         public int ReinforcedHealth = 200;
+        /// <summary>Door leaves take this many times the damage a wall tile would: two AR bullets, one punch, any pump shot.</summary>
+        public int DoorDamageScale = 4;
 
         /// <summary>Tile damage per bullet (per pellet for the pump). Flat, no falloff, so a wall always takes the same
         /// number of hits: AR 8 bullets, SMG 15, pistol 6, pump 2 point-blank shots for an intact tile.</summary>
@@ -425,6 +431,7 @@ namespace Sculpt.Core
         {
             WallTile t = _tiles[tile];
             if (amount <= 0 || t.State == TileState.Broken || t.Links != null) return false; // followers only go with their links
+            if (t.Kind == TileKind.Door) amount *= Math.Max(1, Config.DoorDamageScale);
             AfterDamage(t.State, t.Health, amount, Config, out TileState s, out int h);
             if (s == TileState.Broken && Config.BlastHoles && World[t.Brush].HasCells)
             {
