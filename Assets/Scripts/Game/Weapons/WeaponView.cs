@@ -43,7 +43,9 @@ namespace Sculpt.Game.Weapons
 
         private Transform _vmRoot;
         private readonly GunModel[] _guns = new GunModel[4];
-        private GameObject _grenade;
+        private GameObject _grenade, _c4, _detonator;
+        private GunModel _launcher;
+        private bool _listening;
         private GameObject _fist;
         private int _lastPunch = int.MinValue;
         private bool _punchHitDone = true;
@@ -130,6 +132,16 @@ namespace Sculpt.Game.Weapons
             _grenade = GunModels.BuildGrenade(_vmMat);
             _grenade.transform.SetParent(_vmRoot, false);
             _grenade.SetActive(false);
+            _c4 = GunModels.BuildC4(_vmMat);
+            _c4.transform.SetParent(_vmRoot, false);
+            _c4.transform.localRotation = Quaternion.Euler(-70f, 20f, 0f); // held up on its side, light toward you
+            _c4.SetActive(false);
+            _detonator = GunModels.BuildDetonator(_vmMat);
+            _detonator.transform.SetParent(_vmRoot, false);
+            _detonator.SetActive(false);
+            _launcher = GunModels.BuildLauncher(_vmMat);
+            _launcher.Root.transform.SetParent(_vmRoot, false);
+            _launcher.Root.SetActive(false);
             _fist = GunModels.BuildFist(_vmMat);
             _fist.transform.SetParent(rig.Camera.transform, false);
             _fist.SetActive(false);
@@ -220,6 +232,7 @@ namespace Sculpt.Game.Weapons
             }
 
             ReloadSounds();
+            if (!_listening && Grenades != null) { Grenades.LocalThrown += OnLocalThrown; _listening = true; }
 
             // Springs (critically-ish damped), camera roll and FOV punch decay.
             Weapon w = _player.State.Hand.Held;
@@ -276,6 +289,17 @@ namespace Sculpt.Game.Weapons
             _pendingLocal.Add(new PendingLocal { Shot = shot, Ends = ends });
         }
 
+        /// <summary>Your own launcher round left the tube (predicted): the heaviest kick of anything you carry.</summary>
+        private void OnLocalThrown(ThrowKind kind)
+        {
+            if (kind != ThrowKind.Launcher) { _kickPosVel += new Vector3(0, 0.3f, 0.6f); return; } // a throw: the hand follows through
+            _kickPosVel += new Vector3(Random.Range(-0.1f, 0.1f), 0.2f, -1f) * 3.2f;
+            _kickRotVel += new Vector3(-380f, Random.Range(-40f, 40f), Random.Range(-50f, 50f));
+            _rollVel += (Random.value < 0.5f ? -1f : 1f) * 110f;
+            _fp.Shake.FovPunch = Mathf.Max(_fp.Shake.FovPunch, 3.2f);
+            _flashes.Add(new Flash { At = _launcher.Muzzle.position, Fwd = _rig.Camera.transform.forward, Born = Time.time, Size = 0.3f, Local = true });
+        }
+
         private void OnRemoteShot(in CombatEvent e, float now)
         {
             WeaponShot shot = e.ToShot(0);
@@ -307,7 +331,14 @@ namespace Sculpt.Game.Weapons
                 BulletHit h = Hitscan.Trace(net.Grid, shot.Origin, dir, st.Range, _targets, shot.ShooterId, 0, true);
                 Vector3 p = h.Point.ToUnity();
                 ends.Add(p);
-                if (h.Kind == HitKind.Terrain) RockImpact(p, h.Normal.ToUnity(), st.Pellets > 1 ? 0.5f : 1f);
+                if (h.Kind == HitKind.Terrain)
+                {
+                    float amount = st.Pellets > 1 ? 0.5f : 1f;
+                    // Buildings draw their own chips, dust and marks in the wall's colour; the gun adds the sound.
+                    var wall = Sculpt.Game.World.WallImpacts.OnBullet;
+                    bool drawn = h.Brush > 0 && wall != null && wall(p, h.Normal.ToUnity(), h.Brush - 1, amount);
+                    RockImpact(p, h.Normal.ToUnity(), amount, visuals: !drawn);
+                }
                 // Player hits are drawn when the server confirms them (Hit events).
             }
         }
@@ -382,8 +413,13 @@ namespace Sculpt.Game.Weapons
             _tracers.Add(new Tracer { A = a, B = b, Born = Time.time, Life = life, Colour = TracerColour, Width = width });
         }
 
-        private void RockImpact(Vector3 at, Vector3 normal, float amount)
+        private void RockImpact(Vector3 at, Vector3 normal, float amount, bool visuals = true)
         {
+            if (!visuals)
+            {
+                if (Random.value < 0.6f) GunAudio.Play(GunAudio.Impact, at, 0.45f * amount + 0.1f, Random.Range(0.85f, 1.15f), true, 35f, 1.5f);
+                return;
+            }
             var ep = new ParticleSystem.EmitParams();
             Color rock = Sculpt.Game.World.ChunkMesher.RockHigh;
             int puffs = Mathf.Max(2, Mathf.RoundToInt(5 * amount));
@@ -545,6 +581,12 @@ namespace Sculpt.Game.Weapons
             }
             bool nade = item == Item.Grenade && !s.Dead;
             if (_grenade.activeSelf != nade) _grenade.SetActive(nade);
+            bool c4 = item == Item.C4 && !s.Dead;
+            bool charge = c4 && hand.Bag.CountIn(hand.Slot) > 0;
+            if (_c4.activeSelf != charge) _c4.SetActive(charge);
+            if (_detonator.activeSelf != (c4 && !charge)) _detonator.SetActive(c4 && !charge); // the empty C4 slot is the detonator
+            bool gl = item == Item.Launcher && !s.Dead;
+            if (_launcher.Root.activeSelf != gl) _launcher.Root.SetActive(gl);
             if (s.Dead || item == Item.None) return; // empty hands: no viewmodel
 
             // Lowered: drawing from below, sculpt mode (gun out of the way), disarmed.
@@ -578,7 +620,7 @@ namespace Sculpt.Game.Weapons
             _sway = Vector2.Lerp(_sway, new Vector2(Mathf.Clamp(-look.x * 0.5f, -5f, 5f), Mathf.Clamp(-look.y * 0.5f, -5f, 5f)), 1f - Mathf.Exp(-14f * dt));
 
             float size = Mathf.Clamp(_settings.ViewmodelSize, 0.7f, 1.2f);
-            Vector3 basePos = !hasGun ? new Vector3(0.15f, -0.14f, 0.3f) : held == Weapon.Pistol ? new Vector3(0.13f, -0.135f, 0.29f) : new Vector3(0.15f, -0.155f, 0.31f);
+            Vector3 basePos = item == Item.Launcher ? new Vector3(0.16f, -0.17f, 0.3f) : !hasGun ? new Vector3(0.15f, -0.14f, 0.3f) : held == Weapon.Pistol ? new Vector3(0.13f, -0.135f, 0.29f) : new Vector3(0.15f, -0.155f, 0.31f);
             Vector3 bob = new Vector3(Mathf.Cos(_bobPhase) * 0.006f, Mathf.Abs(Mathf.Sin(_bobPhase)) * 0.008f, 0) * bobAmt;
             float ease = _lower * _lower * (3 - 2 * _lower);
             Vector3 pos = basePos + _kickPos + bob + new Vector3(0, -0.3f, -0.06f) * ease + new Vector3(-0.04f, -0.035f, -0.03f) * _sprint

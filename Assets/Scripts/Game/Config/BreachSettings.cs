@@ -26,6 +26,27 @@ namespace Sculpt.Game.Config
         [Min(1)] public int patchedHealth = 50;
         [Min(1)] public int reinforcedHealth = 200;
 
+        [Header("Blast holes (holes follow the hit on a 19 cm cell grid, never a pixel hole or a sliver)")]
+        [Tooltip("Off: a tile that breaks goes whole (the old rule).")]
+        public bool blastHoles = true;
+        [Tooltip("Hole radius = base + per damage x the breaking hit's damage on that tile, clamped. AR 13 ~0.6 m, punch 50 ~1.15 m, point-blank pump 54 ~1.2 m.")]
+        [Min(0.2f)] public float blastRadiusBase = 0.42f;
+        [Min(0)] public float blastRadiusPerDamage = 0.0145f;
+        [Min(0.2f)] public float blastRadiusMin = 0.55f;
+        [Min(0.2f)] public float blastRadiusMax = 1.6f;
+        [Tooltip("A grenade's hole radius around the blast (m).")]
+        [Min(0.5f)] public float grenadeBlastRadius = 2.2f;
+        [Tooltip("C4's hole radius around the charge (m).")]
+        [Min(0.5f)] public float c4BlastRadius = 2.2f;
+        [Tooltip("A launcher round's hole radius around the blast (m).")]
+        [Min(0.5f)] public float launcherBlastRadius = 1.7f;
+        [Tooltip("How rough a hole's edge is (m): each spot on a wall reaches up to this much further or shorter.")]
+        [Range(0, 0.4f)] public float blastJitter = 0.16f;
+        [Tooltip("No hole smaller than this (m^2; Ben: about half a body).")]
+        [Min(0.15f)] public float minHoleArea = 0.63f;
+        [Tooltip("A tile with less than this share of its cells left goes entirely.")]
+        [Range(0, 0.9f)] public float breakBelowFraction = 0.25f;
+
         [Header("Tile damage per bullet (pump: per pellet). Flat, no falloff.")]
         [Min(0)] public int pumpPelletTileDamage = 6;
         [Min(0)] public int smgTileDamage = 7;
@@ -65,6 +86,44 @@ namespace Sculpt.Game.Config
         [Range(0.76f, 2.2f)] public float grenadeTileRadius = 1.2f;
         [Tooltip("Damage to every tile in the blast: 150 breaks anything but Reinforced (200).")]
         [Min(0)] public int grenadeTileDamage = 150;
+
+        [Header("Remote C4 (a breaching tool, not a kill weapon: fire throws, aim detonates)")]
+        [Min(0)] public int c4Carry = 2;
+        [Min(1f)] public float c4ThrowSpeed = 12f;
+        [Tooltip("It goes off by itself this long after it first landed, seconds.")]
+        [Range(1f, 30f)] public float c4FuseSeconds = 8f;
+        [Tooltip("The earliest you can set it off after the throw, seconds (a short tell).")]
+        [Range(0f, 2f)] public float c4ArmSeconds = 0.25f;
+        [Tooltip("Players within this distance of the charge (to the nearest point of their body) are affected, metres.")]
+        [Min(0.5f)] public float c4Radius = 2.5f;
+        [Min(0f)] public float c4FullRadius = 0.6f;
+        [Tooltip("Ben: it should only kill someone careless who walks over it on low health.")]
+        [Min(0f)] public float c4EnemyDamage = 45f;
+        [Min(0f)] public float c4SelfBoost = 12f;
+        [Min(0f)] public float c4OtherKnock = 4f;
+        [Range(0.76f, 2.2f)] public float c4TileRadius = 1.2f;
+        [Tooltip("Damage to every tile in the blast: 220 breaks Reinforced (200) too.")]
+        [Min(0)] public int c4TileDamage = 220;
+
+        [Header("Grenade launcher (slow and clunky up close, strong at range)")]
+        [Tooltip("Rounds carried (a launcher pickup comes with this many).")]
+        [Min(1)] public int launcherRounds = 4;
+        [Min(1f)] public float launcherRoundSpeed = 32f;
+        [Min(0f)] public float launcherGravity = 9f;
+        [Tooltip("A round that hits something before flying this far is a dud, metres.")]
+        [Min(0f)] public float launcherArmDistance = 8f;
+        [Tooltip("Time between rounds, seconds.")]
+        [Range(0.2f, 3f)] public float launcherCycleSeconds = 1.1f;
+        [Min(0.5f)] public float launcherRadius = 3.5f;
+        [Min(0f)] public float launcherFullRadius = 0.75f;
+        [Min(0f)] public float launcherEnemyDamage = 65f;
+        [Min(0f)] public float launcherSelfBoost = 9f;
+        [Min(0f)] public float launcherOtherKnock = 6f;
+        [Range(0.5f, 2.2f)] public float launcherTileRadius = 0.8f;
+        [Tooltip("110 breaks Intact, Damaged and Patched tiles; Reinforced keeps 90.")]
+        [Min(0)] public int launcherTileDamage = 110;
+        [Tooltip("Run and sprint speed while it is in hand.")]
+        [Range(0.5f, 1f)] public float launcherMoveSpeedScale = 0.9f;
 
         [Header("Punch (own bind, not an item)")]
         [Tooltip("Reach from the eye along the crosshair, metres.")]
@@ -138,6 +197,32 @@ namespace Sculpt.Game.Config
             g.SelfBoost = grenadeSelfBoost;
             g.OtherKnock = grenadeOtherKnock;
             g.TileRadius = grenadeTileRadius;
+
+            items.C4Carry = c4Carry;
+            GrenadeConfig c = items.C4;
+            c.ThrowSpeed = c4ThrowSpeed;
+            c.StuckFuseTicks = Ticks(c4FuseSeconds);
+            c.DetonateArmTicks = Mathf.Max(0, Mathf.RoundToInt(c4ArmSeconds * SimTime.TicksPerSecond));
+            c.Radius = c4Radius;
+            c.FullRadius = Mathf.Min(c4FullRadius, c4Radius - 0.01f);
+            c.EnemyDamage = c4EnemyDamage;
+            c.SelfBoost = c4SelfBoost;
+            c.OtherKnock = c4OtherKnock;
+            c.TileRadius = c4TileRadius;
+
+            items.LauncherCarry = launcherRounds;
+            GrenadeConfig l = items.Launcher;
+            l.ThrowSpeed = launcherRoundSpeed;
+            l.Gravity = launcherGravity;
+            l.ArmDistance = launcherArmDistance;
+            l.ThrowRecoveryTicks = Ticks(launcherCycleSeconds);
+            l.Radius = launcherRadius;
+            l.FullRadius = Mathf.Min(launcherFullRadius, launcherRadius - 0.01f);
+            l.EnemyDamage = launcherEnemyDamage;
+            l.SelfBoost = launcherSelfBoost;
+            l.OtherKnock = launcherOtherKnock;
+            l.TileRadius = launcherTileRadius;
+            l.MoveSpeedScale = launcherMoveSpeedScale;
         }
 
         public void ApplyTo(PunchConfig p)
@@ -170,7 +255,20 @@ namespace Sculpt.Game.Config
             b.SmgTileDamage = smgTileDamage;
             b.ArTileDamage = arTileDamage;
             b.PistolTileDamage = pistolTileDamage;
+            b.BlastHoles = blastHoles;
+            b.BlastRadiusBase = blastRadiusBase;
+            b.BlastRadiusPerDamage = blastRadiusPerDamage;
+            b.BlastRadiusMin = blastRadiusMin;
+            b.BlastRadiusMax = Mathf.Max(blastRadiusMin, blastRadiusMax);
+            b.GrenadeBlastRadius = grenadeBlastRadius;
+            b.C4BlastRadius = c4BlastRadius;
+            b.LauncherBlastRadius = launcherBlastRadius;
+            b.BlastJitter = blastJitter;
+            b.MinHoleArea = minHoleArea;
+            b.BreakBelowFraction = breakBelowFraction;
             b.GrenadeTileDamage = grenadeTileDamage;
+            b.C4TileDamage = c4TileDamage;
+            b.LauncherTileDamage = launcherTileDamage;
             b.PunchTileDamage = punchTileDamage;
             b.PunchReinforcedTileDamage = punchReinforcedTileDamage;
             b.ChargeSpeedFraction = chargeSpeedFraction;
