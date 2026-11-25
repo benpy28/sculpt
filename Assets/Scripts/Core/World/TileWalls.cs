@@ -82,8 +82,12 @@ namespace Sculpt.Core
         public int PistolTileDamage = 34;
         /// <summary>How far round each hit the damage reaches, metres (the cracks you see, and the hole the finishing
         /// hit opens). A pump shot reaches round its whole pattern (at least this, at most <see cref="PumpMaxRadius"/>).</summary>
-        public double PumpHitRadius = 0.55;
-        public double PumpMaxRadius = 0.9;
+        /// <remarks>Ben 2026-11-25: "no [hole] way bigger than a body from far away or smaller than a chest from close
+        /// up". A pump hole's radius is the pattern's spread clamped to 0.65..0.7 m, so every pump hole is about
+        /// 1.2 to 1.7 m^2 (was 0.55..0.9: about 1 m^2 point blank, up to 2.6 m^2 from range). Above 0.72 the tidy
+        /// rules could leave no hole at all for a shot centred on a tile.</remarks>
+        public double PumpHitRadius = 0.65;
+        public double PumpMaxRadius = 0.7;
         public double SmgHitRadius = 0.35;
         public double ArHitRadius = 0.45;
         public double PistolHitRadius = 0.4;

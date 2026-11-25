@@ -156,17 +156,17 @@ namespace Sculpt.Core.Tests
             }
         }
 
-        private static Vec3d Face(double x, double y) => new Vec3d(x, y, 10);
+        internal static Vec3d Face(double x, double y) => new Vec3d(x, y, 10);
 
-        private static int Tile(int[] ids, int w, double x, double y) => ids[(int)(y / 1.5) * w + (int)(x / 1.5)];
+        internal static int Tile(int[] ids, int w, double x, double y) => ids[(int)(y / 1.5) * w + (int)(x / 1.5)];
 
-        private static BulletHit Pellet(TileWalls tw, int[] ids, int w, double x, double y) =>
+        internal static BulletHit Pellet(TileWalls tw, int[] ids, int w, double x, double y) =>
             new BulletHit { Kind = HitKind.Terrain, Brush = tw[Tile(ids, w, x, y)].Brush + 1, Point = Face(x, y) };
 
         private static List<BulletHit> Ar(TileWalls tw, int[] ids, int w, double x, double y) => new List<BulletHit> { Pellet(tw, ids, w, x, y) };
 
         /// <summary>A point-blank pump shot: nine pellets in a tight ring round (x, y).</summary>
-        private static List<BulletHit> Pump(TileWalls tw, int[] ids, int w, double x, double y, double spread = 0.06)
+        internal static List<BulletHit> Pump(TileWalls tw, int[] ids, int w, double x, double y, double spread = 0.06)
         {
             var list = new List<BulletHit> { Pellet(tw, ids, w, x, y) };
             int h = ids.Length / w;
@@ -278,6 +278,31 @@ namespace Sculpt.Core.Tests
             foreach (int t in pids) p.Tiles.Set(t, TileState.Patched, p.Tiles.Config.PatchedHealth, TileCause.Heal);
             p.Tiles.ApplyShot(Ar(p.Tiles, pids, 3, 2.25, 2.25), Weapon.Ar, 1);
             Assert.That(OpenCount(Grid(p.Tiles, 3, 3, pids)), Is.GreaterThan(0), "patched wall is weaker: one AR bullet");
+        }
+
+        [Test]
+        public void PumpHoles_AreAllAboutOneSize_CloseOrFar_AndNeverMissing()
+        {
+            // Ben 2026-11-25: no pump hole much bigger than a body from range, none smaller than a chest up close.
+            double cell = 1.5 / 8;
+            double min = double.MaxValue, max = 0;
+            foreach (double spread in new[] { 0.03, 0.06, 0.2, 0.4, 0.6 })
+                for (double x = 1.6; x < 3.0; x += 0.1)
+                    for (double y = 1.6; y < 3.0; y += 0.35)
+                    {
+                        var world = Wall(3, 3, out int[] ids);
+                        TileWalls tw = world.Tiles;
+                        tw.ApplyShot(Pump(tw, ids, 3, x, y, spread), Weapon.Pump, 1);
+                        int open = 0;
+                        foreach (int t in ids)
+                            for (int c = 0; c < 64; c++) if (((tw[t].Open >> c) & 1) != 0) open++;
+                        double area = open * cell * cell;
+                        min = Math.Min(min, area);
+                        max = Math.Max(max, area);
+                    }
+            TestContext.WriteLine($"pump hole area {min:0.00} to {max:0.00} m^2");
+            Assert.That(min, Is.GreaterThanOrEqualTo(0.9), "bigger than a chest even point blank (and never no hole)");
+            Assert.That(max, Is.LessThanOrEqualTo(1.9), "no bigger than a body from range");
         }
 
         [Test]
