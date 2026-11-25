@@ -417,6 +417,8 @@ namespace Sculpt.Core.Tests.World
             Assert.That(behind.ServerSide.State.Damage, Is.EqualTo(0), "the wall it breaks still shields whoever is behind it");
             Assert.That(a.ServerSide.State.Damage, Is.EqualTo(0));
             Assert.That(a.ServerSide.State.Hand.Bag[4], Is.EqualTo(Item.None), "detonator gone after the blast");
+            h.RunSeconds(0.5);
+            foreach (var peer in new[] { a, behind, enemy, watcher }) AssertSameTiles(h.Server.Walls, peer.Client.Walls);
         }
 
         [Test]
@@ -454,6 +456,24 @@ namespace Sculpt.Core.Tests.World
             Assert.That(nades.TrueForAll(e => e.Source == DamageSource.Launcher), Is.True);
             Assert.That(nades[1].Nade, Is.EqualTo(GrenadeEventType.Exploded));
             Assert.That(a.ServerSide.State.Hand.Bag.N4, Is.EqualTo(3));
+            h.RunSeconds(0.5);
+            AssertSameTiles(h.Server.Walls, a.Client.Walls);
+            AssertSameTiles(h.Server.Walls, watcher.Client.Walls);
+        }
+
+        /// <summary>Every client draws and collides with exactly the server's holes (state, health and every cell).</summary>
+        private static void AssertSameTiles(TileWalls server, TileWalls client)
+        {
+            Assert.That(client.Count, Is.EqualTo(server.Count));
+            int holed = 0;
+            for (int k = 0; k < server.Count; k++)
+            {
+                Assert.That(client[k].State, Is.EqualTo(server[k].State), "tile " + k + " state");
+                Assert.That(client[k].Health, Is.EqualTo(server[k].Health), "tile " + k + " health");
+                Assert.That(client[k].Open, Is.EqualTo(server[k].Open), "tile " + k + " cells");
+                if (server[k].State == TileState.Broken || server[k].Open != 0) holed++;
+            }
+            Assert.That(holed, Is.GreaterThan(0), "the blast made a hole to compare");
         }
     }
 }
