@@ -59,7 +59,10 @@ namespace Sculpt.Game.World
 
         private readonly List<GameObject> _blocks = new List<GameObject>();
         private Material _mat;
+        private Material _groundMat;
         private bool _linear;
+        /// <summary>While building hills: where their yellow edge lines go (the greybox mesh, not the meadow one).</summary>
+        private MeshBits _stripeSink;
 
         // Tiles: the client's copy, which block each tile is drawn in, and the look each block was last built with.
         private TileWalls _tiles;
@@ -279,13 +282,50 @@ namespace Sculpt.Game.World
             _linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
 
             var byBlock = new Dictionary<Vector2Int, MeshBits>();
+            // Hills and berms are drawn as meadow (the terrain's own ground look: grass on top, soil down the sides), so
+            // they read as part of the land around them instead of green greybox slabs. Their yellow edge lines stay.
+            var hills = new MeshBits { Raw = true };
             for (int i = 0; i < world.Count; i++)
             {
                 Brush b = world[i];
                 if (b.Kind == BrushKind.Tile) continue; // drawn from the client's tile state (BindTiles)
                 Vector2Int key = BlockOf(b);
                 if (!byBlock.TryGetValue(key, out MeshBits m)) byBlock[key] = m = new MeshBits();
+                if (b.Kind == BrushKind.Ground)
+                {
+                    int first = hills.V.Count;
+                    _stripeSink = m;
+                    AddBrush(hills, b);
+                    _stripeSink = null;
+                    for (int v = first; v < hills.V.Count; v++)
+                    {
+                        Vector3 p = hills.V[v];
+                        double top = b.IsRamp ? b.Bounds.Min.Y + (b.Bounds.Max.Y - b.Bounds.Min.Y) * System.Math.Max(0, System.Math.Min(1, b.RiseFraction(p.x, p.z))) : b.Bounds.Max.Y;
+                        hills.U1.Add(new Vector2(ChunkMesher.KindGround, Mathf.Clamp((float)(top - p.y), 0f, 2.4f)));
+                    }
+                    continue;
+                }
                 AddBrush(m, b);
+            }
+            Shader voxel = Shader.Find("SCULPT/Voxel");
+            if (hills.V.Count > 0 && voxel != null)
+            {
+                _groundMat = new Material(voxel) { name = "Hills (runtime)" };
+                var mesh = new Mesh { name = "Hills", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+                mesh.SetVertices(hills.V);
+                mesh.SetNormals(hills.N);
+                mesh.SetColors(hills.C);
+                mesh.SetUVs(1, hills.U1);
+                mesh.SetTriangles(hills.T, 0);
+                mesh.RecalculateBounds();
+                var go = new GameObject("Hills");
+                go.transform.SetParent(transform, false);
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var r = go.AddComponent<MeshRenderer>();
+                r.sharedMaterial = _groundMat;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                r.receiveShadows = false;
+                _blocks.Add(go);
             }
             foreach (var kv in byBlock)
             {
@@ -312,6 +352,9 @@ namespace Sculpt.Game.World
             public readonly List<Vector3> N = new List<Vector3>();
             public readonly List<Color> C = new List<Color>();
             public readonly List<int> T = new List<int>();
+            public readonly List<Vector2> U1 = new List<Vector2>();
+            /// <summary>Colours are shade only, not linearised (the voxel shader's nature palette does the colour).</summary>
+            public bool Raw;
         }
 
         private static Color ColorOf(BrushKind k)
@@ -330,13 +373,24 @@ namespace Sculpt.Game.World
 
         private void AddBrush(MeshBits m, in Brush b)
         {
-            Color col = ColorOf(b.Kind);
+            Color col = m.Raw ? Color.white : ColorOf(b.Kind);
             if (b.Kind == BrushKind.Stairs && b.IsRamp) { AddStairs(m, b, col); return; }
             if (b.IsRamp) { AddWedge(m, b, col); return; }
             AddBox(m, b.Bounds.Min.ToUnity(), b.Bounds.Max.ToUnity(), col);
         }
 
         // ---- shapes ----
+
+        /// <summary>
+        /// Hills: shade from the fixed sun (Scenery's direction), so a meadow slope reads as a slope against the flat
+        /// meadow around it (lighter facing the sun, darker away). 1 on flat ground.
+        /// </summary>
+        private static float HillShade(Vector3 n)
+        {
+            Vector3 toSun = -(Quaternion.Euler(55f, -35f, 0f) * Vector3.forward);
+            float d = Vector3.Dot(n, toSun);
+            return Mathf.Clamp((0.25f + 0.75f * d) / (0.25f + 0.75f * toSun.y), 0.45f, 1.15f);
+        }
 
         /// <summary>Fixed sun shading per face, baked into the colour (tops brightest, sides darker).</summary>
         private static float Shade(Vector3 n)
@@ -349,9 +403,9 @@ namespace Sculpt.Game.World
         private void Quad(MeshBits m, Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color col)
         {
             Vector3 n = Vector3.Cross(b - a, d - a).normalized;
-            Color s = col * Shade(n);
+            Color s = col * (m.Raw ? HillShade(n) : Shade(n));
             s.a = 1;
-            if (_linear) s = s.linear;
+            if (_linear && !m.Raw) s = s.linear;
             int i = m.V.Count;
             m.V.Add(a); m.V.Add(b); m.V.Add(c); m.V.Add(d);
             for (int k = 0; k < 4; k++) { m.N.Add(n); m.C.Add(s); }
@@ -362,9 +416,9 @@ namespace Sculpt.Game.World
         private void Tri(MeshBits m, Vector3 a, Vector3 b, Vector3 c, Color col)
         {
             Vector3 n = Vector3.Cross(b - a, c - a).normalized;
-            Color s = col * Shade(n);
+            Color s = col * (m.Raw ? HillShade(n) : Shade(n));
             s.a = 1;
-            if (_linear) s = s.linear;
+            if (_linear && !m.Raw) s = s.linear;
             int i = m.V.Count;
             m.V.Add(a); m.V.Add(b); m.V.Add(c);
             for (int k = 0; k < 3; k++) { m.N.Add(n); m.C.Add(s); }
@@ -412,8 +466,8 @@ namespace Sculpt.Game.World
             Tri(m, l0, h0, b0, col);               // sides
             Tri(m, l1, b1, h1, col);
             // Yellow edge lines along the low edge and the crest so the ramp's ends read.
-            AddStripe(m, b, 0.0, 0.08, y0, y0, StairNose);
-            AddStripe(m, b, 1.0 - 0.04, 1.0, y1, y1, StairNose);
+            AddStripe(_stripeSink ?? m, b, 0.0, 0.08, y0, y0, StairNose);
+            AddStripe(_stripeSink ?? m, b, 1.0 - 0.04, 1.0, y1, y1, StairNose);
         }
 
         /// <summary>A thin painted band across the wedge at rise fraction u0..u1, lifted 1 cm (cosmetic only).</summary>
