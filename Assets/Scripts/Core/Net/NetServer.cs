@@ -19,6 +19,9 @@ namespace Sculpt.Core.Net
         // Input buffer: ring indexed by tick.
         internal readonly InputCmd[] Ring;
         internal readonly bool[] Has;
+        // Latency overlay: when the command for a tick first arrived, on the server's clock (same ring as the commands).
+        internal readonly double[] ArriveMs;
+        internal readonly int[] ArriveTick;
         internal int NewestReceived = int.MinValue;
         internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch, CarryHeal, CarryHealReinforce;
         internal byte CarryWeapon;
@@ -59,6 +62,9 @@ namespace Sculpt.Core.Net
         {
             Ring = new InputCmd[ringSize];
             Has = new bool[ringSize];
+            ArriveMs = new double[ringSize];
+            ArriveTick = new int[ringSize];
+            for (int i = 0; i < ringSize; i++) ArriveTick[i] = int.MinValue;
             LeadByTick = new int[leadWindow];
             LeadSlotTick = new int[leadWindow];
             for (int i = 0; i < leadWindow; i++) LeadSlotTick[i] = int.MinValue;
@@ -86,6 +92,11 @@ namespace Sculpt.Core.Net
         public readonly MovementConfig Movement;
         public readonly NetConfig Config;
         public int Tick { get; private set; }
+        /// <summary>
+        /// Optional monotonic clock in milliseconds, set by whoever hosts the server. Only used to tell each client how
+        /// long its command waited here (latency overlay); the simulation never reads it. Null: nothing is reported.
+        /// </summary>
+        public Func<double> Clock;
         public IReadOnlyList<ServerPlayer> Players => _players;
         /// <summary>Items on the ground. The server owns them; every client gets the whole list when it changes.</summary>
         public readonly GroundItems Items = new GroundItems();
@@ -222,6 +233,7 @@ namespace Sculpt.Core.Net
 
             RecordLead(p, lead);
             if (newest > p.NewestReceived) p.NewestReceived = newest;
+            double now = Clock != null ? Clock() : 0;
 
             foreach (InputCmd c in cmds)
             {
@@ -267,6 +279,11 @@ namespace Sculpt.Core.Net
                 if (p.Has[i] && p.Ring[i].Tick == c.Tick) continue; // redundant copy
                 p.Ring[i] = c;
                 p.Has[i] = true;
+                if (Clock != null)
+                {
+                    p.ArriveMs[i] = now;
+                    p.ArriveTick[i] = c.Tick;
+                }
             }
         }
 
@@ -606,6 +623,20 @@ namespace Sculpt.Core.Net
             Send(to.ConnectionId, w.ToArray(), true);
         }
 
+        /// <summary>
+        /// Latency overlay: tenths of a millisecond between the arrival of this player's command for the current tick
+        /// and now (the snapshot leaving), or <see cref="Protocol.NoHold"/> when unknown. Needs <see cref="Clock"/>.
+        /// </summary>
+        private int HoldOf(ServerPlayer p)
+        {
+            if (Clock == null || !p.LastCmdWasReal) return Protocol.NoHold;
+            int i = Tick & (_ringSize - 1);
+            if (p.ArriveTick[i] != Tick) return Protocol.NoHold; // a carried or repeated command: no arrival time for this tick
+            double held = Clock() - p.ArriveMs[i];
+            if (!(held >= 0)) return Protocol.NoHold;
+            return (int)Math.Min(Protocol.NoHold - 1, Math.Round(held * 10.0));
+        }
+
         private void SendSnapshots()
         {
             foreach (ServerPlayer to in _players)
@@ -638,6 +669,7 @@ namespace Sculpt.Core.Net
                     SelfLead = WorstLead(to),
                     Self = to.State,
                     SelfBar = BarOf(to.Id).Value,
+                    SelfHoldTenthMs = HoldOf(to),
                     Others = _others,
                 });
                 Send(to.ConnectionId, _w.ToArray(), false);

@@ -66,13 +66,20 @@ namespace Sculpt.Core.Net
         public MotorState Self;
         /// <summary>The receiver's sculpt bar at this tick (basis points).</summary>
         public int SelfBar;
+        /// <summary>
+        /// Latency overlay: how long the server held the client's command for this tick, from its arrival to this
+        /// snapshot being sent (waiting for the tick, simulating, sending), in tenths of a millisecond.
+        /// <see cref="Protocol.NoHold"/> when the server has no clock or had no real command for the tick.
+        /// </summary>
+        public int SelfHoldTenthMs;
         public List<PlayerSnap> Others;
     }
 
     public static class Protocol
     {
-        public const byte Version = 14;
+        public const byte Version = 16; // 15 is the LAN 1v1 branch's Match message; 16 adds the snapshot's hold time
         public const int NoLead = sbyte.MinValue;
+        public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
         public const int MaxPlayersPerSnapshot = 64;
 
@@ -151,6 +158,7 @@ namespace Sculpt.Core.Net
                 w.I8((sbyte)lead);
                 WriteMotor(w, m.Self);
                 w.U16((ushort)Math.Max(0, Math.Min(ushort.MaxValue, m.SelfBar)));
+                w.U16((ushort)(m.SelfHoldTenthMs < 0 || m.SelfHoldTenthMs >= NoHold ? NoHold : m.SelfHoldTenthMs));
             }
             int n = m.Others?.Count ?? 0;
             if (n > MaxPlayersPerSnapshot) throw new System.ArgumentException("Too many players.");
@@ -181,6 +189,7 @@ namespace Sculpt.Core.Net
                 m.SelfLead = r.I8();
                 m.Self = ReadMotor(ref r);
                 m.SelfBar = r.U16();
+                m.SelfHoldTenthMs = r.U16();
             }
             int n = r.U8();
             if (n > MaxPlayersPerSnapshot) throw new NetFormatException("Too many players.");
