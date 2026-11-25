@@ -10,7 +10,8 @@ namespace Sculpt.Core.Net
         Hit = 1,
         /// <summary>A player died.</summary>
         Kill = 2,
-        /// <summary>A grenade was thrown or went off (sent to everyone but the thrower, who predicted it).</summary>
+        /// <summary>A grenade, C4 or launcher round was thrown, stuck, went off or fizzled (sent to everyone but the
+        /// thrower, who predicted it). Source says which kind.</summary>
         Grenade = 3,
     }
 
@@ -22,6 +23,8 @@ namespace Sculpt.Core.Net
         Fall = 5,
         Grenade = 6,
         Punch = 7,
+        C4 = 8,
+        Launcher = 9,
     }
 
     public struct CombatEvent
@@ -45,7 +48,8 @@ namespace Sculpt.Core.Net
         public bool Killed;
         /// <summary>Hit: the victim's health after it (only filled in the copy sent to the attacker and victim).</summary>
         public int HealthAfter;
-        // Grenade: thrown (Origin = start, Aim = launch velocity) or exploded (Point = blast), and the thrower's throw number.
+        // Grenade (Source = Grenade, C4 or Launcher): thrown (Origin = start, Aim = launch velocity), or exploded, stuck or
+        // fizzled (Point), and the thrower's throw number.
         public GrenadeEventType Nade;
         public byte NadeSeq;
 
@@ -126,7 +130,7 @@ namespace Sculpt.Core.Net
                 if (t > (byte)CombatEventType.Grenade) throw new NetFormatException("Bad combat event.");
                 var e = new CombatEvent { Type = (CombatEventType)t, Attacker = r.U16() };
                 byte src = r.U8();
-                if (src > (byte)DamageSource.Punch) throw new NetFormatException("Bad damage source.");
+                if (src > (byte)DamageSource.Launcher) throw new NetFormatException("Bad damage source.");
                 e.Source = (DamageSource)src;
                 switch (e.Type)
                 {
@@ -154,7 +158,9 @@ namespace Sculpt.Core.Net
                     case CombatEventType.Grenade:
                     {
                         byte k = r.U8();
-                        if (k > (byte)GrenadeEventType.Exploded) throw new NetFormatException("Bad grenade event.");
+                        if (k > (byte)GrenadeEventType.Fizzled) throw new NetFormatException("Bad grenade event.");
+                        if (e.Source != DamageSource.Grenade && e.Source != DamageSource.C4 && e.Source != DamageSource.Launcher)
+                            throw new NetFormatException("Bad grenade kind.");
                         e.Nade = (GrenadeEventType)k;
                         e.NadeSeq = r.U8();
                         if (e.Nade == GrenadeEventType.Thrown)

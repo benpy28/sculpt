@@ -109,42 +109,51 @@ namespace Sculpt.Core.Net
         /// </summary>
         private void ResolveGrenades()
         {
-            GrenadeConfig gc = Movement.Items.Grenade;
             foreach (ServerPlayer p in _players)
             {
                 foreach (GrenadeEvent e in p.Nades)
                 {
+                    GrenadeConfig gc = Movement.Items.Of(e.Kind);
+                    DamageSource src = SourceOf(e.Kind);
                     if (e.Type == GrenadeEventType.Thrown)
                     {
-                        _combat.Add(new CombatEvent { Type = CombatEventType.Grenade, Attacker = p.Id, Source = DamageSource.Grenade, Nade = e.Type, NadeSeq = e.Seq, Origin = e.Position, Aim = e.Velocity });
+                        _combat.Add(new CombatEvent { Type = CombatEventType.Grenade, Attacker = p.Id, Source = src, Nade = e.Type, NadeSeq = e.Seq, Origin = e.Position, Aim = e.Velocity });
                         continue;
                     }
-                    _combat.Add(new CombatEvent { Type = CombatEventType.Grenade, Attacker = p.Id, Source = DamageSource.Grenade, Nade = e.Type, NadeSeq = e.Seq, Point = e.Position });
+                    _combat.Add(new CombatEvent { Type = CombatEventType.Grenade, Attacker = p.Id, Source = src, Nade = e.Type, NadeSeq = e.Seq, Point = e.Position });
+                    if (e.Type != GrenadeEventType.Exploded) continue; // stuck or fizzled: nothing to resolve
                     foreach (ServerPlayer o in _players)
                     {
                         if (o == p || o.State.Dead) continue;
                         double height = PlayerMovement.HeightOf(o.State, Movement);
                         bool enemy = o.Team != p.Team || Weapons.FriendlyFire;
-                        int dmg = enemy ? GrenadeRules.Damage(Grid, e.Position, o.State.Position, height, gc) : 0;
-                        Vec3d push = GrenadeRules.Push(Grid, e.Position, o.State.Position, height, gc, gc.OtherKnock);
+                        int dmg = enemy ? GrenadeRules.Damage(Grid, e.Position, o.State.Position, height, gc, Movement.HalfWidth) : 0;
+                        Vec3d push = GrenadeRules.Push(Grid, e.Position, o.State.Position, height, gc, gc.OtherKnock, Movement.HalfWidth);
                         if (push.LengthSquared > 0) GrenadeRules.Knock(ref o.State, push);
                         if (dmg <= 0) continue;
                         bool killed = Hurt(p, o, dmg);
                         _combat.Add(new CombatEvent
                         {
-                            Type = CombatEventType.Hit, Attacker = p.Id, Victim = o.Id, Source = DamageSource.Grenade,
+                            Type = CombatEventType.Hit, Attacker = p.Id, Victim = o.Id, Source = src,
                             Damage = dmg, Pellets = 1, Point = GrenadeRules.Chest(o.State.Position, height), Killed = killed,
                             HealthAfter = o.State.Health(Weapons), Origin = e.Position,
                         });
-                        if (killed) OnKilled(o, p.Id, DamageSource.Grenade, false);
+                        if (killed) OnKilled(o, p.Id, src, false);
                     }
                     if (Walls == null) continue;
                     GrenadeRules.TilesInBlast(Walls, e.Position, gc, _blastTiles);
-                    foreach (int t in _blastTiles) Walls.Damage(t, Walls.Config.GrenadeTileDamage, TileCause.Grenade, p.Id);
+                    int tileDamage = Walls.Config.BlastTileDamage(e.Kind);
+                    foreach (int t in _blastTiles) Walls.Damage(t, tileDamage, TileCause.Grenade, p.Id);
                 }
                 p.Nades.Clear();
             }
         }
+
+        /// <summary>The damage source (and the wire's kind tag) of a projectile kind.</summary>
+        public static DamageSource SourceOf(ThrowKind k) => k == ThrowKind.C4 ? DamageSource.C4 : k == ThrowKind.Launcher ? DamageSource.Launcher : DamageSource.Grenade;
+
+        /// <summary>The projectile kind a grenade event's source names.</summary>
+        public static ThrowKind KindOf(DamageSource s) => s == DamageSource.C4 ? ThrowKind.C4 : s == DamageSource.Launcher ? ThrowKind.Launcher : ThrowKind.Grenade;
 
         /// <summary>Everyone but the shooter, as the shooter saw them at <paramref name="viewTick"/> + frac/256.</summary>
         private void BuildTargets(ServerPlayer shooter, int viewTick, byte viewFrac)

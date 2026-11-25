@@ -74,6 +74,14 @@ namespace Sculpt.Core
         /// <summary>Grenade blast damage to every tile in its radius: breaks Intact, Damaged and Patched tiles at once;
         /// a Reinforced tile (200) survives one blast with 50 left.</summary>
         public int GrenadeTileDamage = 150;
+        /// <summary>C4 is the breaching tool: it breaks every tile in its blast, Reinforced (200) included.</summary>
+        public int C4TileDamage = 220;
+        /// <summary>A launcher round breaks Intact, Damaged and Patched tiles in its (slightly smaller) blast; a
+        /// Reinforced tile keeps 90.</summary>
+        public int LauncherTileDamage = 110;
+
+        /// <summary>Blast tile damage of a projectile kind.</summary>
+        public int BlastTileDamage(ThrowKind k) => k == ThrowKind.C4 ? C4TileDamage : k == ThrowKind.Launcher ? LauncherTileDamage : GrenadeTileDamage;
         /// <summary>Punch (Ben: half an unreinforced wall, 50) and what it does to a Reinforced tile.</summary>
         public int PunchTileDamage = 50;
         public int PunchReinforcedTileDamage = 25;

@@ -15,19 +15,31 @@ namespace Sculpt.Core
         Ar = 3,
         Pistol = 4,
         Grenade = 5,
+        /// <summary>Remote C4 (friend demo): a breaching charge you throw, that sticks, and that you set off.</summary>
+        C4 = 6,
+        /// <summary>Grenade launcher: few rounds, slow and clunky, rounds only arm after a few metres.</summary>
+        Launcher = 7,
     }
 
     public static class Items
     {
         public const int Slots = 5;
-        public const Item Last = Item.Grenade;
+        /// <summary>The snapshot carries the held item in 3 bits, so this stays at most 7.</summary>
+        public const Item Last = Item.Launcher;
 
         public static bool IsGun(Item i) => i >= Item.Pump && i <= Item.Pistol;
         /// <summary>The gun of a gun item. Only call with <see cref="IsGun"/> true.</summary>
         public static Weapon GunOf(Item i) => (Weapon)((int)i - 1);
         public static Item Of(Weapon w) => (Item)((int)w + 1);
-        /// <summary>Items that stack in one slot (grenades). Guns are one per slot, and one of each gun at most.</summary>
-        public static bool Stacks(Item i) => i == Item.Grenade;
+        /// <summary>
+        /// Items that carry a count in their slot: grenades and C4 (how many), the launcher (rounds left). Picking up more
+        /// of one you have adds to it up to the carry limit. Guns are one per slot, and one of each gun at most.
+        /// </summary>
+        public static bool Stacks(Item i) => i == Item.Grenade || i == Item.C4 || i == Item.Launcher;
+        /// <summary>Items that leave your hand as a projectile (<see cref="GrenadeRules"/>).</summary>
+        public static bool Throws(Item i) => i == Item.Grenade || i == Item.C4 || i == Item.Launcher;
+        public static ThrowKind KindOf(Item i) => i == Item.C4 ? ThrowKind.C4 : i == Item.Launcher ? ThrowKind.Launcher : ThrowKind.Grenade;
+        public static Item ItemOf(ThrowKind k) => k == ThrowKind.C4 ? Item.C4 : k == ThrowKind.Launcher ? Item.Launcher : Item.Grenade;
 
         public static string Name(Item i)
         {
@@ -38,6 +50,8 @@ namespace Sculpt.Core
                 case Item.Ar: return "AR";
                 case Item.Pistol: return "Pistol";
                 case Item.Grenade: return "Grenade";
+                case Item.C4: return "C4";
+                case Item.Launcher: return "Launcher";
                 default: return "";
             }
         }
@@ -45,17 +59,60 @@ namespace Sculpt.Core
 
     /// <summary>
     /// The five hotbar slots: a plain struct inside <see cref="HandState"/>, so it is predicted, sent and reconciled
-    /// with the hand. At most one of each gun and one grenade stack (<see cref="Grenades"/> is its count).
+    /// with the hand. At most one of each gun and one stack of each stacking item. N0..N4 are the slots' counts
+    /// (grenades or C4 in the stack, launcher rounds left; 0 for guns). A C4 slot at 0 is the detonator: it stays
+    /// while any of your charges is still out.
     /// </summary>
     public struct Bag
     {
         public Item S0, S1, S2, S3, S4;
-        /// <summary>Grenades in the grenade slot (0 when there is none).</summary>
-        public byte Grenades;
+        public byte N0, N1, N2, N3, N4;
 
         /// <summary>The fixed starting loadout: pump, SMG, AR, pistol, two grenades in slot 5.</summary>
         public const int StartGrenades = 2;
-        public static Bag Standard => new Bag { S0 = Item.Pump, S1 = Item.Smg, S2 = Item.Ar, S3 = Item.Pistol, S4 = Item.Grenade, Grenades = StartGrenades };
+        public static Bag Standard => new Bag { S0 = Item.Pump, S1 = Item.Smg, S2 = Item.Ar, S3 = Item.Pistol, S4 = Item.Grenade, N4 = StartGrenades };
+
+        /// <summary>The raw count byte of a slot.</summary>
+        public byte Count(int slot)
+        {
+            switch (slot)
+            {
+                case 0: return N0;
+                case 1: return N1;
+                case 2: return N2;
+                case 3: return N3;
+                case 4: return N4;
+                default: return 0;
+            }
+        }
+
+        public void SetCount(int slot, int count)
+        {
+            byte v = (byte)Math.Max(0, Math.Min(255, count));
+            switch (slot)
+            {
+                case 0: N0 = v; break;
+                case 1: N1 = v; break;
+                case 2: N2 = v; break;
+                case 3: N3 = v; break;
+                case 4: N4 = v; break;
+                default: throw new ArgumentOutOfRangeException(nameof(slot));
+            }
+        }
+
+        /// <summary>Grenades in the grenade slot (0 when there is none). Setting it with no grenade slot does nothing.</summary>
+        public byte Grenades
+        {
+            get => CountOf(Item.Grenade);
+            set { int k = SlotOf(Item.Grenade); if (k >= 0) SetCount(k, value); }
+        }
+
+        /// <summary>How many of a stacking item you carry (0 if none).</summary>
+        public byte CountOf(Item i)
+        {
+            int k = SlotOf(i);
+            return k < 0 ? (byte)0 : Count(k);
+        }
 
         public Item this[int slot]
         {
@@ -99,22 +156,23 @@ namespace Sculpt.Core
             return -1;
         }
 
-        /// <summary>How many of the item are in a slot (guns 1, grenades their count).</summary>
+        /// <summary>How many of the item are in a slot (guns 1, stacking items their count).</summary>
         public int CountIn(int slot)
         {
             Item i = this[slot];
             if (i == Item.None) return 0;
-            return Items.Stacks(i) ? Grenades : 1;
+            return Items.Stacks(i) ? Count(slot) : 1;
         }
 
-        /// <summary>Empties a slot (and the grenade count with the grenade slot).</summary>
+        /// <summary>Empties a slot (and its count).</summary>
         public void Clear(int slot)
         {
-            if (this[slot] == Item.Grenade) Grenades = 0;
             this[slot] = Item.None;
+            SetCount(slot, 0);
         }
 
-        public bool Equals(in Bag o) => S0 == o.S0 && S1 == o.S1 && S2 == o.S2 && S3 == o.S3 && S4 == o.S4 && Grenades == o.Grenades;
+        public bool Equals(in Bag o) => S0 == o.S0 && S1 == o.S1 && S2 == o.S2 && S3 == o.S3 && S4 == o.S4 &&
+                                        N0 == o.N0 && N1 == o.N1 && N2 == o.N2 && N3 == o.N3 && N4 == o.N4;
     }
 
     /// <summary>Item numbers (Breach Settings writes these). Ticks at 60 Hz, distances in metres.</summary>
@@ -122,6 +180,10 @@ namespace Sculpt.Core
     {
         /// <summary>Most grenades one player carries (Ben: carry 2).</summary>
         public int GrenadeCarry = 2;
+        /// <summary>Most C4 charges one player carries.</summary>
+        public int C4Carry = 2;
+        /// <summary>Most launcher rounds one player carries.</summary>
+        public int LauncherCarry = 4;
         /// <summary>Pickup reach, eye to the item.</summary>
         public double Reach = 2.5;
         /// <summary>An item counts as aimed at within this angle of the crosshair (the closest one to the crosshair wins).</summary>
@@ -138,6 +200,14 @@ namespace Sculpt.Core
         public int MaxGroundItems = 64;
         /// <summary>Throw, flight and blast numbers.</summary>
         public GrenadeConfig Grenade = new GrenadeConfig();
+        public GrenadeConfig C4 = GrenadeConfig.DefaultC4();
+        public GrenadeConfig Launcher = GrenadeConfig.DefaultLauncher();
+
+        /// <summary>The flight and blast numbers of one kind.</summary>
+        public GrenadeConfig Of(ThrowKind k) => k == ThrowKind.C4 ? C4 : k == ThrowKind.Launcher ? Launcher : Grenade;
+
+        /// <summary>Most of a stacking item you can carry (1 for anything else).</summary>
+        public int Carry(Item i) => i == Item.Grenade ? GrenadeCarry : i == Item.C4 ? C4Carry : i == Item.Launcher ? LauncherCarry : 1;
     }
 
     /// <summary>One item lying on the ground. Items don't move: they rest where they were dropped.</summary>
@@ -320,15 +390,16 @@ namespace Sculpt.Core
             if (Items.Stacks(g.Kind))
             {
                 int have = b.SlotOf(g.Kind);
+                int carry = cfg.Carry(g.Kind);
                 if (have >= 0)
                 {
-                    int room = cfg.GrenadeCarry - b.Grenades;
+                    int room = carry - b.Count(have);
                     if (room <= 0) { p.Result = PickupResult.AlreadyHave; return p; }
                     p.Slot = have;
                     p.Take = Math.Min(room, g.Count);
                     return p;
                 }
-                p.Take = Math.Min(Math.Max(1, cfg.GrenadeCarry), g.Count);
+                p.Take = Math.Min(Math.Max(1, carry), g.Count);
             }
             else
             {
@@ -339,6 +410,7 @@ namespace Sculpt.Core
             if (b[held] == Item.None) { p.Slot = held; return p; }
             int empty = b.FirstEmpty();
             if (empty >= 0) { p.Slot = empty; return p; }
+            if (b.CountIn(held) == 0) { p.Slot = held; return p; } // an empty C4 detonator is simply replaced
             p.Slot = held;
             p.SwapOut = b[held];
             p.Result = PickupResult.Swapped;
@@ -369,8 +441,9 @@ namespace Sculpt.Core
             bool intoHeld = p.Slot == h.Slot;
             if (Items.Stacks(g.Kind))
             {
+                int before = h.Bag[p.Slot] == g.Kind ? h.Bag.Count(p.Slot) : 0;
                 h.Bag[p.Slot] = g.Kind;
-                h.Bag.Grenades = (byte)Math.Min(255, h.Bag.Grenades + p.Take);
+                h.Bag.SetCount(p.Slot, before + p.Take);
             }
             else
             {
@@ -395,6 +468,7 @@ namespace Sculpt.Core
             ref HandState h = ref s.Hand;
             if (s.Dead || h.InSculptMode || h.Mode == HandMode.Disarmed || h.Mode == HandMode.SculptExit) return false;
             if (h.HeldItem == Item.None) return false;
+            if (h.Bag.CountIn(h.Slot) <= 0) return false; // an empty C4 detonator stays until your charges are gone
             Vec3d at = DropPoint(terrain, s.Position, yaw, mc);
             GroundItem g = TakeOut(ref s, h.Slot, at, playerId, tick);
             items.Add(g, mc.Items.MaxGroundItems);

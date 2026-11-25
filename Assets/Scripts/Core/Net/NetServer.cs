@@ -45,7 +45,7 @@ namespace Sculpt.Core.Net
         /// <summary>Grenade throws and blasts from this tick's simulation.</summary>
         internal readonly List<GrenadeEvent> Nades = new List<GrenadeEvent>();
         internal readonly List<PunchSwing> Punches = new List<PunchSwing>();
-        internal bool CarryFire;
+        internal bool CarryFire, CarryAim;
 
         /// <summary>Kills and deaths since joining (dev HUD).</summary>
         public int Kills, Deaths;
@@ -254,6 +254,7 @@ namespace Sculpt.Core.Net
                         if (c.Move.JumpPressed) p.CarryJump = true;
                         if (c.Move.CrouchPressed) p.CarryCrouch = true;
                         if (c.Move.FirePressed) p.CarryFire = true;
+                        if (c.Move.AimPressed) p.CarryAim = true;
                         if (c.Respawn) p.CarryRespawn = true;
                         if (c.Warp) p.CarryWarp = true;
                         if (c.Hand.SculptToggle) p.CarryToggle = true;
@@ -358,6 +359,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryJump) { cmd.Move.JumpPressed = true; p.CarryJump = false; }
                 if (p.CarryCrouch) { cmd.Move.CrouchPressed = true; p.CarryCrouch = false; }
                 if (p.CarryFire) { cmd.Move.FirePressed = true; p.CarryFire = false; }
+                if (p.CarryAim) { cmd.Move.AimPressed = true; p.CarryAim = false; }
                 if (p.CarryRespawn) { cmd.Respawn = true; p.CarryRespawn = false; }
                 if (p.ForceRespawn) { cmd.Respawn = true; p.ForceRespawn = false; }
                 if (p.CarryWarp) { cmd.Warp = true; p.CarryWarp = false; }
