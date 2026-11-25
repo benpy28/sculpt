@@ -185,6 +185,116 @@ namespace Sculpt.Core
             return info;
         }
 
+        // ================================================================ The 1v1 duel map (friend demo, 2026-11-25)
+
+        /// <summary>
+        /// The duel block: a central hall with a stairwell on each side, and two side buildings (each with a stairwell
+        /// and an outdoor ramp to its roof), linked to the hall's roof by bridges, with a berm in front of each spawn.
+        /// Everything comes in pairs turned 180 degrees about the map centre, so both spawns see the same map.
+        /// <paramref name="size"/> is the square map's side; the centre is (size/2, size/2).
+        /// </summary>
+        public static GreyboxInfo BuildDuel(BrushWorld w, double size)
+        {
+            var info = new GreyboxInfo();
+            double mid = size / 2;
+            double span3 = 3 * Module + Column, span2 = 2 * Module + Column; // 19.2 m and 12.9 m
+
+            // ---- Central hall: 3 x 3, stairwells in the west lane (rising north) and the east lane (rising south). ----
+            var hall = new Building(mid - span3 / 2, mid - span3 / 2, 3, 3);
+            Stairwell(w, info, hall, 0, true, +1);
+            Stairwell(w, info, hall, 2, true, -1, flip: true);
+            SetTurned(hall, WallKind.WideDoor, 0, 0, 1, alongX: true);  // main doors (south and north)
+            SetTurned(hall, WallKind.Window, 0, 0, 0, alongX: true);    // windows into the stair lanes
+            SetTurned(hall, WallKind.Door, 0, 0, 1, alongX: false);     // side doors (west and east)
+            SetTurned(hall, WallKind.Door, 0, 1, 1, alongX: true);      // the middle lane: three rooms in a row
+            SetTurned(hall, WallKind.Window, 1, 0, 1, alongX: true);    // first floor windows over the main doors
+            SetTurned(hall, WallKind.Window, 1, 0, 1, alongX: false);
+            SetTurned(hall, WallKind.Window, 1, 0, 2, alongX: false);
+            SetTurned(hall, WallKind.Window, 1, 1, 1, alongX: true);    // first floor: a room at each end
+            Raise(w, info, hall, "Hall");
+
+            // ---- Side buildings: 2 x 3, the west one south of centre, the east one (turned) north of it. ----
+            const double streetGap = 12;
+            var west = new Building(hall.X0 - streetGap - span2, mid - span3 / 2 - 8, 2, 3);
+            Stairwell(w, info, west, 0, true, +1);
+            west.AlongZ[0, 2, 1] = WallKind.Door;      // east: across the street to the hall
+            west.AlongX[0, 0, 1] = WallKind.WideDoor;  // south, toward team 1's spawn
+            west.AlongX[0, 3, 1] = WallKind.Door;      // north
+            west.AlongX[0, 1, 1] = WallKind.Door;      // ground floor: two rooms in the east lane
+            west.AlongZ[0, 2, 0] = WallKind.Window;
+            west.AlongZ[0, 2, 2] = WallKind.Window;
+            west.AlongZ[0, 0, 1] = WallKind.Window;    // west, onto the ramp
+            west.AlongZ[1, 2, 0] = WallKind.Window;
+            west.AlongZ[1, 2, 1] = WallKind.Window;
+            west.AlongZ[1, 2, 2] = WallKind.Window;
+            west.AlongX[1, 0, 1] = WallKind.Window;
+            west.AlongX[1, 3, 1] = WallKind.Window;
+            west.AlongZ[1, 0, 1] = WallKind.Window;
+            var east = new Building(size - west.X0 - span2, size - west.Z0 - span3, 2, 3);
+            Stairwell(w, info, east, 1, true, -1, flip: true);
+            CopyTurned(west, east);
+            Raise(w, info, west, "West");
+            Raise(w, info, east, "East");
+
+            // Outdoor ramps up each side building's outer wall to its roof (9.6 m over 27 m), flush with the wall.
+            double wx = west.X0 - 3, wz1 = west.Cz(3) + Column;
+            Climb(w, info, new Aabb(new Vec3d(wx, 0, wz1 - 27), new Vec3d(wx + 3, west.Top, wz1)), Dir.North, TileKind.Ramp);
+            Climb(w, info, new Aabb(new Vec3d(size - wx - 3, 0, size - wz1), new Vec3d(size - wx, east.Top, size - wz1 + 27)), Dir.South, TileKind.Ramp);
+            // A 3 m walkway at roof level along the far end of each side building, from the ramp's top across the roof edge.
+            Bridge(w, info, new Vec3d(wx, 0, wz1), new Vec3d(west.Cx(2) + Column, 0, wz1 + 3));
+            Bridge(w, info, new Vec3d(east.X0, 0, size - wz1 - 3), new Vec3d(size - wx, 0, size - wz1));
+
+            // ---- Rooftop bridges from each side building's roof to the hall's (3 m wide). ----
+            double bz = hall.Z0 + 4;
+            Bridge(w, info, new Vec3d(west.Cx(2) + Column, 0, bz), new Vec3d(hall.X0, 0, bz + 3));
+            Bridge(w, info, new Vec3d(hall.Cx(3) + Column, 0, size - bz - 3), new Vec3d(east.X0, 0, size - bz));
+
+            // ---- Low tile walls in the streets (1.5 m: crouch cover you can vault), in turned pairs. ----
+            double th = w.Tiles.Config.TileThickness, ts = w.Tiles.Config.TileSize;
+            void LowWall(double x, double z, Dir along, int n)
+            {
+                info.Tiles.AddRange(w.Tiles.AddWall(new Vec3d(x, 0, z), along, n, 1));
+                if (along == Dir.East) info.Tiles.AddRange(w.Tiles.AddWall(new Vec3d(size - x - n * ts, 0, size - z - th), along, n, 1));
+                else info.Tiles.AddRange(w.Tiles.AddWall(new Vec3d(size - x - th, 0, size - z - n * ts), along, n, 1));
+            }
+            LowWall(west.Cx(2) + Column + 4.35, hall.Z0 - 6, Dir.North, 3); // west street, south end
+            LowWall(mid - 3, hall.Z0 - 8, Dir.East, 4);                      // in front of the hall's main door
+            LowWall(west.X0 + 3.3, west.Z0 - 7, Dir.East, 3);                // in front of the west building
+
+            // ---- Berms between each spawn and the block: up 3 m over 9 m, 3 m flat, down over 9 m (18.4 degrees). ----
+            const double bermZ = 7;
+            Berm(w, info, hall.X0 - 6, hall.X0 + span3 + 6, bermZ, 9, 3, 3.0);
+            Berm(w, info, size - (hall.X0 + span3 + 6), size - (hall.X0 - 6), size - bermZ - 21, 9, 3, 3.0);
+            return info;
+        }
+
+        /// <summary>
+        /// Sets one wall segment and its partner turned 180 degrees about the building's centre. alongX: (storey,
+        /// z-line, segment); otherwise (storey, x-line, segment).
+        /// </summary>
+        private static void SetTurned(Building b, WallKind kind, int s, int line, int seg, bool alongX)
+        {
+            if (alongX) { b.AlongX[s, line, seg] = kind; b.AlongX[s, b.Mz - line, b.Mx - 1 - seg] = kind; }
+            else { b.AlongZ[s, line, seg] = kind; b.AlongZ[s, b.Mx - line, b.Mz - 1 - seg] = kind; }
+        }
+
+        /// <summary>Copies a building's walls and slab holes onto <paramref name="to"/> turned 180 degrees (same size).</summary>
+        private static void CopyTurned(Building from, Building to)
+        {
+            for (int s = 0; s < from.Storeys; s++)
+            {
+                for (int j = 0; j <= from.Mz; j++)
+                    for (int i = 0; i < from.Mx; i++)
+                        to.AlongX[s, from.Mz - j, from.Mx - 1 - i] = from.AlongX[s, j, i];
+                for (int i = 0; i <= from.Mx; i++)
+                    for (int j = 0; j < from.Mz; j++)
+                        to.AlongZ[s, from.Mx - i, from.Mz - 1 - j] = from.AlongZ[s, i, j];
+                for (int i = 0; i < from.Mx; i++)
+                    for (int j = 0; j < from.Mz; j++)
+                        to.Hole[s, from.Mx - 1 - i, from.Mz - 1 - j] |= from.Hole[s, i, j];
+            }
+        }
+
         /// <summary>A berm along X: rises north from z0 over <paramref name="run"/>, flat for <paramref name="flat"/>, falls over the same run.</summary>
         private static void Berm(BrushWorld w, GreyboxInfo info, double x0, double x1, double z0, double run, double flat, double h)
         {
