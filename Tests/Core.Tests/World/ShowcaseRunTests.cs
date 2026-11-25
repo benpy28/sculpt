@@ -21,7 +21,7 @@ namespace Sculpt.Core.Tests
             var events = new List<MoveEvent>();
             var log = new List<string>();
             ShowcaseRun.Phase last = run.Current;
-            for (int k = 0; k < 60 * 40 && !run.Finished; k++)
+            for (int k = 0; k < SimTime.TicksPerSecond * 40 && !run.Finished; k++)
             {
                 MoveInput i = run.Next(s);
                 int before = events.Count;
@@ -47,7 +47,7 @@ namespace Sculpt.Core.Tests
             Assert.That(events.Any(e => e.Type == MoveEventType.Vaulted), Is.True);
             Assert.That(events.Any(e => e.Type == MoveEventType.Braked), Is.True);
             Assert.That(events.Count(e => e.Type == MoveEventType.SlideLandSuccess), Is.GreaterThanOrEqualTo(4));
-            Assert.That(run.Ticks, Is.LessThan(60 * 15), "under 15 s");
+            Assert.That(run.Ticks, Is.LessThan(SimTime.TicksPerSecond * 15), "under 15 s");
         }
 
         [Test]

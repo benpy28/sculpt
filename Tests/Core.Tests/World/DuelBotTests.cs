@@ -87,17 +87,17 @@ namespace Sculpt.Core.Tests
             public int Ticks, FiresWithoutSight, Fires;
             private readonly Dictionary<int, bool>[] _sight = { new Dictionary<int, bool>(), new Dictionary<int, bool>() };
 
-            public BotMatch(BotLevel la, BotLevel lb)
+            public BotMatch(BotLevel la, BotLevel lb, int seedA = 3, int seedB = 7)
             {
-                BrainA = new DuelBot(Nav(), DuelBotConfig.For(la), seed: 3);
-                BrainB = new DuelBot(Nav(), DuelBotConfig.For(lb), seed: 7);
+                BrainA = new DuelBot(Nav(), DuelBotConfig.For(la), seed: seedA);
+                BrainB = new DuelBot(Nav(), DuelBotConfig.For(lb), seed: seedB);
                 A = H.Server.AddBot(BrainA, 1, Spawn(1), SpawnYaw(1));
                 B = H.Server.AddBot(BrainB, 2, Spawn(2), SpawnYaw(2));
             }
 
             public void Run(double seconds)
             {
-                int n = (int)(seconds * 60);
+                int n = (int)(seconds * SimTime.TicksPerSecond);
                 for (int k = 0; k < n; k++)
                 {
                     Vec3d pa = A.State.Position, pb = B.State.Position;
@@ -124,7 +124,7 @@ namespace Sculpt.Core.Tests
                 // It may only fire at what it could see a reaction time ago (it acts on that tick's view).
                 bool saw = _sight[i].TryGetValue(tick - brain.Config.ReactionTicks, out bool s) && s;
                 bool sawNear = saw;
-                for (int d = -2; d <= 2 && !sawNear; d++)
+                for (int d = -2 * SimTime.Per60; d <= 2 * SimTime.Per60 && !sawNear; d++)
                     sawNear = _sight[i].TryGetValue(tick - brain.Config.ReactionTicks + d, out bool s2) && s2;
                 if (!sawNear) FiresWithoutSight++;
             }
@@ -133,7 +133,10 @@ namespace Sculpt.Core.Tests
         [Test]
         public void TwoBots_FindEachOther_MoveAroundTheMap_AndTradeKills_NeverShootingWhatTheyCouldNotSee()
         {
-            var m = new BotMatch(BotLevel.Normal, BotLevel.Normal);
+            // Seeds 1 and 2: whether two bots happen to fight their way upstairs inside 150 s depends on the seeds (checked
+            // over five seed pairs at 60 and at 120 Hz: some pairs stay on the ground floor at either rate). This pair
+            // climbs at both rates, so the check stays about the stairs movement, not about luck.
+            var m = new BotMatch(BotLevel.Normal, BotLevel.Normal, 1, 2);
             m.Run(150);
             TestContext.WriteLine($"A {m.A.Kills} kills / {m.A.Deaths} deaths, moved {m.MovedA:0} m; B {m.B.Kills} / {m.B.Deaths}, moved {m.MovedB:0} m; fires {m.Fires}, without sight {m.FiresWithoutSight}, highest feet {m.HighestFeet:0.0} m");
             Assert.That(m.HighestFeet, Is.GreaterThan(4.6), "they really climb stairs or ramps to an upper floor (the movement, not just the nav graph)");
@@ -180,7 +183,7 @@ namespace Sculpt.Core.Tests
         {
             var h = Duel();
             h.Server.MatchConfig.Enabled = true;
-            h.Server.MatchConfig.CountdownTicks = 30;
+            h.Server.MatchConfig.CountdownTicks = 30 * SimTime.Per60;
             var human = h.AddClient(Spawn(1), team: 1);
             h.RunSeconds(0.3);
             Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Waiting));

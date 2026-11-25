@@ -30,7 +30,7 @@ namespace Sculpt.Core.Tests
         {
             MotorState s = MotorState.At(at);
             s.Tick = 1000;
-            for (int k = 0; k < 30; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw }); // settle
+            for (int k = 0; k < 30 * SimTime.Per60; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw }); // settle
             for (int k = 0; k < ticks; k++)
             {
                 var i = new MoveInput { Yaw = yaw, MoveZ = 1, SprintHeld = sprint };
@@ -136,7 +136,7 @@ namespace Sculpt.Core.Tests
                 Vec3d start = Lerp(s, 0, 0.5, -0.02) - DirVec(s.Rise) * 1.0; // a step before the bottom
                 start = new Vec3d(start.X, s.Bounds.Min.Y, start.Z);
                 double run = Math.Max(s.Bounds.Max.X - s.Bounds.Min.X, s.Bounds.Max.Z - s.Bounds.Min.Z);
-                int ticks = (int)Math.Ceiling((run + 2) / _c.SprintSpeed * 60) + 30; // to the top and a few steps on
+                int ticks = (int)Math.Ceiling((run + 2) / _c.SprintSpeed * SimTime.TicksPerSecond) + 30 * SimTime.Per60; // to the top and a few steps on
                 MotorState end = Run(start, YawOf(s.Rise), ticks);
                 Assert.That(end.Position.Y, Is.EqualTo(s.Bounds.Max.Y).Within(0.05), $"ran to the top of the {s.Kind} at {s.Bounds.Min} (ended at {end.Position})");
                 Assert.That(end.Mode, Is.Not.EqualTo(MoveMode.Air), "and stood on the floor it leads to");
@@ -153,7 +153,7 @@ namespace Sculpt.Core.Tests
             double minSpeed = double.MaxValue;
             MotorState st = MotorState.At(start);
             st.Tick = 1000;
-            for (int k = 0; k < 150; k++)
+            for (int k = 0; k < 150 * SimTime.Per60; k++)
             {
                 PlayerMovement.Step(_t, _c, ref st, new MoveInput { Yaw = North, MoveZ = 1, SprintHeld = true });
                 if (k > 60 && st.Position.Z > s.Bounds.Min.Z + 0.5 && st.Position.Z < s.Bounds.Max.Z - 0.5) minSpeed = Math.Min(minSpeed, st.HorizontalSpeed);
@@ -180,12 +180,12 @@ namespace Sculpt.Core.Tests
         {
             Aabb hall = B.Buildings[0];
             // Hall A's south wide door is segment 1 of its south wall (x 98.6..104.6).
-            MotorState s = Run(new Vec3d(101.6, 0, hall.Min.Z - 4), North, 90);
+            MotorState s = Run(new Vec3d(101.6, 0, hall.Min.Z - 4), North, 90 * SimTime.Per60);
             Assert.That(s.Position.Z, Is.GreaterThan(hall.Min.Z + 3), "inside the hall");
 
             Aabb longBlock = B.Buildings[2];
             double corridorZ = longBlock.Min.Z + 0.3 + 3.0;
-            MotorState c = Run(new Vec3d(longBlock.Min.X - 4, 0, corridorZ), East, 60 * 7);
+            MotorState c = Run(new Vec3d(longBlock.Min.X - 4, 0, corridorZ), East, SimTime.TicksPerSecond * 7);
             Assert.That(c.Position.X, Is.GreaterThan(longBlock.Max.X), "straight through the 38 m corridor and out the far wide door");
         }
 
@@ -196,7 +196,7 @@ namespace Sculpt.Core.Tests
             Aabb a = B.Buildings[0], c = B.Buildings[1];
             Aabb ac = B.Bridges[0];
             double z = (ac.Min.Z + ac.Max.Z) / 2;
-            MotorState s = Run(new Vec3d(a.Max.X - 3, a.Max.Y, z), East, 90);
+            MotorState s = Run(new Vec3d(a.Max.X - 3, a.Max.Y, z), East, 90 * SimTime.Per60);
             Assert.That(s.Position.X, Is.GreaterThan(c.Min.X + 2), "across to C's roof");
             Assert.That(s.Position.Y, Is.EqualTo(c.Max.Y).Within(1e-6));
         }
@@ -208,8 +208,8 @@ namespace Sculpt.Core.Tests
             Assert.That(slope.IsRamp, Is.True);
             double z = (slope.Bounds.Min.Z + slope.Bounds.Max.Z) / 2;
             // Sprint west off the top, slide down.
-            MotorState s = Run(new Vec3d(slope.Bounds.Max.X + 3, slope.Bounds.Max.Y, z), West, 120,
-                tweak: (k, i) => { if (k == 30) i.CrouchPressed = true; if (k >= 30) i.CrouchHeld = true; return i; });
+            MotorState s = Run(new Vec3d(slope.Bounds.Max.X + 3, slope.Bounds.Max.Y, z), West, 120 * SimTime.Per60,
+                tweak: (k, i) => { if (k == 30 * SimTime.Per60) i.CrouchPressed = true; if (k >= 30 * SimTime.Per60) i.CrouchHeld = true; return i; });
             Assert.That(s.HorizontalSpeed, Is.GreaterThan(_c.SprintSpeed), "downhill slides gain speed");
         }
 

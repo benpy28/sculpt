@@ -16,7 +16,7 @@ namespace Sculpt.Core
         /// <summary>Holding fire keeps shooting. False = semi-auto: one shot per press.</summary>
         public bool Automatic;
         /// <summary>A press this many ticks before the gun is ready still fires (on the first ready tick).</summary>
-        public int FireBufferTicks = 6;
+        public int FireBufferTicks = 6 * SimTime.Per60;
         public double Range = 250;
 
         /// <summary>Damage factor by distance: piecewise linear through these points, flat outside them.</summary>
@@ -49,7 +49,7 @@ namespace Sculpt.Core
         // ---- Ammo (Ben 2026-11-20: ammo and reloads; numbers are Claude's tuning, unlimited reserve) ----
         public int MagSize = 30;
         /// <summary>Magazine guns: ticks for a full reload (the mag is full at the end; cancelled by a swap or sculpt mode).</summary>
-        public int ReloadTicks = 96;
+        public int ReloadTicks = 96 * SimTime.Per60;
         /// <summary>Shell-by-shell reload (pump): first shell after ShellStartTicks + ShellTicks, then one per ShellTicks.
         /// Firing with at least one shell loaded interrupts it; shells already in stay in.</summary>
         public bool ShellReload;
@@ -93,7 +93,7 @@ namespace Sculpt.Core
     {
         public int MaxHealth = 150;
         /// <summary>Ticks from death to respawn (tuning; the 5v5 mode has one life per round and won't use it).</summary>
-        public int RespawnDelayTicks = 180;
+        public int RespawnDelayTicks = 180 * SimTime.Per60;
         /// <summary>Off: bullets pass through teammates and never hurt them (open question for Ben).</summary>
         public bool FriendlyFire = false;
 
@@ -102,47 +102,47 @@ namespace Sculpt.Core
         public double HeadFraction = 0.3;
 
         /// <summary>Lag compensation: targets are rewound to what the shooter saw, at most this many ticks back.</summary>
-        public int MaxRewindTicks = 18;
+        public int MaxRewindTicks = 18 * SimTime.Per60;
 
         public WeaponStats[] Stats =
         {
             // Pump: 9 x 11, head pellets 1.5x, 0.9 s cycle, falloff from 5 m, heavy past 12 m; fairly accurate in air/slide.
             new WeaponStats
             {
-                Name = "Pump", Pellets = 9, BodyDamage = 11, HeadDamage = 16.5, FireIntervalMilliTicks = 54000, Automatic = true,
-                FireBufferTicks = 6, Range = 60,
+                Name = "Pump", Pellets = 9, BodyDamage = 11, HeadDamage = 16.5, FireIntervalMilliTicks = 54000 * SimTime.Per60, Automatic = true,
+                FireBufferTicks = 6 * SimTime.Per60, Range = 60,
                 FalloffDistances = new double[] { 5, 12, 25 }, FalloffFactors = new double[] { 1.0, 0.65, 0.2 },
                 BaseSpread = 0.0, MoveSpread = 0.3, CrouchFactor = 1, SlideSpread = 0.6, AirSpread = 0.8, PatternSpread = 2.6,
                 SwapBloom = 0.3, BloomRecoveryPerSecond = 4,
-                MagSize = 5, ShellReload = true, ShellStartTicks = 6, ShellTicks = 30,
-                RecoilPitchPerShot = 3.5, RecoilYawPerShot = 0.6, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 11, RecoilRecoveryDelayTicks = 8,
+                MagSize = 5, ShellReload = true, ShellStartTicks = 6 * SimTime.Per60, ShellTicks = 30 * SimTime.Per60,
+                RecoilPitchPerShot = 3.5, RecoilYawPerShot = 0.6, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 11, RecoilRecoveryDelayTicks = 8 * SimTime.Per60,
             },
             // SMG: 15, 12 shots/s, heavy falloff past 10 m; head 1.25x (Ben 2026-11-20).
             new WeaponStats
             {
-                Name = "SMG", BodyDamage = 15, HeadDamage = 18.75, MagSize = 30, ReloadTicks = 96, SwapBloom = 0.3, FireIntervalMilliTicks = 5000, Automatic = true, Range = 120,
+                Name = "SMG", BodyDamage = 15, HeadDamage = 18.75, MagSize = 30, ReloadTicks = 96 * SimTime.Per60, SwapBloom = 0.3, FireIntervalMilliTicks = 5000 * SimTime.Per60, Automatic = true, Range = 120,
                 FalloffDistances = new double[] { 10, 20, 35 }, FalloffFactors = new double[] { 1.0, 0.6, 0.4 },
                 BaseSpread = 0.9, MoveSpread = 0.7, CrouchFactor = 0.8, SlideSpread = 1.2, AirSpread = 1.8,
-                BloomPerShot = 0.12, BloomMax = 1.6, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 7,
-                RecoilPitchPerShot = 0.28, RecoilYawPerShot = 0.2, RecoilMaxPitch = 5, RecoilRecoveryPerSecond = 10, RecoilRecoveryDelayTicks = 7,
+                BloomPerShot = 0.12, BloomMax = 1.6, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 7 * SimTime.Per60,
+                RecoilPitchPerShot = 0.28, RecoilYawPerShot = 0.2, RecoilMaxPitch = 5, RecoilRecoveryPerSecond = 10, RecoilRecoveryDelayTicks = 7 * SimTime.Per60,
             },
             // AR: 25 body / 40 head, 5.5 shots/s, first shot accurate then spread builds; strongly penalised sliding/airborne.
             new WeaponStats
             {
-                Name = "AR", BodyDamage = 25, HeadDamage = 40, MagSize = 25, ReloadTicks = 114, SwapBloom = 0.4, AimFovScale = 0.8, FireIntervalMilliTicks = 10909, Automatic = true, Range = 250,
+                Name = "AR", BodyDamage = 25, HeadDamage = 40, MagSize = 25, ReloadTicks = 114 * SimTime.Per60, SwapBloom = 0.4, AimFovScale = 0.8, FireIntervalMilliTicks = 10909 * SimTime.Per60, Automatic = true, Range = 250,
                 BaseSpread = 0.0, MoveSpread = 0.9, CrouchFactor = 0.75, SlideSpread = 3.0, AirSpread = 4.0,
-                BloomPerShot = 0.45, BloomMax = 3.0, BloomRecoveryPerSecond = 6, BloomRecoveryDelayTicks = 13,
-                RecoilPitchPerShot = 0.7, RecoilYawPerShot = 0.3, RecoilMaxPitch = 7, RecoilRecoveryPerSecond = 9, RecoilRecoveryDelayTicks = 13,
+                BloomPerShot = 0.45, BloomMax = 3.0, BloomRecoveryPerSecond = 6, BloomRecoveryDelayTicks = 13 * SimTime.Per60,
+                RecoilPitchPerShot = 0.7, RecoilYawPerShot = 0.3, RecoilMaxPitch = 7, RecoilRecoveryPerSecond = 9, RecoilRecoveryDelayTicks = 13 * SimTime.Per60,
             },
             // Pistol: 30 body / 50 head, semi-auto, max 5 shots/s, accurate; falloff from 25 m to 70% at 50 m.
             new WeaponStats
             {
-                Name = "Pistol", BodyDamage = 30, HeadDamage = 50, MagSize = 12, ReloadTicks = 78, SwapBloom = 0.3, AimFovScale = 0.87, FireIntervalMilliTicks = 12000, Automatic = false,
-                FireBufferTicks = 6, Range = 250,
+                Name = "Pistol", BodyDamage = 30, HeadDamage = 50, MagSize = 12, ReloadTicks = 78 * SimTime.Per60, SwapBloom = 0.3, AimFovScale = 0.87, FireIntervalMilliTicks = 12000 * SimTime.Per60, Automatic = false,
+                FireBufferTicks = 6 * SimTime.Per60, Range = 250,
                 FalloffDistances = new double[] { 25, 50 }, FalloffFactors = new double[] { 1.0, 0.7 },
                 BaseSpread = 0.1, MoveSpread = 0.5, CrouchFactor = 0.8, SlideSpread = 1.5, AirSpread = 2.0,
-                BloomPerShot = 0.5, BloomMax = 2.0, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 14,
-                RecoilPitchPerShot = 1.4, RecoilYawPerShot = 0.25, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 14, RecoilRecoveryDelayTicks = 4,
+                BloomPerShot = 0.5, BloomMax = 2.0, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 14 * SimTime.Per60,
+                RecoilPitchPerShot = 1.4, RecoilYawPerShot = 0.25, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 14, RecoilRecoveryDelayTicks = 4 * SimTime.Per60,
             },
         };
 

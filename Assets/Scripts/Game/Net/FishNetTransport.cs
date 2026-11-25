@@ -57,7 +57,7 @@ namespace Sculpt.Game.Net
             go.SetActive(true);
             UnityEngine.Object.DontDestroyOnLoad(go);
 
-            Manager.TimeManager.SetTickRate(60);
+            Manager.TimeManager.SetTickRate((ushort)Sculpt.Core.SimTime.TicksPerSecond);
             Manager.TimeManager.SetPhysicsMode(PhysicsMode.Disabled); // Core does all collision
             Manager.ServerManager.SetFrameRate(0);                      // never cap our frame rate
             Manager.ClientManager.SetFrameRate(0);

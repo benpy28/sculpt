@@ -57,8 +57,8 @@ namespace Sculpt.Core.Net
         public readonly SculptClient Sculpt;
 
         // Latency overlay: how long the server said it held our command for a tick (see SnapshotMsg.SelfHoldTenthMs).
-        private readonly int[] _holdTick = new int[64];
-        private readonly double[] _holdMs = new double[64];
+        private readonly int[] _holdTick = new int[128];
+        private readonly double[] _holdMs = new double[128];
 
         /// <summary>
         /// Milliseconds the server held this client's command for <paramref name="tick"/> (arrival to snapshot sent),
@@ -253,7 +253,7 @@ namespace Sculpt.Core.Net
             Spawn = m.Spawn;
             SpawnYaw = m.SpawnYaw;
             // First guess at the lead; the server's feedback corrects it within a round trip.
-            Tick = m.ServerTick + Config.TargetLeadTicks + 6;
+            Tick = m.ServerTick + Config.TargetLeadTicks + 6 * SimTime.Per60;
             _pred = MotorState.At(m.Spawn);
             _prevPred = _pred;
             _accum = 0;
@@ -311,7 +311,7 @@ namespace Sculpt.Core.Net
             RttTicks += ((Tick - m.ServerTick - Math.Max(0, LastServerLead == Protocol.NoLead ? 0 : LastServerLead)) - RttTicks) * 0.1;
             // Our confirm for tick T is answered (Began) in the world message of server tick T, which we see about a
             // snapshot round trip after predicting T. Allow 1.5x that plus slack before giving up on it.
-            if (Sculpt != null) Sculpt.AnswerTimeoutTicks = Math.Max(20, (int)Math.Ceiling((Tick - m.ServerTick) * 1.5) + 12);
+            if (Sculpt != null) Sculpt.AnswerTimeoutTicks = Math.Max(20 * SimTime.Per60, (int)Math.Ceiling((Tick - m.ServerTick) * 1.5) + 12 * SimTime.Per60);
             AdjustClock(m.ServerTick, m.SelfLead);
             Reconcile(m.ServerTick, m.Self);
         }
@@ -547,7 +547,7 @@ namespace Sculpt.Core.Net
         }
 
         /// <summary>Ticks to wait for the server's answer to a heal press before forgetting it.</summary>
-        public int HealAnswerTimeoutTicks => Math.Max(30, (int)Math.Ceiling(RttTicks * 2) + 20);
+        public int HealAnswerTimeoutTicks => Math.Max(30 * SimTime.Per60, (int)Math.Ceiling(RttTicks * 2) + 20 * SimTime.Per60);
 
         private void OnHealPressed(in InputCmd cmd)
         {
@@ -603,7 +603,7 @@ namespace Sculpt.Core.Net
 
         private sealed class RemoteTrack
         {
-            private const int N = 32;
+            private const int N = 32 * SimTime.Per60;
             private const double TeleportSq = 4.0 * 4.0;
             private readonly PlayerSnap[] _snaps = new PlayerSnap[N];
             private readonly int[] _ticks = new int[N];

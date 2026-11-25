@@ -191,9 +191,9 @@ namespace Sculpt.Core
         /// <summary>The server accepts a pickup up to this much further than <see cref="Reach"/> (prediction drift).</summary>
         public double ServerReachSlack = 0.75;
         /// <summary>Hold the interact key this long (not aiming at an item) to drop the held item.</summary>
-        public int DropHoldTicks = 18;
+        public int DropHoldTicks = 18 * SimTime.Per60;
         /// <summary>Whoever dropped an item can't pick it back up for this long (no accidental double press).</summary>
-        public int DropperLockTicks = 18;
+        public int DropperLockTicks = 18 * SimTime.Per60;
         /// <summary>Dropped items land this far in front of you (or at your feet if that spot is blocked).</summary>
         public double DropForward = 0.9;
         /// <summary>Oldest items on the ground disappear past this many.</summary>

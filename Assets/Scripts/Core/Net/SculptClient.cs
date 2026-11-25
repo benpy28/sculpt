@@ -144,7 +144,7 @@ namespace Sculpt.Core.Net
         public int ServerRejections { get; private set; }
 
         public const ushort TempIdBase = 0xF000;
-        public const int SpecTimeoutTicks = 240;
+        public const int SpecTimeoutTicks = 240 * SimTime.Per60;
 
         /// <summary>
         /// A prediction the server has not started this many ticks after its confirm was lost or came too late: it is
@@ -520,7 +520,7 @@ namespace Sculpt.Core.Net
         private void ExpireStale(int tick)
         {
             // Flights whose impact report never came (it always should): forget them.
-            _flying.RemoveAll(f => f.HitTerrain && tick - f.HitTick > 180);
+            _flying.RemoveAll(f => f.HitTerrain && tick - f.HitTick > 180 * SimTime.Per60);
             // A prediction the server never answered (it should always answer): drop it eventually.
             // A prediction the server never started: its confirm was lost or too late (ISSUE-9). Drop it about a round
             // trip after the server should have begun it.
@@ -551,7 +551,7 @@ namespace Sculpt.Core.Net
         public void FlyTo(FlyingPiece f, int tick)
         {
             int guard = 0;
-            while (f.StateTick < tick && !f.HitTerrain && guard++ < 600) FlyOne(f, f.StateTick + 1);
+            while (f.StateTick < tick && !f.HitTerrain && guard++ < 600 * SimTime.Per60) FlyOne(f, f.StateTick + 1);
         }
 
         private void FlyOne(FlyingPiece f, int tick)

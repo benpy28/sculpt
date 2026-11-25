@@ -106,7 +106,7 @@ Ben: "sculpting everywhere was becoming a bit weird and lower skill than i thoug
 ## Long-term pillars (Ben; all required)
 - Deterministic competitive gameplay; server-authoritative networking; strong anti-cheat focus; spectating and replays; ranked (necessary); custom/private lobbies; no pay-to-win in PvP (cosmetics only).
 - Competitive/performance settings so hardware from an RTX 3060 to an Xbox can approach 144 fps in almost all situations.
-- **Low latency is a priority:** aim for a 128 Hz server tick, a short frame queue / Reflex-style low-latency mode, a V-Sync off option, ~15-25 ms local click-to-screen at 144 fps. (The sim still ticks at 60 Hz today; moving to 128 Hz is future work.)
+- **Low latency is a priority:** aim for a 128 Hz server tick, a short frame queue / Reflex-style low-latency mode, a V-Sync off option, ~15-25 ms local click-to-screen at 144 fps. (Ben chose 120 Hz over 128 so every approved timing stays exact; the sim runs at 120 Hz since 2026-11-25.)
 - Main long-term mode: ~32-player battle royale (solos, duos, squads). Ranked and anti-cheat should keep future cash-cup eligibility in mind (minimum rank, account age, verification). The 5v5 golden ball mode below was only a placeholder.
 - Must never look or feel like a cube game: the wall grid stays exact in the simulation and is hidden visually.
 
@@ -172,7 +172,7 @@ In order: 1 fix the F6 showcase jitter (done); 2 LAN 1v1 between two PCs, host/j
 1. **Core** (`Assets/Scripts/Core`, assembly `Sculpt.Core`): pure C# simulation, NO UnityEngine references (asmdef has `noEngineReferences: true`). Contains the block grid, sculpt rules, sculpt bar, gravity, reinforcement, player movement maths and collision, weapon damage maths. Use our own small vector structs and `System.Math`, never `Mathf`/`Vector3`. C# 9 and .NET Standard 2.1 APIs only, so it compiles in both Unity and plain .NET.
 2. **Core.Tests** (`Tests/Core.Tests`, outside `Assets/`): .NET test project (NUnit) that compiles the Core `.cs` files via a `Compile Include` glob. `LangVersion` 9. Run with `dotnet test Tests/Core.Tests`. `Tests/Core.Check` builds the same files against `netstandard2.1` to catch non-Standard APIs. Every Core rule gets unit tests including edge cases, written alongside or before the code.
 3. **Game** (`Assets/Scripts/Game`, assembly `Sculpt.Game`): thin Unity layer for rendering, input, audio, UI, effects and FishNet glue. Converts between Core types and Unity types. Entry point is `GameBootstrap` on the single object in `Assets/Scenes/Bootstrap.unity`.
-4. Simulation is fixed-tick at 60 Hz (120 Hz approved by Ben 2026-11-25, not built yet: see "Latency and FPS"). All Core timers are integer tick counts. Grid state is integers only. Server is authoritative.
+4. Simulation is fixed-tick at 120 Hz (`SimTime.TicksPerSecond`; was 60 until 2026-11-25, see "Latency and FPS"). **Every "N ticks" figure in this file's design spec and calls is in sixtieths of a second** (the unit everything was approved in): in code write it as `N * SimTime.Per60`, or convert seconds with `SimTime.SecondsToTicks`; never write a bare tick literal. All Core timers are integer tick counts. Grid state is integers only. Server is authoritative.
 5. World storage: flat arrays of block states in 16x16x16 chunks. One generated mesh per chunk, rebuilt only when that chunk changes. Never one GameObject per block.
 6. Player collision: axis-aligned box vs the voxel grid, implemented in Core (no CharacterController, no Rigidbody), deterministic and prediction-friendly. Ramps are sloped surfaces handled as a height function across the block.
 7. Networking: FishNet (free). Server-authoritative, client-side prediction and reconciliation for movement. Sculpt actions are commands validated by the server. Grid changes sync as small deltas. Lag compensation (FishNet Pro) comes later, so structure hit detection so rewind can be slotted in. Install FishNet using its official docs' current method (or Asset Store import by Ben). Don't guess.
@@ -312,7 +312,7 @@ Tests/Game.Check/                  compile-only check of Game + Core + FishNet a
 
 ## Latency and FPS (2026-11-25; Ben: latency comes first, FPS second, do both well)
 
-Targets from Ben: about 15-25 ms from click to screen locally at 144 fps, close to 144 fps in almost all situations on hardware from an RTX 3060 down to an Xbox, V-Sync off as an option, a short frame queue, and a latency overlay that breaks each click down. **Tick rate: Ben approved 120 Hz (not 128)**, because every approved timing doubles exactly; it is not built yet (the simulation is still 60 Hz) and will be its own change.
+Targets from Ben: about 15-25 ms from click to screen locally at 144 fps, close to 144 fps in almost all situations on hardware from an RTX 3060 down to an Xbox, V-Sync off as an option, a short frame queue, and a latency overlay that breaks each click down. **Tick rate: 120 Hz (Ben approved 120, not 128)**, because every approved timing doubles exactly. Built 2026-11-25, protocol 21 (see "120 Hz tick" below).
 
 ### How to measure (use this before and after any change that could cost frames or delay)
 - **Benchmark:** start the built game with `-benchmark [seconds]` (default 20). The camera flies a fixed route (an orbit with the whole map in view, then eye height through the buildings) and a report is appended to `benchmark.txt` beside the player log (or `-benchmarkout file`): average, 1% and 0.1% low, percentiles, worst frame, garbage per frame, triangles, the ten slowest frames, and latency from stand-in clicks. Other options: `-benchmarklabel text`, `-benchmarkshot file.png`, `-benchmarkshotmenu` (picture with the Esc menu open), `-benchmarkwarmlap seconds` (fly the route once unmeasured first), `-benchmarkscan` (camera still; switches each script type off for a moment and reports what it costs per frame), `-benchmarkdisable TypeA,TypeB`, and in development builds `-benchmarkmarkers` (flat list of Unity profiler markers plus what was biggest in the slowest frames). The run's clock starts at the first frame that is really drawn (about 5 s after launch; the first drawn frame costs 0.4-1 s for fonts, shaders and first-time code, at load, not in play). It does not capture the mouse.
@@ -336,9 +336,27 @@ Targets from Ben: about 15-25 ms from click to screen locally at 144 fps, close 
 - **Protocol 16** (15 is the LAN 1v1 branch's Match message): each snapshot carries how long the server held the receiver's command for that tick (2 bytes, tenths of a millisecond; `NetServer.Clock` supplies the time and is set by the host). Only the latency panel reads it.
 - **Dev key:** F3 toggles the latency panel (Dev map).
 
+### 120 Hz tick (built 2026-11-25, protocol 21; calls by Claude, tell Ben)
+- `SimTime.TicksPerSecond = 120`, `SimTime.Per60 = 2`. Every tick default in Core is written as `N * SimTime.Per60`, so every approved timing keeps its length exactly (draws, exits, windups, fire rates incl. the AR's 5.5/s, reloads, fuses, match phases). Game assets (Movement Settings, Weapon Settings) keep their inspector numbers in sixtieths and convert in ApplyTo; Breach Settings already worked in seconds. FishNet's tick rate and Unity's fixed step follow SimTime.
+- Movement integrates at half the step: jump apex, vault, mantle, slides, stairs and the F6 showcase route all still pass their tests unchanged (only tick counts in tests were rewritten as sixtieths; no assertion was loosened).
+- Fixed on the way: a sculpt piece bigger than the reference added one tick of windup per extra eighth, which at 120 Hz would have been half the approved time; it now adds 1/60 s. Throw-lane prediction looked 1.5 s ahead instead of 3 s.
+- Kept in ticks on purpose: remote players are drawn 3 ticks behind the newest snapshot (now 25 ms, was 50 ms), the client aims for 2 ticks of input lead (now 16.7 ms, was 33 ms). Inputs repeat the newest 12 commands (100 ms of cover for lost packets). The clock loop's gain is per tick, so it settles about twice as fast; the net tests show no hunting.
+- Test changes worth knowing: the two-bot "climbs to an upper floor" test now uses seed pair 1/2. Whether two bots fight their way upstairs inside 150 s depends on the seeds at either tick rate (checked five pairs at 60 and at 120 Hz); 1/2 climbs at both. The `Tools/Balance` simulator works in approved seconds and needs no change.
+- Measured on Ben's PC, release build, breach map, 1440p, same code built at 60 and 120 Hz (median per click):
+
+  | | 60 Hz | 120 Hz |
+  |---|---|---|
+  | offline uncapped (~550 fps): click to frame sent | 9.8 ms | 5.1 ms |
+  | offline uncapped: server hold | 29.2 ms | 12.5 ms |
+  | offline uncapped: click to server result on screen | 39.4 ms | 17.5 ms |
+  | offline, 240 fps cap: click to server result | 41.7 ms | 25.0 ms |
+  | host + client over UDP on one PC: click to server result | 44.0 ms | 18.0 ms |
+  Frame rate unchanged (541 vs 552 fps uncapped; the server's ticks cost well under 0.5 ms).
+- Server cost and bandwidth per client (Core harness, duel map, everyone running, jumping and spraying): 2 players about 0.1-0.2 ms per tick; 32 players about 0.4 ms per tick, i.e. 3% of a core at 60 Hz, 5% at 120, 10% at 240. Download per client 0.23 / 0.47 / 0.93 Mbit/s with 2 players and 0.77 / 1.54 / 3.07 Mbit/s with 32 players at 60 / 120 / 240 Hz (snapshots every tick, no interest management or delta compression yet); upload 0.1 / 0.2 / 0.4 Mbit/s.
+
 ### Still to do
-- 120 Hz tick (approved). Every tick count in Core configs and tests doubles; movement integrates at half the step, so jump height and slide distances need re-checking against the 60 Hz feel, and the F6 showcase route re-tuning.
-- Remote players are drawn 3 ticks (50 ms) behind the newest snapshot; at 120 Hz that becomes 25 ms. Worth a look at 2 ticks on a LAN.
+- Remote interpolation is 3 ticks (25 ms); worth trying 2 on a LAN.
+- Bandwidth for big lobbies: delta-compress snapshots against the last acked one and only send nearby players (interest management) before a 32-player mode, at any tick rate.
 - Start-up: about 5 s from launch to the first drawn frame (splash screen plus building the map), then one slow first frame.
 
 ## Agreed rules (proposed by Claude, approved by Ben 2026-11-20; change here if he overrides)

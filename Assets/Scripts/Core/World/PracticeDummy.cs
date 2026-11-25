@@ -7,9 +7,9 @@ namespace Sculpt.Core
     public sealed class DummyConfig
     {
         /// <summary>A watched tile has to stay broken this long before the dummy heals it (3 s).</summary>
-        public int HealDelayTicks = 180;
+        public int HealDelayTicks = 180 * SimTime.Per60;
         /// <summary>After a press (refused, cancelled, or one that worked) the dummy waits this long before its next one.</summary>
-        public int RetryTicks = 45;
+        public int RetryTicks = 45 * SimTime.Per60;
         /// <summary>Also heal cracked (Damaged) tiles, not only broken ones. Off: you can practise charging through cracks.</summary>
         public bool HealDamaged = false;
         /// <summary>Knocked further than this from its post, it walks back.</summary>

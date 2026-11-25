@@ -26,7 +26,7 @@ namespace Sculpt.Game.Config
             [Header("Rate")]
             [Tooltip("Shots per second.")] public float fireRate;
             public bool automatic;
-            public int fireBufferTicks = 6;
+            [Tooltip("Tick counts on this asset are in sixtieths of a second, whatever the simulation's tick rate.")] public int fireBufferTicks = 6;
             [Header("Spread (degrees, cone half-angle)")]
             public float baseSpread;
             public float moveSpread;
@@ -48,12 +48,12 @@ namespace Sculpt.Game.Config
                 var g = new Gun
                 {
                     name = s.Name, pellets = s.Pellets, bodyDamage = (float)s.BodyDamage, headDamage = (float)s.HeadDamage, range = (float)s.Range,
-                    fireRate = (float)(SimTime.TicksPerSecond * 1000.0 / s.FireIntervalMilliTicks), automatic = s.Automatic, fireBufferTicks = s.FireBufferTicks,
+                    fireRate = (float)(SimTime.TicksPerSecond * 1000.0 / s.FireIntervalMilliTicks), automatic = s.Automatic, fireBufferTicks = s.FireBufferTicks / SimTime.Per60,
                     baseSpread = (float)s.BaseSpread, moveSpread = (float)s.MoveSpread, crouchFactor = (float)s.CrouchFactor, slideSpread = (float)s.SlideSpread,
                     airSpread = (float)s.AirSpread, bloomPerShot = (float)s.BloomPerShot, bloomMax = (float)s.BloomMax, bloomRecoveryPerSecond = (float)s.BloomRecoveryPerSecond,
-                    bloomRecoveryDelayTicks = s.BloomRecoveryDelayTicks, patternSpread = (float)s.PatternSpread, recoilPitchPerShot = (float)s.RecoilPitchPerShot,
+                    bloomRecoveryDelayTicks = s.BloomRecoveryDelayTicks / SimTime.Per60, patternSpread = (float)s.PatternSpread, recoilPitchPerShot = (float)s.RecoilPitchPerShot,
                     recoilYawPerShot = (float)s.RecoilYawPerShot, recoilMaxPitch = (float)s.RecoilMaxPitch, recoilRecoveryPerSecond = (float)s.RecoilRecoveryPerSecond,
-                    recoilRecoveryDelayTicks = s.RecoilRecoveryDelayTicks,
+                    recoilRecoveryDelayTicks = s.RecoilRecoveryDelayTicks / SimTime.Per60,
                 };
                 g.falloff = new Vector2[s.FalloffDistances.Length];
                 for (int i = 0; i < g.falloff.Length; i++) g.falloff[i] = new Vector2((float)s.FalloffDistances[i], (float)s.FalloffFactors[i]);
@@ -69,7 +69,7 @@ namespace Sculpt.Game.Config
                 // Exact for the spec rates: 12/s = 5 ticks, 5.5/s = 10.909, 5/s = 12, pump 54 ticks (1.111/s).
                 s.FireIntervalMilliTicks = Math.Max(1000, (long)Math.Round(SimTime.TicksPerSecond * 1000.0 / Math.Max(0.01, fireRate)));
                 s.Automatic = automatic;
-                s.FireBufferTicks = fireBufferTicks;
+                s.FireBufferTicks = fireBufferTicks * SimTime.Per60;
                 if (falloff != null && falloff.Length > 0)
                 {
                     s.FalloffDistances = new double[falloff.Length];
@@ -84,13 +84,13 @@ namespace Sculpt.Game.Config
                 s.BloomPerShot = bloomPerShot;
                 s.BloomMax = bloomMax;
                 s.BloomRecoveryPerSecond = bloomRecoveryPerSecond;
-                s.BloomRecoveryDelayTicks = bloomRecoveryDelayTicks;
+                s.BloomRecoveryDelayTicks = bloomRecoveryDelayTicks * SimTime.Per60;
                 s.PatternSpread = patternSpread;
                 s.RecoilPitchPerShot = recoilPitchPerShot;
                 s.RecoilYawPerShot = recoilYawPerShot;
                 s.RecoilMaxPitch = recoilMaxPitch;
                 s.RecoilRecoveryPerSecond = recoilRecoveryPerSecond;
-                s.RecoilRecoveryDelayTicks = recoilRecoveryDelayTicks;
+                s.RecoilRecoveryDelayTicks = recoilRecoveryDelayTicks * SimTime.Per60;
             }
         }
 
@@ -115,10 +115,10 @@ namespace Sculpt.Game.Config
         {
             var d = new WeaponsConfig();
             maxHealth = d.MaxHealth;
-            respawnDelayTicks = d.RespawnDelayTicks;
+            respawnDelayTicks = d.RespawnDelayTicks / SimTime.Per60;
             friendlyFire = d.FriendlyFire;
             headHeight = (float)d.HeadHeight;
-            maxRewindTicks = d.MaxRewindTicks;
+            maxRewindTicks = d.MaxRewindTicks / SimTime.Per60;
             guns = new Gun[4];
             for (int i = 0; i < 4; i++) guns[i] = Gun.From(d.Stats[i]);
         }
@@ -126,10 +126,10 @@ namespace Sculpt.Game.Config
         public void ApplyTo(WeaponsConfig c)
         {
             c.MaxHealth = Math.Max(1, maxHealth);
-            c.RespawnDelayTicks = Math.Max(0, respawnDelayTicks);
+            c.RespawnDelayTicks = Math.Max(0, respawnDelayTicks) * SimTime.Per60;
             c.FriendlyFire = friendlyFire;
             c.HeadHeight = headHeight;
-            c.MaxRewindTicks = Math.Max(0, maxRewindTicks);
+            c.MaxRewindTicks = Math.Max(0, maxRewindTicks) * SimTime.Per60;
             if (guns == null) return;
             for (int i = 0; i < 4 && i < guns.Length; i++) guns[i]?.ApplyTo(c.Stats[i]);
         }

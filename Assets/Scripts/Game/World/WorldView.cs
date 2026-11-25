@@ -35,7 +35,7 @@ namespace Sculpt.Game.World
         public SubGrid Grid => _grid;
 
         /// <summary>Reinforced veins ease out over the last 3 s before the reinforcement decays.</summary>
-        public const int ReinforceFadeTicks = 180;
+        public const int ReinforceFadeTicks = 180 * SimTime.Per60;
 
         private readonly HashSet<Int3> _hidden = new HashSet<Int3>();
         private static readonly int IdRippleGlow = Shader.PropertyToID("_SculptRippleGlow");
@@ -179,10 +179,10 @@ namespace Sculpt.Game.World
             {
                 if (p.Cells.Count == 0) continue;
                 int age = tick - p.TintTick;
-                bool tintFading = p.Team != 0 && age >= 0 && age <= _sculpt.Config.TintFadeTicks + 40;
+                bool tintFading = p.Team != 0 && age >= 0 && age <= _sculpt.Config.TintFadeTicks + 40 * SimTime.Per60;
                 // Reinforcement: re-mesh while the veins ease out, and once more just after it decays.
                 int toEnd = p.ReinforceUntilTick - tick;
-                bool veinsFading = p.ReinforceTeam != 0 && toEnd > -40 && toEnd < ReinforceFadeTicks + 30;
+                bool veinsFading = p.ReinforceTeam != 0 && toEnd > -40 * SimTime.Per60 && toEnd < ReinforceFadeTicks + 30 * SimTime.Per60;
                 if (!tintFading && !veinsFading) continue;
                 // One sub-cell per 8 is plenty to touch every chunk the piece is in.
                 for (int k = 0; k < p.Cells.Count; k += 8) _grid.MarkDirty(p.Cells[k]);
