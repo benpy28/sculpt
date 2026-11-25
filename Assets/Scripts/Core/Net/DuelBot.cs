@@ -209,12 +209,21 @@ namespace Sculpt.Core.Net
             {
                 Vec3d d = aimAt - eye;
                 wantYaw = Math.Atan2(d.X, d.Z);
+                // Its own strafing swings the target across its view; a person tracks that without thinking. The smooth
+                // aim would trail it by a steady few degrees (never firing at 9 m), so it leads its own motion as well
+                // as its tracking skill allows.
+                double r2 = d.X * d.X + d.Z * d.Z;
+                if (_engaged && r2 > 1)
+                {
+                    double rate = (d.X * s.Velocity.Z - d.Z * s.Velocity.X) / r2; // radians per second
+                    wantYaw += rate / SimTime.TicksPerSecond * (1 - gain) / Math.Max(0.05, gain) * Config.Lead;
+                }
                 wantPitch = -Math.Asin(Math.Max(-1, Math.Min(1, d.Y / Math.Max(1e-6, d.Length)))) * 180 / Math.PI;
             }
 
             // ---- Move (and, when not fighting, look where it walks).
             Vec3d wish = Vec3d.Zero;
-            bool sprint = false, jump = false, crouch = false;
+            bool sprint = false, jump = false, crouch = false, punch = false;
             if (_engaged || (recentlySeen && tick - _lastSeenTick < 36 * SimTime.Per60))
                 wish = FightMove(server, s, tick, dist, ref jump);
             else
@@ -239,6 +248,15 @@ namespace Sculpt.Core.Net
                     wantPitch = 0;
                     gain = 0.12;
                 }
+                // A shut door on the way: face it and punch it open (one punch breaks a leaf).
+                if (wish.LengthSquared > 0.01 && DoorAhead(server.Grid, s, wish, mc, out Vec3d door))
+                {
+                    Vec3d d = door - eye;
+                    wantYaw = Math.Atan2(d.X, d.Z);
+                    wantPitch = Math.Atan2(d.Y, d.WithY(0).Length) * 180 / Math.PI;
+                    gain = 0.25;
+                    if (Math.Abs(Wrap(wantYaw - _yaw)) < 0.2 && tick - _punchTick > 30 * SimTime.Per60) { punch = true; _punchTick = tick; }
+                }
                 Unstick(s, tick, wish, ref jump);
             }
             if (tick < _jumpUntil) jump = true;
@@ -253,6 +271,7 @@ namespace Sculpt.Core.Net
             // ---- Guns.
             WeaponsConfig wc = mc.Weapons;
             Hand(ref cmd, s, tick, dist, recentlySeen);
+            if (punch) cmd.Hand.Punch = true;
             bool fire = false;
             if (_engaged && tick >= _fireOkTick && s.Hand.HasGun && !s.Hand.InSculptMode)
             {
@@ -459,6 +478,31 @@ namespace Sculpt.Core.Net
             TerrainHit h = t.Raycast(new Vec3d(p.X, feet.Y + 0.4, p.Z), new Vec3d(0, -1, 0), 1.4);
             return h.Hit;
         }
+
+        /// <summary>An unbroken door leaf right in front along <paramref name="wish"/> (its middle, to punch at).</summary>
+        private bool DoorAhead(ITerrain t, in MotorState s, Vec3d wish, MovementConfig mc, out Vec3d at)
+        {
+            at = default;
+            TileWalls walls = TileWalls.Find(t);
+            if (walls == null) return false;
+            Vec3d d = wish.WithY(0).Normalized;
+            Vec3d p = s.Position + d * 0.9;
+            var box = new Aabb(new Vec3d(p.X - 0.3, s.Position.Y + 0.5, p.Z - 0.3), new Vec3d(p.X + 0.3, s.Position.Y + 1.6, p.Z + 0.3));
+            List<int> near = _doorNear ??= new List<int>();
+            walls.TilesNear(box, near);
+            foreach (int i in near)
+            {
+                WallTile tile = walls[i];
+                if (tile.Kind != TileKind.Door || tile.State == TileState.Broken) continue;
+                Aabb b = walls.BoundsOf(i);
+                at = new Vec3d((b.Min.X + b.Max.X) / 2, s.Position.Y + PlayerMovement.EyeOf(s, mc) - 0.1, (b.Min.Z + b.Max.Z) / 2);
+                return true;
+            }
+            return false;
+        }
+
+        private List<int> _doorNear;
+        private int _punchTick = int.MinValue / 2;
 
         private Vec3d RoamGoal(Vec3d from)
         {

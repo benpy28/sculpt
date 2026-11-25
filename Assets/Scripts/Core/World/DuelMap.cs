@@ -54,6 +54,17 @@ namespace Sculpt.Core
         /// <summary>A point turned 180 degrees about the map centre.</summary>
         public static Vec3d Turn(Vec3d p, double size) => new Vec3d(size - p.X, p.Y, size - p.Z);
 
+        /// <summary>
+        /// The bot's walking grid for this map, with every door leaf counted as open: the bot punches shut doors on its
+        /// way (see DuelBot), so a door is a way through, not a wall. Built on its own copy of the map.
+        /// </summary>
+        public static BotNav BuildNav()
+        {
+            BrushWorld w = BuildBrushes(out BreachMapInfo info);
+            foreach (int d in info.Block.Doors) w.Tiles.Set(d, TileState.Broken, 0, TileCause.Built);
+            return BotNav.Build(Terrain(BuildGround(), w), 0, 0, info.SizeX, info.SizeZ);
+        }
+
         public static CompositeTerrain Terrain(SubGrid ground, BrushWorld brushes) => new CompositeTerrain(ground, brushes);
     }
 }

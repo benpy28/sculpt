@@ -97,6 +97,7 @@ namespace Sculpt.Game.World
                 case TileKind.Floor:
                 case TileKind.Stair: return t.State == TileState.Damaged ? ClayDamaged : Clay;
                 case TileKind.Ramp: return ClayRamp;
+                case TileKind.Door: return t.State == TileState.Damaged ? WoodDamaged : Wood;
                 default: return t.State == TileState.Damaged ? BrickDamaged : Brick;
             }
         }

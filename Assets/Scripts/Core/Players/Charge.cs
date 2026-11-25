@@ -58,12 +58,12 @@ namespace Sculpt.Core
             foreach (int t in near)
             {
                 WallTile tile = w[t];
-                if (tile.Kind != TileKind.Wall) continue; // floors, stairs and frame never take a charge (collision still stops you)
+                if (tile.Kind != TileKind.Wall && tile.Kind != TileKind.Door) continue; // floors, stairs and frame never take a charge (collision still stops you)
                 if (w.ChargedAt(t) == tick) charged = true; // replaying the tick we charged through it
                 if (tile.State == TileState.Broken) continue;
                 if (!w.HasCells(t))
                 {
-                    if (tile.State != TileState.Damaged && tile.State != TileState.Patched) return false;
+                    if (tile.Kind != TileKind.Door && tile.State != TileState.Damaged && tile.State != TileState.Patched) return false; // a solid wall stops you (a door never does)
                     if (!HeadOn(tile, dir, minCos)) return false;
                     hit.Add(new ChargeCut { Tile = t, Cells = ulong.MaxValue });
                     continue;

@@ -16,8 +16,8 @@ namespace Sculpt.Core.Tests
         private static BotNav Nav()
         {
             if (_nav != null) return _nav;
-            BrushWorld w = DuelMap.BuildBrushes(out _info);
-            _nav = BotNav.Build(DuelMap.Terrain(DuelMap.BuildGround(), w), 0, 0, _info.SizeX, _info.SizeZ);
+            DuelMap.BuildBrushes(out _info);
+            _nav = DuelMap.BuildNav();
             return _nav;
         }
 
@@ -31,8 +31,8 @@ namespace Sculpt.Core.Tests
         public void Nav_CoversTheMap_BuildsQuickly_AndLinksBothSpawnsAndTheUpperFloors()
         {
             var sw = Stopwatch.StartNew();
-            BrushWorld w = DuelMap.BuildBrushes(out BreachMapInfo info);
-            BotNav nav = BotNav.Build(DuelMap.Terrain(DuelMap.BuildGround(), w), 0, 0, info.SizeX, info.SizeZ);
+            DuelMap.BuildBrushes(out BreachMapInfo info);
+            BotNav nav = DuelMap.BuildNav();
             sw.Stop();
             TestContext.WriteLine($"nav: {nav.Nodes.Count} nodes, {nav.EdgeCount} edges, {sw.ElapsedMilliseconds} ms");
             Assert.That(sw.ElapsedMilliseconds, Is.LessThan(5000), "built at map load; must not stall the menu");

@@ -43,6 +43,9 @@ namespace Sculpt.Game.World
         public static readonly Color Clay = new Color(0.78f, 0.56f, 0.42f);
         public static readonly Color ClayDamaged = new Color(0.71f, 0.51f, 0.38f);
         public static readonly Color ClayRamp = new Color(0.84f, 0.64f, 0.50f);
+        /// <summary>Door leaves: dark timber, so a weak way in reads at a glance against brick.</summary>
+        public static readonly Color Wood = new Color(0.42f, 0.29f, 0.17f);
+        public static readonly Color WoodDamaged = new Color(0.33f, 0.22f, 0.13f);
 
         /// <summary>The colour debris from a tile in this state takes.</summary>
         public static Color DebrisColour(TileState s) => s == TileState.Patched ? PatchCement : s == TileState.Reinforced ? SteelBand : Brick;
@@ -56,6 +59,7 @@ namespace Sculpt.Game.World
                 case TileKind.Floor:
                 case TileKind.Stair: return Clay;
                 case TileKind.Ramp: return ClayRamp;
+                case TileKind.Door: return Wood;
                 default: return Brick;
             }
         }
@@ -147,7 +151,7 @@ namespace Sculpt.Game.World
                 bool thin = ct.Kind == TileKind.Frame; // frame pieces are small: fewer chunks
                 if (c.To == TileState.Broken) _debris.Burst(b, facing, DebrisColour(ct.Kind, c.From), thin ? 4 : 16, !thin);
                 else if (c.To == TileState.Damaged && c.From == TileState.Intact)
-                    _debris.Burst(b, facing, ct.Kind == TileKind.Wall ? BrickDamaged : ClayDamaged, 5, false);
+                    _debris.Burst(b, facing, ct.Kind == TileKind.Wall ? BrickDamaged : ct.Kind == TileKind.Door ? WoodDamaged : ClayDamaged, 5, false);
             }
             _tiles.Changes.Clear();
             if (_tiles.Revision == _tilesRev && _dirty.Count == 0) return;
@@ -216,6 +220,9 @@ namespace Sculpt.Game.World
                         : damaged || (_look[id] & 3) > 0 ? ClayDamaged
                         : t.Kind == TileKind.Ramp ? ClayRamp : Clay;
                     if (t.Kind == TileKind.Stair) AddStairs(m, shape, c); else AddWedge(m, shape, c);
+                    return;
+                case TileKind.Door:
+                    AddBox(m, shape.Bounds.Min.ToUnity(), shape.Bounds.Max.ToUnity(), damaged ? WoodDamaged : Wood);
                     return;
                 default:
                     AddBox(m, shape.Bounds.Min.ToUnity(), shape.Bounds.Max.ToUnity(), Brick);

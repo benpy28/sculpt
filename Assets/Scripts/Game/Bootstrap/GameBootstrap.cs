@@ -159,7 +159,7 @@ namespace Sculpt.Game.Bootstrap
                 {
                     foreach (GroundItem g in bi.ItemSpawns) server.SpawnItem(g.Kind, g.Count, g.Position);
                     var sw = System.Diagnostics.Stopwatch.StartNew();
-                    BotNav nav = BotNav.Build(server.Grid, 0, 0, bi.SizeX, bi.SizeZ);
+                    BotNav nav = NextMap == MapChoice.Duel ? DuelMap.BuildNav() : BotNav.Build(server.Grid, 0, 0, bi.SizeX, bi.SizeZ); // duel: doors count as open (the bot punches them)
                     server.AddBot(new DuelBot(nav, DuelBotConfig.For(level), Environment.TickCount), 2, botSpawn, botYaw);
                     Debug.Log($"[SCULPT] Bot ({level}) added; nav {nav.Nodes.Count} spots in {sw.ElapsedMilliseconds} ms.");
                 };
