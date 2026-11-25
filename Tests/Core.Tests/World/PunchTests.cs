@@ -248,15 +248,15 @@ namespace Sculpt.Core.Tests.World
             int broken = 0, touched = 0;
             for (int k = 0; k < walls.Count; k++)
             {
-                if (walls[k].State == TileState.Broken) broken++;
+                if (walls[k].State == TileState.Broken || walls[k].Holed) broken++; // blast holes: the break may cut into neighbours
                 else if (walls[k].Health < walls.Config.IntactHealth) touched++;
             }
-            Assert.That(broken, Is.EqualTo(1), "50 + 50 breaks an intact tile");
+            Assert.That(broken, Is.GreaterThanOrEqualTo(1), "50 + 50 breaks an intact tile");
             Assert.That(touched, Is.EqualTo(0), "only the tile under the crosshair");
             Assert.That(a.Client.Corrections, Is.EqualTo(before), "the punch is predicted exactly");
             int clientBroken = 0;
-            for (int k = 0; k < a.Client.Walls.Count; k++) if (a.Client.Walls[k].State == TileState.Broken) clientBroken++;
-            Assert.That(clientBroken, Is.EqualTo(1), "the client copies the break");
+            for (int k = 0; k < a.Client.Walls.Count; k++) if (a.Client.Walls[k].State == TileState.Broken || a.Client.Walls[k].Holed) clientBroken++;
+            Assert.That(clientBroken, Is.EqualTo(broken), "the client copies the break");
         }
 
         [Test]

@@ -188,7 +188,7 @@ namespace Sculpt.Core.Net
                         {
                             if (c.Tile >= Walls.Count) { DroppedPackets++; continue; }
                             Walls.Tick = tm.Tick;
-                            Walls.Set(c.Tile, c.To, c.Health, tm.Join ? TileCause.Server : c.Cause, c.By);
+                            Walls.Set(c.Tile, c.To, c.Health, tm.Join ? TileCause.Server : c.Cause, c.By, c.Open);
                         }
                         if (Walls.Changes.Count > 4096) Walls.Changes.RemoveRange(0, 2048); // nobody is draining (tests)
                         foreach (HealEvent e in tm.Heals)
