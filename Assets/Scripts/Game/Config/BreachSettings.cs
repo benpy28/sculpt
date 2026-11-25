@@ -184,6 +184,15 @@ namespace Sculpt.Game.Config
         [Tooltip("Also heal cracked tiles (off: leaves them so you can practise charging through).")]
         public bool dummyHealsCracks = false;
 
+        [Header("Ping (1v1 anti-hiding: no contact for a while shows both players to each other through walls)")]
+        public bool pingEnabled = true;
+        [Tooltip("No damage between you, no clear line between you and not within the contact range for this long fires the ping, seconds.")]
+        [Range(3f, 60f)] public float pingQuietSeconds = 10f;
+        [Tooltip("How long both stay revealed through walls, seconds.")]
+        [Range(0.5f, 10f)] public float pingRevealSeconds = 3f;
+        [Tooltip("Being this close counts as contact (you can hear each other), metres. 0: only damage and sight count.")]
+        [Range(0f, 40f)] public float pingContactRange = 10f;
+
         public void ApplyTo(DummyConfig d)
         {
             d.HealDelayTicks = Ticks(dummyHealDelaySeconds);
@@ -302,6 +311,10 @@ namespace Sculpt.Game.Config
             b.HealLeash = healLeash;
             b.BarRefillPerSecond = Pct(barRefillPercentPerSecond);
             b.BarPer10Damage = Pct(barPercentPer10Damage);
+            b.Ping.Enabled = pingEnabled;
+            b.Ping.QuietSeconds = pingQuietSeconds;
+            b.Ping.RevealSeconds = pingRevealSeconds;
+            b.Ping.ContactRange = pingContactRange;
         }
     }
 }

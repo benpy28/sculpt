@@ -156,6 +156,8 @@ namespace Sculpt.Core
         public int BarRefillDelayTicks = 0;
         /// <summary>Bar gained per 10 damage dealt to enemy players (100 = 1%).</summary>
         public int BarPer10Damage = 100;
+        /// <summary>The 1v1 anti-hiding ping (Breach Settings > Ping).</summary>
+        public readonly PingConfig Ping = new PingConfig();
 
         // ---- Blast holes (Ben 2026-11-25): holes follow the hit, not the tile grid. ----
         /// <summary>Off: damage is per tile and a tile that breaks goes whole (the old rule).</summary>

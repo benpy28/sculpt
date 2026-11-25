@@ -434,6 +434,7 @@ namespace Sculpt.Core.Net
             ResolvePunches();
             ResolveGrenades();
             StepHealing();
+            StepPing();
 
             if (Sculpt != null)
             {

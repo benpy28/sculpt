@@ -228,6 +228,10 @@ namespace Sculpt.Core.Net
                         if (!Joined) return;
                         MatchProtocol.Read(ref r, Match);
                         break;
+                    case MsgType.Reveal:
+                        if (!Joined) return;
+                        OnReveal(ref r);
+                        break;
                     case MsgType.Snapshot:
                         if (!Joined) return;
                         OnSnapshot(Protocol.ReadSnapshot(ref r, _snapOthers));
@@ -581,6 +585,34 @@ namespace Sculpt.Core.Net
         {
             if (!_healPending) return;
             if (_healAcked ? ServerBarTick >= _healAckTick : Tick - _healPress.StartTick > HealAnswerTimeoutTicks) _healPending = false;
+        }
+
+        // ================================================================ Anti-hiding ping
+
+        private readonly Dictionary<int, RevealEntry> _reveals = new Dictionary<int, RevealEntry>();
+        private readonly List<RevealEntry> _revealScratch = new List<RevealEntry>(1);
+        /// <summary>Pings that started (not cancels), each once. The Game layer drains it (sound, banner).</summary>
+        public readonly List<RevealEntry> RevealsStarted = new List<RevealEntry>();
+
+        private void OnReveal(ref ByteReader r)
+        {
+            int tick = RevealProtocol.Read(ref r, _revealScratch);
+            foreach (RevealEntry e in _revealScratch)
+            {
+                if (e.EndTick <= tick) { _reveals.Remove(e.PlayerId); continue; }
+                _reveals[e.PlayerId] = e;
+                RevealsStarted.Add(e);
+            }
+            if (RevealsStarted.Count > 64) RevealsStarted.RemoveRange(0, 32); // nobody is draining (tests)
+        }
+
+        /// <summary>True while the server's ping shows player <paramref name="id"/> to you through walls.</summary>
+        public bool IsRevealed(int id, out RevealEntry e)
+        {
+            if (!_reveals.TryGetValue(id, out e)) return false;
+            if (e.EndTick > _serverTime) return true;
+            _reveals.Remove(id);
+            return false;
         }
 
         // ================================================================ Remote players
