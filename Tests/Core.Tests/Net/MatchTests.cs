@@ -163,6 +163,37 @@ namespace Sculpt.Core.Tests.Weapons
             }
         }
 
+        private sealed class StandStill : IBotBrain
+        {
+            public bool CountsAsPlayer => true;
+            public InputCmd Next(NetServer server, ServerPlayer me) => default;
+        }
+
+        /// <summary>Ben's play-test vs the bot: fell on 10 health after the bot shot him and the bot got nothing.</summary>
+        [Test]
+        public void AFallAfterTheBotShotYou_CountsAsTheBotsKill()
+        {
+            var brushes = DuelMap.BuildBrushes(out BreachMapInfo info);
+            Aabb hall = info.Block.Buildings[0];
+            var roofEdge = new Vec3d(hall.Min.X + 1.0, hall.Max.Y, hall.Min.Z + 2.5);
+            var h = new NetHarness(() => DuelMap.Terrain(DuelMap.BuildGround(), DuelMap.BuildBrushes(out _)), info.TeamSpawns[0][0]);
+            h.Server.MatchConfig.Enabled = true;
+            h.Server.MatchConfig.CountdownTicks = 30;
+            ServerPlayer bot = h.Server.AddBot(new StandStill(), 1, info.TeamSpawns[0][0], info.SpawnYaw[0]);
+            var b = h.AddClient(spawn: roofEdge, team: 2, seed: 2);
+            h.RunSeconds(1.0);
+            Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Playing), "a human and a bot start the match");
+            b.ServerSide.State = MotorState.At(roofEdge);
+            b.ServerSide.Body.Position = roofEdge;
+            b.ServerSide.State.Damage = h.Server.Movement.Weapons.MaxHealth - 2;
+            b.ServerSide.LastHurtBy = bot.Id;
+            b.ServerSide.LastHurtTick = h.Server.Tick;
+            b.Script = t => new MoveInput { Yaw = -Math.PI / 2, MoveZ = 1 };
+            h.RunSeconds(2.0);
+            Assert.That(b.ServerSide.MatchDeaths, Is.EqualTo(1), "the fall killed the human");
+            Assert.That(bot.MatchKills, Is.EqualTo(1), "credited to the bot that hurt them");
+        }
+
         [Test]
         public void MatchOffByDefault_NothingChangesForOfflinePractice()
         {
