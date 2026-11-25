@@ -204,7 +204,7 @@ namespace Sculpt.Core
             foreach (var x in c.Cells) _overlay.Set(x, SubId.Empty);
             ThrownPiece t = MakeProjectile(sculptor, c.Cells, a.LookDir, _overlay);
             const double laneRadius = 1.5;
-            for (int tick = 0; tick < 180; tick++)
+            for (int tick = 0; tick < 180 * SimTime.Per60; tick++)
             {
                 if (t.Bounds.Expand(laneRadius).Overlaps(target.Bounds)) return true;
                 if (Advance(t, tick, _overlay, false, out _)) return t.Bounds.Expand(laneRadius).Overlaps(target.Bounds);
@@ -214,7 +214,7 @@ namespace Sculpt.Core
         }
 
         /// <summary>Predicted flight of a throw from where it stands now, for the client ghost (positions every tick until impact).</summary>
-        public List<Vec3d> PredictThrowPath(PlayerBody sculptor, SculptCheck c, Vec3d look, int maxTicks = 180)
+        public List<Vec3d> PredictThrowPath(PlayerBody sculptor, SculptCheck c, Vec3d look, int maxTicks = 180 * SimTime.Per60)
         {
             var path = new List<Vec3d>();
             if (c.Cells == null || c.Cells.Length == 0) return path;

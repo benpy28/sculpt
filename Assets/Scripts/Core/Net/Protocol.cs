@@ -78,7 +78,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 20; // 16 latency (snapshot hold time), 18 blast holes, 19 C4/launcher/per-slot counts/four flights, 20 all of them merged for the friend demo
+        public const byte Version = 21; // 16 latency (snapshot hold time), 18 blast holes, 19 C4/launcher/per-slot counts/four flights, 20 all of them merged for the friend demo, 21 the 120 Hz tick
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
