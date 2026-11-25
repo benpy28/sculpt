@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Sculpt.Core.Net
 {
-    /// <summary>The server side of the match (most kills in 5 minutes): phases, scores, and the reset between matches.</summary>
+    /// <summary>The server side of the match (real players and duel bots count; the practice dummy doesn't) (most kills in 5 minutes): phases, scores, and the reset between matches.</summary>
     public sealed partial class NetServer
     {
         public readonly MatchConfig MatchConfig = new MatchConfig();
@@ -15,7 +15,7 @@ namespace Sculpt.Core.Net
         private int HumanCount()
         {
             int n = 0;
-            foreach (ServerPlayer p in _players) if (!IsBotConnection(p.ConnectionId)) n++;
+            foreach (ServerPlayer p in _players) if (CountsForMatch(p)) n++;
             return n;
         }
 
@@ -122,7 +122,7 @@ namespace Sculpt.Core.Net
         {
             Match.Scores.Clear();
             foreach (ServerPlayer p in _players)
-                if (!IsBotConnection(p.ConnectionId))
+                if (CountsForMatch(p))
                     Match.Scores.Add(new MatchScore { PlayerId = p.Id, Team = p.Team, Kills = p.MatchKills, Deaths = p.MatchDeaths });
             Match.Version++;
         }
