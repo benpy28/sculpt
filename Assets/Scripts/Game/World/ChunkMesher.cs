@@ -81,6 +81,20 @@ namespace Sculpt.Game.World
             }
         }
 
+        /// <summary>True if every sub-cell the chunk's own 16 dual layers read (the chunk and its -x, -y, -z neighbours)
+        /// is uniformly solid or uniformly empty.</summary>
+        private static bool NoSurface(SubGrid g, Int3 o)
+        {
+            int cx = o.X >> 4, cy = (o.Y - g.MinY) >> 4, cz = o.Z >> 4;
+            int want = g.ChunkSolidity(cx, cy, cz);
+            if (want < 0) return false;
+            for (int y = cy - 1; y <= cy; y++)
+                for (int z = cz - 1; z <= cz; z++)
+                    for (int x = cx - 1; x <= cx; x++)
+                        if (g.ChunkSolidity(x, y, z) != want) return false;
+            return true;
+        }
+
         public void Build(SubGrid g, Int3 chunkCoord, Mesh mesh)
         {
             _verts.Clear();
@@ -98,7 +112,16 @@ namespace Sculpt.Game.World
             // layer on the grid's ceiling: a ground surface lying exactly on it (flat base ground at y 0 on the breach
             // and duel maps) was never drawn, and the sky showed through where the ground should be.
             int ny = o.Y + n >= g.MaxYExclusive ? n + 1 : n;
-            for (int y = 0; y < ny; y++)
+            // The chunk's own 16 dual layers read only it and its -x, -y, -z neighbours: if those are all rock or all
+            // air there is nothing to draw in them, and only the grid-top layer (if this chunk has it) is left. On the
+            // flat duel ground that leaves one layer in sixteen; loading the map got about a second faster.
+            int y0 = 0;
+            if (NoSurface(g, o))
+            {
+                if (ny == n) { mesh.Clear(); return; }
+                y0 = n;
+            }
+            for (int y = y0; y < ny; y++)
                 for (int z = 0; z < n; z++)
                     for (int x = 0; x < n; x++)
                     {

@@ -103,6 +103,22 @@ namespace Sculpt.Core
             }
         }
 
+        /// <summary>
+        /// Solidity of a whole chunk by chunk coordinates (cy counted from <see cref="MinY"/>), including the virtual
+        /// chunks round the grid that <see cref="Get(int, int, int)"/> answers for (bedrock round the sides and below,
+        /// empty above): 0 all empty, 1 all solid, -1 mixed (or not known to be uniform). Lets the mesher skip chunks
+        /// with no surface at all.
+        /// </summary>
+        public int ChunkSolidity(int cx, int cy, int cz)
+        {
+            bool inXZ = cx >= 0 && cx < ChunksX && cz >= 0 && cz < ChunksZ;
+            if (cy >= ChunksY) return inXZ ? 0 : 1;
+            if (!inXZ || cy < 0) return 1;
+            int ci = (cy * ChunksZ + cz) * ChunksX + cx;
+            if (_chunks[ci] != null) return -1;
+            return _uniform[ci] != SubId.Empty ? 1 : 0;
+        }
+
         private ushort ReadRaw(int chunk, int k)
         {
             ushort[] a = _chunks[chunk];
@@ -280,13 +296,17 @@ namespace Sculpt.Core
             return g;
         }
 
-        /// <summary>True if both grids hold exactly the same ids.</summary>
+        /// <summary>True if both grids hold exactly the same ids (uniform chunks compare without reading every cell).</summary>
         public bool SameCells(SubGrid o)
         {
-            if (o.ChunksX != ChunksX || o.ChunksY != ChunksY || o.ChunksZ != ChunksZ || o.MinY != MinY) return false;
+            if (o == null || o.ChunksX != ChunksX || o.ChunksY != ChunksY || o.ChunksZ != ChunksZ || o.MinY != MinY) return false;
             for (int i = 0; i < _chunks.Length; i++)
+            {
+                ushort[] a = _chunks[i], b = o._chunks[i];
+                if (a == null && b == null) { if (_uniform[i] != o._uniform[i]) return false; continue; }
                 for (int k = 0; k < ChunkVolume; k++)
-                    if (ReadRaw(i, k) != o.ReadRaw(i, k)) return false;
+                    if ((a != null ? a[k] : _uniform[i]) != (b != null ? b[k] : o._uniform[i])) return false;
+            }
             return true;
         }
 

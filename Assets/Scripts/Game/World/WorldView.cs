@@ -120,8 +120,12 @@ namespace Sculpt.Game.World
                     _chunkObjects[i] = go;
                 }
             }
+            // A new client on the same map (going offline at load, say) gets a fresh copy of the same cells: the meshes
+            // already show it, so only re-mesh when something differs (saved ~0.5 s of every load).
+            bool same = _grid != null && grid.SameCells(_grid);
             _grid = grid;
             _grass?.Bind(grid);
+            if (same) return;
             grid.MarkAllDirty();
             RebuildDirty();
         }
