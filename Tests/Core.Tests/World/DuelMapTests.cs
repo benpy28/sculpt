@@ -25,12 +25,20 @@ namespace Sculpt.Core.Tests
         private static double YawOf(Dir d) => d == Dir.North ? 0 : d == Dir.East ? Math.PI / 2 : d == Dir.South ? Math.PI : -Math.PI / 2;
         private static Vec3d DirVec(Dir d) => d == Dir.North ? new Vec3d(0, 0, 1) : d == Dir.South ? new Vec3d(0, 0, -1) : d == Dir.East ? new Vec3d(1, 0, 0) : new Vec3d(-1, 0, 0);
 
-        private MotorState Run(Vec3d at, double yaw, int ticks)
+        /// <param name="climb">Jump when stopped by something (a ledge is climbed by jumping at it since the vault
+        /// and mantle merge, Ben 2026-11-25), holding jump so an air touch climbs too.</param>
+        private MotorState Run(Vec3d at, double yaw, int ticks, bool climb = false)
         {
             MotorState s = MotorState.At(at);
             s.Tick = 1000;
             for (int k = 0; k < 30; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw });
-            for (int k = 0; k < ticks; k++) PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw, MoveZ = 1, SprintHeld = true });
+            bool held = false;
+            for (int k = 0; k < ticks; k++)
+            {
+                bool jump = climb && k > 10 && (held || (s.Grounded && s.HorizontalSpeed < 2));
+                PlayerMovement.Step(_t, _c, ref s, new MoveInput { Yaw = yaw, MoveZ = 1, SprintHeld = true, JumpPressed = jump && !held, JumpHeld = jump });
+                held = jump && s.Mode != MoveMode.Ground;
+            }
             return s;
         }
 
@@ -137,7 +145,7 @@ namespace Sculpt.Core.Tests
         {
             Aabb hall = B.Buildings[0];
             double doorX = (hall.Min.X + hall.Max.X) / 2;
-            MotorState s = Run(new Vec3d(doorX, 0, 4), 0, 60 * 6);
+            MotorState s = Run(new Vec3d(doorX, 0, 4), 0, SimTime.TicksPerSecond * 6, climb: true);
             Assert.That(s.Position.Z, Is.GreaterThan(hall.Min.Z + 3), $"inside the hall (ended at {s.Position})");
         }
 

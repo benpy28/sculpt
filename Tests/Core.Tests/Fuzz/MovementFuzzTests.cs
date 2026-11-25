@@ -133,7 +133,8 @@ namespace Sculpt.Core.Tests.Fuzz
             Assert.That(jumps, Is.GreaterThan(0));
             Assert.That(slides, Is.GreaterThan(0));
             Assert.That(slideLands, Is.GreaterThan(0));
-            Assert.That(vaults, Is.GreaterThan(0));
+            // The automatic vault is off since vault and mantle merged (Ben 2026-11-25); one-tile ledges are mantled.
+            Assert.That(vaults, Is.EqualTo(0));
             Assert.That(mantles, Is.GreaterThan(0));
             Assert.That(launches, Is.GreaterThan(0));
         }

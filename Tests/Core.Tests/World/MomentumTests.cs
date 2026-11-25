@@ -96,6 +96,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void VaultsAOneTileWallButMantlesTwoTiles()
         {
+            _c.AutoVault = true; // parked: off in the game since vault and mantle merged
             _w.AddBox(new Vec3d(10, 0, -5), new Vec3d(10.3, 1.5, 5), BrushKind.Wall);
             At(4, 0, 0);
             Settle();
@@ -127,6 +128,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void PerfectWallKickTurnsAndKeepsTheSpeedYouHitWith()
         {
+            _c.WallKicksEnabled = true; // parked: wall kicks are off in the game (Ben 2026-11-25)
             FlyAtNorthWall(10, 0.3);
             int k = 0;
             while (_s.Tick - _s.WallHitTick > 0 && k++ < 20) Tick(new MoveInput { Yaw = North });
@@ -143,6 +145,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void LateWallKickKeepsLess()
         {
+            _c.WallKicksEnabled = true; // parked: wall kicks are off in the game (Ben 2026-11-25)
             FlyAtNorthWall(10, 0.3);
             int k = 0;
             while (_s.Tick - _s.WallHitTick > 0 && k++ < 20) Tick(new MoveInput { Yaw = North });
@@ -156,6 +159,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void WallKicksAreLimitedAndNeverTheSameWallTwiceInARow()
         {
+            _c.WallKicksEnabled = true; // parked: wall kicks are off in the game (Ben 2026-11-25)
             FlyAtNorthWall(8, 0.0);
             int k = 0;
             while (_s.Tick - _s.WallHitTick > 0 && k++ < 20) Tick(new MoveInput { Yaw = North });
@@ -171,6 +175,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void NoWallKickOffASmallStep()
         {
+            _c.WallKicksEnabled = true; // parked: wall kicks are off in the game (Ben 2026-11-25)
             _w.AddBox(new Vec3d(-20, 0, 10), new Vec3d(40, 0.2, 11), BrushKind.Wall); // a 20 cm kerb
             At(0, 0.05, 9.6, vz: 6);
             _s.Mode = MoveMode.Air;
@@ -260,6 +265,58 @@ namespace Sculpt.Core.Tests
             _s.Mode = MoveMode.Air;
             Run(SimTime.TicksPerSecond, new MoveInput { Yaw = East });
             Assert.That(_s.HorizontalSpeed, Is.EqualTo(v0 - _c.AirSoftCapDecel).Within(0.05));
+        }
+
+        // ---------------- one ledge climb, no wall kicks (Ben 2026-11-25: "fortnite style movement, not parkour") ----------------
+
+        [Test]
+        public void NoWallKicksByDefault()
+        {
+            _w.AddBox(new Vec3d(-20, 0, 10), new Vec3d(40, 12, 11), BrushKind.Wall);
+            At(0, 4, 10 - _c.HalfWidth, vx: 3, vz: 8);
+            _s.Mode = MoveMode.Air;
+            _s.Velocity = new Vec3d(3, 2, 8);
+            Tick(new MoveInput { Yaw = North, MoveZ = 1 }); // hits the wall
+            Tick(new MoveInput { Yaw = East, MoveZ = 1, JumpPressed = true, JumpHeld = true });
+            Assert.That(Had(MoveEventType.WallKick), Is.False);
+            Assert.That(_s.Velocity.Y, Is.LessThan(2), "no kick upward either");
+        }
+
+        [Test]
+        public void JumpingAtAOneTileLedgeClimbsItQuicklyAndKeepsSpeed()
+        {
+            // The old sprint vault is now the same move as the mantle: jump at the ledge. A one-tile climb is short.
+            _w.AddBox(new Vec3d(10, 0, -5), new Vec3d(10.3, 1.5, 5), BrushKind.Wall);
+            At(4, 0, 0);
+            Settle();
+            int k = 0;
+            for (; k < 120 && _s.Position.X < 10 - _c.HalfWidth - 1e-6; k++) Tick(new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true });
+            Assert.That(Had(MoveEventType.Vaulted), Is.False, "no automatic vault");
+            Tick(new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true, JumpPressed = true, JumpHeld = true });
+            Assert.That(_s.Mode, Is.EqualTo(MoveMode.Mantle));
+            int ticks = 0;
+            while (_s.Mode == MoveMode.Mantle && ticks < 60) { Tick(new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true }); ticks++; }
+            Assert.That(ticks, Is.LessThanOrEqualTo(SimTime.TicksPerSecond / 5), "about 0.2 s for one tile (a full 3 m climb is 0.4 s)");
+            Assert.That(_s.HorizontalSpeed, Is.GreaterThan(_c.SprintSpeed - 0.5), "left with the sprint speed it hit the ledge at");
+        }
+
+        [Test]
+        public void HoldingJumpInTheAirClimbsALedgeYouTouch()
+        {
+            _w.AddBox(new Vec3d(10, 0, -5), new Vec3d(14, 3, 5), BrushKind.Frame); // 3 m: too high to jump onto
+            At(7.5, 0, 0);
+            Settle();
+            Run(10, new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true });
+            Tick(new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true, JumpPressed = true, JumpHeld = true });
+            for (int k = 0; k < 40 && _s.Mode == MoveMode.Air; k++) Tick(new MoveInput { Yaw = East, MoveZ = 1, JumpHeld = true });
+            Assert.That(_s.Mode, Is.EqualTo(MoveMode.Mantle), "one press, held: the touch climbs");
+            // Not holding: a touch in the air does nothing until you press again.
+            At(7.5, 0, 0);
+            Settle();
+            Run(10, new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true });
+            Tick(new MoveInput { Yaw = East, MoveZ = 1, SprintHeld = true, JumpPressed = true, JumpHeld = true });
+            for (int k = 0; k < 40 && _s.Mode == MoveMode.Air; k++) Tick(new MoveInput { Yaw = East, MoveZ = 1 });
+            Assert.That(Had(MoveEventType.MantleStarted), Is.False);
         }
 
         // ---------------- slide carving (Ben 2026-11-25: "no sliding around rooms") ----------------

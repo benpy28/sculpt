@@ -45,7 +45,7 @@ namespace Sculpt.Core
                 SizeX = ChunksAcross * SubGrid.ChunkSize * SubGrid.SubSize,
                 SizeZ = ChunksAcross * SubGrid.ChunkSize * SubGrid.SubSize,
             };
-            info.Course = MovementCourse.Build(w, 6, 6);
+            info.Course = MovementCourse.Build(w, 4, 4);
             double mid = info.SizeX / 2;
             info.TestWallA = TestWall(w.Tiles, mid - 6, 50);
             info.TestWallB = TestWall(w.Tiles, mid - 6, info.SizeZ - 50 - w.Tiles.Config.TileThickness);

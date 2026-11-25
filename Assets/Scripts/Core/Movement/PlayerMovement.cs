@@ -139,7 +139,7 @@ namespace Sculpt.Core
 
             s.Velocity = WithTangentY(vh, s.GroundNormal);
 
-            if (s.Sprinting && vh.Length >= c.VaultMinSpeed) TryVault(g, c, ref s, events);
+            if (c.AutoVault && s.Sprinting && vh.Length >= c.VaultMinSpeed) TryVault(g, c, ref s, events);
         }
 
         /// <summary>
@@ -289,7 +289,7 @@ namespace Sculpt.Core
             }
 
             s.Velocity = WithTangentY(vh, n);
-            if (speed >= c.VaultMinSpeed) TryVault(g, c, ref s, events);
+            if (c.AutoVault && speed >= c.VaultMinSpeed) TryVault(g, c, ref s, events);
         }
 
         // ---- Air ----
@@ -310,6 +310,7 @@ namespace Sculpt.Core
                 }
                 if (TryWallKick(g, c, ref s, input.Yaw, events)) return;
             }
+            else if (c.HoldJumpClimbs && input.JumpHeld && TryMantle(g, c, ref s, input.Yaw, true, events)) return;
 
             double speed = vh.Length;
             if (wish.LengthSquared > 1e-9)
@@ -362,6 +363,7 @@ namespace Sculpt.Core
 
         private static bool TryWallKick(ITerrain g, MovementConfig c, ref MotorState s, double yaw, List<MoveEvent> events)
         {
+            if (!c.WallKicksEnabled) return false;
             if (s.WallKicks >= c.WallKickMaxPerAir) return false;
             if (s.Tick - s.LastWallKickTick < c.WallKickCooldownTicks) return false;
             double h = HeightOf(s, c);
@@ -507,7 +509,7 @@ namespace Sculpt.Core
                 s.Velocity = Vec3d.Zero;
                 s.Sprinting = false;
                 s.JumpBufferedTick = int.MinValue / 2;
-                s.ShootReadyTick = Math.Max(s.ShootReadyTick, s.Tick + c.MantleRiseTicks + c.MantleForwardTicks);
+                s.ShootReadyTick = Math.Max(s.ShootReadyTick, s.Tick + MantleRiseTicksOf(c, s) + MantleForwardTicksOf(c, s));
                 Emit(events, MoveEventType.MantleStarted, s.Tick);
                 return true;
             }
@@ -516,6 +518,14 @@ namespace Sculpt.Core
 
         private static double MantleExitSpeed(MovementConfig c, in MotorState s) =>
             Math.Max(c.RunSpeed * c.MantleExitSpeedFraction, s.ActionKeepVelocity.Length * c.MantleKeepSpeedFraction);
+
+        /// <summary>Rise and step-forward ticks of the climb in progress: scaled by its height (ActionStartY to ActionTargetY).</summary>
+        public static int MantleRiseTicksOf(MovementConfig c, in MotorState s) =>
+            ScaledTicks(c.MantleRiseTicks, c.MantleMinRiseTicks, (s.ActionTargetY - s.ActionStartY) / c.MantleScaleHeight);
+        public static int MantleForwardTicksOf(MovementConfig c, in MotorState s) =>
+            ScaledTicks(c.MantleForwardTicks, c.MantleMinForwardTicks, (s.ActionTargetY - s.ActionStartY) / c.MantleScaleHeight);
+        private static int ScaledTicks(int full, int min, double f) =>
+            Math.Max(Math.Min(min, full), Math.Min(full, (int)Math.Round(full * Math.Max(0, f), MidpointRounding.AwayFromZero)));
 
         private static void StepMantle(ITerrain g, MovementConfig c, ref MotorState s, in MoveInput input, List<MoveEvent> events)
         {
@@ -527,7 +537,8 @@ namespace Sculpt.Core
             // with, instead of the slow climb and the step forward. The last few centimetres are skipped in one tick
             // (at most MantleCancelMaxRemaining, a small pop), then you leave forward with a little hop.
             double remaining = s.ActionTargetY - s.Position.Y;
-            if (input.JumpPressed && s.ActionTick >= c.MantleCancelFromTick && s.ActionTick <= c.MantleRiseTicks &&
+            int rise = MantleRiseTicksOf(c, s), forward = MantleForwardTicksOf(c, s);
+            if (input.JumpPressed && s.ActionTick >= Math.Min(c.MantleCancelFromTick, rise / 2) && s.ActionTick <= rise &&
                 remaining <= c.MantleCancelMaxRemaining)
             {
                 MoveAxis(g, c, ref s.Position, 1, Math.Max(0, remaining), h, out bool blockedUp);
@@ -544,9 +555,9 @@ namespace Sculpt.Core
                 }
             }
 
-            if (s.ActionTick <= c.MantleRiseTicks)
+            if (s.ActionTick <= rise)
             {
-                double t = s.ActionTick / (double)c.MantleRiseTicks;
+                double t = s.ActionTick / (double)rise;
                 double wantY = s.ActionStartY + (s.ActionTargetY - s.ActionStartY) * t;
                 MoveAxis(g, c, ref s.Position, 1, wantY - s.Position.Y, h, out bool blocked);
                 if (blocked)
@@ -558,10 +569,10 @@ namespace Sculpt.Core
                 return;
             }
 
-            Vec3d step = s.ActionForward * (c.MantleForwardDistance / c.MantleForwardTicks);
+            Vec3d step = s.ActionForward * (c.MantleForwardDistance / forward);
             MoveAxis(g, c, ref s.Position, 0, step.X, h, out _);
             MoveAxis(g, c, ref s.Position, 2, step.Z, h, out _);
-            if (s.ActionTick >= c.MantleRiseTicks + c.MantleForwardTicks)
+            if (s.ActionTick >= rise + forward)
             {
                 s.Mode = MoveMode.Air; // lands on the ledge next tick
                 s.AirPeakY = s.Position.Y;
@@ -734,6 +745,9 @@ namespace Sculpt.Core
             }
             if (blocked)
             {
+                // Remember how fast you ran into it: a climb started soon after keeps that speed (one ledge climb for
+                // every height, Ben 2026-11-25), so running into a ledge and jumping doesn't throw your momentum away.
+                RecordWallHit(ref s, axis == 0 ? new Vec3d(-Math.Sign(delta), 0, 0) : new Vec3d(0, 0, -Math.Sign(delta)), Horizontal(s.Velocity).Length);
                 if (axis == 0) s.Velocity = new Vec3d(0, s.Velocity.Y, s.Velocity.Z);
                 else s.Velocity = new Vec3d(s.Velocity.X, s.Velocity.Y, 0);
             }

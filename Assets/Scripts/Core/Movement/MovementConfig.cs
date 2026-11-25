@@ -52,10 +52,19 @@ namespace Sculpt.Core
         public double SlideLandMinSpeed = 5.0;
 
         // Vault and mantle
+        // Ben 2026-11-25: vault and mantle merged into one quick ledge climb (jump at a ledge, or hold jump in the air
+        // against it). The automatic sprint vault is off (code kept behind AutoVault for its tests). A climb's time
+        // scales with its height: MantleRiseTicks + MantleForwardTicks for a full MantleScaleHeight climb, less for a
+        // lower ledge, never under the Min values (a one-tile ledge: about 0.2 s).
+        public bool AutoVault = false;
+        public bool HoldJumpClimbs = true;            // in the air, holding jump against a ledge climbs it
+        public double MantleScaleHeight = 3.0;
+        public int MantleMinRiseTicks = 6;
+        public int MantleMinForwardTicks = 4;
         public int VaultTicks = 8;
         public double VaultMinSpeed = 5.0;
         public int MantleRiseTicks = 16;
-        public int MantleForwardTicks = 8;          // total 24 ticks = 0.4 s
+        public int MantleForwardTicks = 8;          // total 24 ticks = 0.4 s for a 3 m ledge
         public double MantleForwardDistance = 0.45;
         public double MantleMaxHeight = 3.05;       // two 1.5 m wall tiles plus tolerance (Ben 2026-11-21: 1.5 m tiles)
         public double VaultMaxHeight = 1.55;        // one 1.5 m tile (sills, single tiles) plus tolerance
@@ -70,6 +79,9 @@ namespace Sculpt.Core
         // Wall kick: jump in the air while touching a wall. You leave in the direction you look (mirrored off the
         // wall if you look into it) and keep your speed. Within the perfect window of hitting the wall you keep the
         // speed you hit it with; later you keep WallKickLateKeep of it.
+        // Ben 2026-11-25: "remove wall jumping, we want more fortnite style movement than parkour". Off; the code stays
+        // behind this switch (like block moves) so its tests keep running.
+        public bool WallKicksEnabled = false;
         public double WallKickProbe = 0.12;           // how close a wall must be to kick off it
         public double WallKickUpSpeed = 6.5;          // m/s up (a full jump is ~8.8)
         public double WallKickPush = 2.5;             // m/s pushed away from the wall before keeping the speed

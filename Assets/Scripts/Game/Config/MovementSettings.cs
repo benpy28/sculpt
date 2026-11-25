@@ -42,6 +42,8 @@ namespace Sculpt.Game.Config
         public float slideLandMinSpeed = 5f;
 
         [Header("Vault and mantle")]
+        public bool autoVault = false;
+        public bool holdJumpClimbs = true;
         public int vaultTicks = 8;
         public float vaultMinSpeed = 5f;
         public int mantleRiseTicks = 16;
@@ -55,6 +57,7 @@ namespace Sculpt.Game.Config
         public float mantleCancelHopSpeed = 3f;
 
         [Header("Momentum: wall kick")]
+        public bool wallKicksEnabled = false;
         public float wallKickUpSpeed = 6.5f;
         public float wallKickPush = 2.5f;
         public float wallKickMinSpeed = 6f;
@@ -106,6 +109,8 @@ namespace Sculpt.Game.Config
             c.SlideBoostCooldownTicks = slideBoostCooldownTicks;
             c.SlideLandWindowTicks = slideLandWindowTicks;
             c.SlideLandMinSpeed = slideLandMinSpeed;
+            c.AutoVault = autoVault;
+            c.HoldJumpClimbs = holdJumpClimbs;
             c.VaultTicks = vaultTicks;
             c.VaultMinSpeed = vaultMinSpeed;
             c.MantleRiseTicks = mantleRiseTicks;
@@ -117,6 +122,7 @@ namespace Sculpt.Game.Config
             c.MantleCancelFromTick = mantleCancelFromTick;
             c.MantleCancelMaxRemaining = mantleCancelMaxRemaining;
             c.MantleCancelHopSpeed = mantleCancelHopSpeed;
+            c.WallKicksEnabled = wallKicksEnabled;
             c.WallKickUpSpeed = wallKickUpSpeed;
             c.WallKickPush = wallKickPush;
             c.WallKickMinSpeed = wallKickMinSpeed;
