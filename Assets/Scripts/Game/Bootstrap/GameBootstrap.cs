@@ -181,7 +181,25 @@ namespace Sculpt.Game.Bootstrap
             if (vsBot) { _session.MatchOffline = true; _session.Server.MatchConfig.Enabled = true; }
 
             _world = new GameObject("World").AddComponent<WorldView>();
-            _world.Init(_grid, sculptConfig, mapInfo);
+            GroundCover cover = null;
+            if (brushes != null)
+            {
+                // Building interiors get concrete ground floors: the block's buildings and the breach map's sealed room.
+                var paved = new System.Collections.Generic.List<Aabb>();
+                if (breachInfo?.Block != null) paved.AddRange(breachInfo.Block.Buildings);
+                if (breachInfo?.Room != null && breachInfo.Room.Length > 0)
+                {
+                    Aabb r = brushes.Tiles.BoundsOf(breachInfo.Room[0]);
+                    foreach (int t in breachInfo.Room)
+                    {
+                        Aabb o = brushes.Tiles.BoundsOf(t);
+                        r = new Aabb(new Vec3d(Math.Min(r.Min.X, o.Min.X), 0, Math.Min(r.Min.Z, o.Min.Z)), new Vec3d(Math.Max(r.Max.X, o.Max.X), 1, Math.Max(r.Max.Z, o.Max.Z)));
+                    }
+                    paved.Add(r);
+                }
+                cover = new GroundCover(_grid, paved);
+            }
+            _world.Init(_grid, sculptConfig, mapInfo, cover);
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             if (brushes != null)
@@ -241,7 +259,9 @@ namespace Sculpt.Game.Bootstrap
             ApplyCommandLine(); // sim ping/loss/jitter, and a non-default -port
             // Frame pacing, lean rendering, the performance overlay and the -benchmark run.
             PerfSetup.Install(gameObject, _session, _player, _input, _rig, _grid);
-
+            string tour = Sculpt.Game.Dev.PhotoTour.RequestedFolder();
+            if (tour != null && breachInfo != null && (GameInput.DevBuild || Application.isEditor))
+                gameObject.AddComponent<Sculpt.Game.Dev.PhotoTour>().Init(tour, _rig.Camera, breachInfo, CurrentMap == MapChoice.Duel);
             Debug.Log($"[SCULPT] Bootstrap OK. Sim tick rate {SimTime.TicksPerSecond} Hz. Map {(NextMap == MapChoice.Duel ? "1v1 duel" : breachMap ? "Breach" : map.ToString())} {_grid.SizeX / SubGrid.TileSubs}x{_grid.SizeZ / SubGrid.TileSubs} tiles, {_grid.ChunkCount} chunks ({_grid.AllocatedChunks} with detail).");
         }
 
@@ -318,6 +338,7 @@ namespace Sculpt.Game.Bootstrap
                 else if (a == "-offline") NextLaunch = Launch.Offline;
                 else if (a == "-bot") NextLaunch = Launch.VsBot;
                 else if (a == "-breach") NextMap = MapChoice.Breach;
+                else if (a == "-phototour") NextLaunch = Launch.Offline;
             }
         }
 

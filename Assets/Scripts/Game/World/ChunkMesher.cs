@@ -61,6 +61,9 @@ namespace Sculpt.Game.World
         /// </summary>
         public Dictionary<Int3, byte> Decor;
 
+        /// <summary>Optional: natural ground drawn as concrete instead of meadow (building ground floors). Visual only.</summary>
+        public GroundCover Cover;
+
         private readonly List<Vector3> _verts = new List<Vector3>(16384);
         private readonly List<Color> _colors = new List<Color>(16384);
         private readonly List<Vector3> _uvs = new List<Vector3>(16384);
@@ -91,7 +94,11 @@ namespace Sculpt.Game.World
             const int n = SubGrid.ChunkSize;
             const float h = (float)TerrainShape.H;
             const float s = (float)SubGrid.SubSize;
-            for (int y = 0; y < n; y++)
+            // Dual cells sit on the lattice vertices below each sub-cell. The top layer of chunks also owns the vertex
+            // layer on the grid's ceiling: a ground surface lying exactly on it (flat base ground at y 0 on the breach
+            // and duel maps) was never drawn, and the sky showed through where the ground should be.
+            int ny = o.Y + n >= g.MaxYExclusive ? n + 1 : n;
+            for (int y = 0; y < ny; y++)
                 for (int z = 0; z < n; z++)
                     for (int x = 0; x < n; x++)
                     {
@@ -140,8 +147,10 @@ namespace Sculpt.Game.World
                 if (ownerId == SubId.Natural) kind = KindGround;
                 else if (ownerId == SubId.Anchor && Decor != null && Decor.TryGetValue(owner, out byte dk)) kind = dk;
             }
+            bool paved = kind == KindGround && Cover != null && Cover.Paved(owner.X, owner.Z);
+            if (paved) kind = KindStone;
             // Ground and trees take their colour from the shader's palette; the vertex colour carries shade and AO only.
-            Color albedo = (kind != KindStone ? Color.white : Lin(Albedo(ownerId, owner))) * Shade(f.Normal);
+            Color albedo = (kind != KindStone ? Color.white : Lin(paved ? GroundCover.Concrete : Albedo(ownerId, owner))) * Shade(f.Normal);
             // Ground: how far below the column's top this face's rock sits (grass lip, then soil, then rock).
             int topY = owner.Y + 1;
             if (kind == KindGround)

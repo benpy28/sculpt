@@ -63,9 +63,9 @@ namespace Sculpt.Game.World
         private readonly List<int> _remoteIds = new List<int>();
 
         /// <summary>map: optional, for trees (anchors drawn as bark and leaves).</summary>
-        public void Init(SubGrid grid, SculptConfig sculpt, MapInfo map = null)
+        public void Init(SubGrid grid, SculptConfig sculpt, MapInfo map = null, GroundCover cover = null)
         {
-            _mesher = new ChunkMesher();
+            _mesher = new ChunkMesher { Cover = cover };
             if (map != null && map.Trees.Count > 0)
             {
                 _mesher.Decor = new Dictionary<Int3, byte>();
