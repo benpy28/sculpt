@@ -65,7 +65,7 @@ namespace Sculpt.Core.Tests.World
             s = DrawnPump(t, s);
             int t0 = s.Tick + 1;
             var shots = new List<WeaponShot>();
-            var swings = Run(t, ref s, 60, k => Cmd(k == t0, k > t0 && k < t0 + Pc.TotalTicks + 10), shots);
+            var swings = Run(t, ref s, Pc.TotalTicks + 30 * SimTime.Per60, k => Cmd(k == t0, k > t0 && k < t0 + Pc.TotalTicks + 10), shots);
             Assert.That(swings.Count, Is.EqualTo(1));
             Assert.That(swings[0].Tick, Is.EqualTo(t0 + Pc.HitTicks));
             Assert.That(shots.Count, Is.GreaterThan(0), "fire held through the punch shoots once it ends");
@@ -87,7 +87,7 @@ namespace Sculpt.Core.Tests.World
             int t0 = s.Tick + 1;
             // Mid-punch press (far from the end) is dropped; a press within the buffer of the end fires on the first free tick.
             int late = t0 + Pc.TotalTicks - Pc.BufferTicks;
-            var swings = Run(t, ref s, 90, k => Cmd(k == t0 || k == t0 + 8 || k == late));
+            var swings = Run(t, ref s, 2 * Pc.TotalTicks + 30 * SimTime.Per60, k => Cmd(k == t0 || k == t0 + 8 || k == late));
             Assert.That(swings.Count, Is.EqualTo(2));
             Assert.That(swings[1].Tick - swings[0].Tick, Is.EqualTo(Pc.TotalTicks), "second punch starts the tick the first ends");
         }
