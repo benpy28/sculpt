@@ -97,6 +97,7 @@ namespace Sculpt.Game.Player
         private CourseInfo _course;
         private ShowcaseRun _showcase;
         private bool _showcaseLatch, _warping;
+        private float _showcaseYaw;
         /// <summary>The showcase run in progress (null when none). Its inputs replace yours until it ends or you move.</summary>
         public ShowcaseRun Showcase => _showcase;
         /// <summary>The last finished showcase, for the dev HUD summary.</summary>
@@ -153,7 +154,16 @@ namespace Sculpt.Game.Player
             bool clickToLock = !CursorLocked && !InputBlocked && mouse != null && mouse.leftButton.wasPressedThisFrame;
             if (clickToLock) LockCursor(true);
 
-            if (CursorLocked)
+            if (_showcase != null)
+            {
+                // The showcase steers per 60 Hz tick and sometimes turns sharply (wall kicks). The camera follows its
+                // heading smoothly every frame instead, and the mouse doesn't fight it (that was the F6 jitter).
+                float k = 1f - Mathf.Exp(-Time.unscaledDeltaTime / 0.09f);
+                Yaw = Mathf.Repeat(Mathf.LerpAngle(Yaw, _showcaseYaw, k) + 180f, 360f) - 180f;
+                Pitch = Mathf.Lerp(Pitch, 12f, k);
+                LookDelta = Vector2.zero;
+            }
+            else if (CursorLocked)
             {
                 Vector2 d = _input.Look.ReadValue<Vector2>();
                 float k = _client.DegreesPerCount;
@@ -395,8 +405,7 @@ namespace Sculpt.Game.Player
             if (_showcase != null)
             {
                 mi = _showcase.Next(State);
-                Yaw = (float)(mi.Yaw * Mathf.Rad2Deg);
-                Pitch = Mathf.MoveTowards(Pitch, 12f, 2f);
+                _showcaseYaw = (float)(mi.Yaw * Mathf.Rad2Deg); // the camera eases toward it per frame (SampleFrame)
                 if (_showcase.Finished) StopShowcase();
             }
 
@@ -408,7 +417,7 @@ namespace Sculpt.Game.Player
                 if (_warping && _course != null)
                 {
                     _warping = false;
-                    Yaw = (float)(_course.StartYaw * Mathf.Rad2Deg);
+                    Yaw = _showcaseYaw = (float)(_course.StartYaw * Mathf.Rad2Deg);
                     Pitch = 12f;
                     _showcase = new ShowcaseRun(_course, _cfg);
                     Debug.Log("[SCULPT] Movement showcase: started.");
@@ -431,7 +440,10 @@ namespace Sculpt.Game.Player
         public void Render(float alpha)
         {
             MotorState prev = Net.PreviousPredicted, cur = Net.Predicted;
-            RenderFeet = Vector3.Lerp(prev.Position.ToUnity(), cur.Position.ToUnity(), alpha) + Net.CorrectionOffset.ToUnity();
+            // A warp or respawn jumps metres in one tick: draw the new spot, never a one-frame streak across the map.
+            Vector3 from = prev.Position.ToUnity(), to = cur.Position.ToUnity();
+            if ((to - from).sqrMagnitude > 16f) from = to;
+            RenderFeet = Vector3.Lerp(from, to, alpha) + Net.CorrectionOffset.ToUnity();
             RenderSpeed = Mathf.Lerp((float)prev.HorizontalSpeed, (float)cur.HorizontalSpeed, alpha);
             // Recoil kicks are instant (no lerp from the previous tick's value when it rose), recovery is smooth.
             float pp = (float)prev.Weapon.RecoilPitch, cp = (float)cur.Weapon.RecoilPitch;

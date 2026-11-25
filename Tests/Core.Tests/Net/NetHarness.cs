@@ -29,7 +29,7 @@ namespace Sculpt.Core.Tests.Net
         public readonly NetServer Server;
         public readonly List<Peer> Peers = new List<Peer>();
         public readonly List<MoveEvent> ServerEvents = new List<MoveEvent>();
-        public readonly Func<VoxelGrid> MakeGrid;
+        public readonly Func<ITerrain> MakeGrid;
         public readonly Vec3d Spawn;
         public double NowMs { get; private set; }
         private double _nextServerTickMs;
@@ -38,7 +38,7 @@ namespace Sculpt.Core.Tests.Net
 
         public const double TickMs = 1000.0 / 60.0;
 
-        public NetHarness(Func<VoxelGrid> makeGrid, Vec3d spawn, Action<NetConfig> tweak = null)
+        public NetHarness(Func<ITerrain> makeGrid, Vec3d spawn, Action<NetConfig> tweak = null)
         {
             MakeGrid = makeGrid;
             Spawn = spawn;
