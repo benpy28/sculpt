@@ -21,6 +21,9 @@ namespace Sculpt.EditorTools
         [MenuItem("SCULPT/Build Windows (dev keys on)")]
         public static void BuildDev() => Build(true);
 
+        /// <summary>Both builds in one go (command line).</summary>
+        public static void BuildAll() { Build(false); Build(true); }
+
         private static void Build(bool dev)
         {
             string dir = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Builds", dev ? "SculptDev" : "Sculpt"));
