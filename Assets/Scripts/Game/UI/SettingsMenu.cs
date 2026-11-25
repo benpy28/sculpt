@@ -133,12 +133,18 @@ namespace Sculpt.Game.UI
                 return;
             }
             if (kb == null || !kb.escapeKey.wasPressedThisFrame || Time.frameCount - _rebindEndedFrame < 2) return;
-            if (_open) Close();
+            if (_open) { if (Time.frameCount != _openedFrame) Close(); }
             else if (!_player.InputBlocked && Time.frameCount != MainMenu.ClosedFrame) Open(); // not while another box (join address) has the keyboard
         }
 
-        private void Open()
+        /// <summary>Frame the settings last closed (the home screen opens them on Esc and must not reopen them on the same press).</summary>
+        public static int ClosedFrame = -10;
+        private int _openedFrame = -10;
+
+        /// <summary>Opens the settings (Esc in game, or the home screen's gear and Esc).</summary>
+        public void Open()
         {
+            _openedFrame = Time.frameCount;
             _open = true;
             _player.InputBlocked = true;
             LocalPlayer.LockCursor(false);
@@ -150,8 +156,11 @@ namespace Sculpt.Game.UI
             _open = false;
             _settings.Clamped().Save();
             _input.SaveOverrides();
-            _player.InputBlocked = false;
-            LocalPlayer.LockCursor(true);
+            ClosedFrame = Time.frameCount;
+            // Back to the home screen if it is up underneath: keep the mouse free and the player still.
+            bool home = GetComponent<MainMenu>() is MainMenu m && m.IsOpen;
+            _player.InputBlocked = home;
+            LocalPlayer.LockCursor(!home);
         }
 
         // ---------------------------------------------------------------- Rebinding
@@ -329,7 +338,7 @@ namespace Sculpt.Game.UI
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Resume (Esc)", _button, GUILayout.Height(32))) Close();
-            if (GUILayout.Button("Leave to main menu", _button, GUILayout.Height(32), GUILayout.Width(190))) { Close(); Sculpt.Game.Bootstrap.GameBootstrap.Relaunch(Sculpt.Game.Bootstrap.GameBootstrap.Launch.Menu, Sculpt.Game.Bootstrap.GameBootstrap.CurrentMap); }
+            if (GUILayout.Button("Leave to main menu", _button, GUILayout.Height(32), GUILayout.Width(190))) { Close(); Sculpt.Game.Bootstrap.GameBootstrap.Relaunch(Sculpt.Game.Bootstrap.GameBootstrap.Launch.Menu, Sculpt.Game.Bootstrap.GameBootstrap.MapChoice.Duel); } // the home screen stands on the 1v1 map
             if (GUILayout.Button("Quit game", _button, GUILayout.Height(32), GUILayout.Width(140))) Application.Quit();
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
