@@ -54,7 +54,7 @@ namespace Sculpt.Core.Net
         {
             Id = p.Id,
             Alive = !p.State.Dead,
-            InSculptMode = p.State.Hand.InSculptMode,
+            InSculptMode = Movement.Hand.KeepsHealing(p.State.Hand),
             Eye = p.State.Position + new Vec3d(0, PlayerMovement.EyeOf(p.State, Movement), 0),
             Box = PlayerMovement.Box(p.State.Position, Movement.HalfWidth, PlayerMovement.HeightOf(p.State, Movement)),
         };
@@ -64,9 +64,9 @@ namespace Sculpt.Core.Net
         {
             if (Healing == null) return;
             HealerStatus s = StatusOf(p);
-            // Confirms need sculpt mode proper (entering doesn't count yet), like every other sculpt press.
-            s.InSculptMode = p.State.Hand.CanConfirmSculpt;
-            Healing.TryBegin(Grid, s, cmd.Hand.HealTile, cmd.Hand.HealReinforce ? HealKind.Reinforce : HealKind.Heal, BarOf(p.Id), Tick, HealReachSlack);
+            // Quick heal: any time you are not disarmed. With block moves on: sculpt mode proper (entering doesn't count).
+            s.InSculptMode = Movement.Hand.CanHeal(p.State.Hand);
+            Healing.TryBegin(Grid, s, cmd.Hand.HealTile, cmd.Hand.HealCell, cmd.Hand.HealReinforce ? HealKind.Reinforce : HealKind.Heal, BarOf(p.Id), Tick, HealReachSlack);
         }
 
         /// <summary>After everyone moved and fought: finish or cancel heals.</summary>
@@ -114,7 +114,7 @@ namespace Sculpt.Core.Net
             _healSend.Clear();
             if (Healing == null) return _healSend;
             foreach (HealJob j in Healing.Jobs)
-                _healSend.Add(new HealEvent { Type = HealEventType.Began, Player = j.Player, Tile = j.Tile, Kind = j.Kind, Tick = Tick, EndTick = j.EndTick });
+                _healSend.Add(new HealEvent { Type = HealEventType.Began, Player = j.Player, Tile = j.Tile, Cell = j.Cell, Kind = j.Kind, Tick = Tick, EndTick = j.EndTick });
             _healSend.Sort((a, b) => a.Player.CompareTo(b.Player));
             return _healSend;
         }

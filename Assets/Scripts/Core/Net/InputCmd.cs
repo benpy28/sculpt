@@ -39,7 +39,8 @@ namespace Sculpt.Core.Net
             c.Pitch = (float)Clamp(double.IsNaN(c.Pitch) ? 0 : c.Pitch, -MaxPitch, MaxPitch);
             if (c.Hand.WeaponKey > Items.Slots) c.Hand.WeaponKey = 0;
             if (!c.Hand.Pickup || c.Hand.PickId < 0) { c.Hand.Pickup = false; c.Hand.PickId = 0; }
-            if (!c.Hand.Heal || c.Hand.HealTile < 0 || c.Hand.HealTile > ushort.MaxValue) { c.Hand.Heal = false; c.Hand.HealTile = 0; c.Hand.HealReinforce = false; }
+            if (!c.Hand.Heal || c.Hand.HealTile < 0 || c.Hand.HealTile > ushort.MaxValue) { c.Hand.Heal = false; c.Hand.HealTile = 0; c.Hand.HealCell = 0; c.Hand.HealReinforce = false; }
+            else c.Hand.HealCell = Math.Max(0, Math.Min(63, c.Hand.HealCell));
             if (c.HasSculpt && !TargetFits(c.Sculpt.Target)) c.HasSculpt = false;
             if (c.HasSculpt)
             {
@@ -130,7 +131,7 @@ namespace Sculpt.Core.Net
             if (Hand.Heal && Hand.HealReinforce) y |= YHealReinforce;
             w.U8(y);
             if (Hand.Pickup) w.I32(Hand.PickId);
-            if (Hand.Heal) w.U16((ushort)Hand.HealTile);
+            if (Hand.Heal) { w.U16((ushort)Hand.HealTile); w.U8((byte)Hand.HealCell); }
             if (!HasSculpt) return;
             w.U8(SculptSeq);
             w.U8((byte)((byte)Sculpt.Type | ((byte)Sculpt.Direction << 4)));
@@ -186,6 +187,8 @@ namespace Sculpt.Core.Net
             {
                 c.Hand.HealReinforce = (y & YHealReinforce) != 0;
                 c.Hand.HealTile = r.U16();
+                c.Hand.HealCell = r.U8();
+                if (c.Hand.HealCell > 63) throw new NetFormatException("Bad heal cell.");
             }
             else if ((y & YHealReinforce) != 0) throw new NetFormatException("Reinforce bit without a heal.");
             if ((x & XSculpt) == 0) return c;
@@ -249,6 +252,10 @@ namespace Sculpt.Core.Net
                 return; // frozen where they fell
             }
             HandRules.Step(ref s.Hand, cmd.Tick, cmd.Hand, mc.Hand);
+            // A quick heal press takes the gun out of action for a moment (predicted like a punch; the heal itself is
+            // the server's).
+            if (cmd.Hand.Heal && mc.Hand.QuickHeal && mc.Hand.CanHeal(s.Hand))
+                s.ShootReadyTick = Math.Max(s.ShootReadyTick, cmd.Tick + mc.Hand.HealLockTicks);
 
             ChargeRules.Step(grid, mc, ref s, cmd.Tick, charge, events); // breaks the tile before this tick's movement reaches it
             List<MoveEvent> ev = events ?? (_scratch ??= new List<MoveEvent>());

@@ -59,8 +59,8 @@ namespace Sculpt.Core.Tests
             Assert.That(h.Server.Walls[room[SouthTile]].State, Is.EqualTo(TileState.Broken), "still open during the 3 s delay");
             Assert.That(h.Server.Healing.Count, Is.Zero);
             h.RunSeconds(0.5);
-            Assert.That(h.Server.Healing.HealerOf(room[SouthTile]), Is.EqualTo(d.Id), "then it starts healing (in sculpt mode, like anyone)");
-            Assert.That(d.State.Hand.InSculptMode, Is.True);
+            Assert.That(h.Server.Walls[room[SouthTile]].State, Is.EqualTo(TileState.Patched), "then it heals it (one press, 0.2 s, like anyone)");
+            Assert.That(d.State.Hand.InSculptMode, Is.False, "no heal mode any more");
             h.RunSeconds(1.0);
             Assert.That(h.Server.Walls[room[SouthTile]].State, Is.EqualTo(TileState.Patched));
             Assert.That(watcher.Client.Walls[room[SouthTile]].State, Is.EqualTo(TileState.Patched), "players see it");

@@ -143,6 +143,16 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
+        public void Timings_ArePickaxeLike_InSeconds()
+        {
+            // Ben 2026-11-25: "too spammable", a slightly longer time to land and a longer recovery.
+            var pc = new PunchConfig();
+            Assert.That(pc.HitTicks, Is.EqualTo(SimTime.SecondsToTicks(0.2)), "lands 0.2 s after the press (was 0.1)");
+            Assert.That(pc.TotalTicks, Is.EqualTo(SimTime.SecondsToTicks(0.8)), "one swing every 0.8 s (was 0.45)");
+            Assert.That(pc.BufferTicks, Is.EqualTo(SimTime.SecondsToTicks(0.1)));
+        }
+
+        [Test]
         public void SlightlyOffAim_StillHitsThePlayer_TeammateNever()
         {
             CompositeTerrain t = Arena(out TileWalls w);
@@ -156,7 +166,7 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
-        public void TileUnderTheCrosshair_TakesHalfOrAQuarterReinforced()
+        public void TileUnderTheCrosshair_TakesHalf()
         {
             CompositeTerrain t = Arena(out TileWalls w);
             var eye = new Vec3d(9, 1.62, 10.5);
@@ -165,7 +175,7 @@ namespace Sculpt.Core.Tests.World
             Assert.That(w.BoundsOf(tile).Min.Y, Is.EqualTo(1.5).Within(1e-9), "the row at eye height");
             Assert.That(PunchRules.TileDamage(TileState.Intact, w.Config), Is.EqualTo(50));
             Assert.That(PunchRules.TileDamage(TileState.Patched, w.Config), Is.EqualTo(50));
-            Assert.That(PunchRules.TileDamage(TileState.Reinforced, w.Config), Is.EqualTo(25));
+            Assert.That(PunchRules.TileDamage(TileState.Reinforced, w.Config), Is.EqualTo(50), "reinforced wall just has more health (four punches)");
             PunchRules.Resolve(t, w, Swing(new Vec3d(9, 1.62, 9.5), new Vec3d(0, 0, 1)), Pc, null, 1, false, out int far);
             Assert.That(far, Is.EqualTo(-1), "2.5 m away is out of reach");
         }

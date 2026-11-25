@@ -538,6 +538,8 @@ namespace Sculpt.Game.Weapons
                     Vector3 at = h.Point.ToUnity();
                     GunAudio.Play(GunAudio.Impact, at, 0.9f, Random.Range(0.6f, 0.7f), true, 40f, 2f);
                     _rollVel += Random.Range(-25f, 25f);
+                    // Chips and a mark at once (Ben: the first punch showed nothing); the cracks follow from the server.
+                    if (h.Brush > 0) World.WallImpacts.OnBullet?.Invoke(at, h.Normal.ToUnity(), h.Brush - 1, 1f);
                 }
             }
             if (_fist.activeSelf != on) _fist.SetActive(on);

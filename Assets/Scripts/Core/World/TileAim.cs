@@ -8,6 +8,8 @@ namespace Sculpt.Core
     {
         /// <summary>Tile id, or -1 (nothing in range under the crosshair).</summary>
         public int Tile;
+        /// <summary>The cell of the tile under the crosshair (walls and floors; 0 on other tiles).</summary>
+        public int Cell;
         public Vec3d Point;
         /// <summary>Picked by magnetism (a near miss), not exactly under the crosshair.</summary>
         public bool Magnetised;
@@ -30,7 +32,7 @@ namespace Sculpt.Core
         {
             if (walls == null) return TileTarget.None;
             TileTarget t = Ray(terrain, walls, eye, dir, range);
-            if (t.Valid && TileHealing.StateCheck(walls[t.Tile], kind, walls.Config) == HealResult.Ok) return t;
+            if (t.Valid && Healable(walls, t, kind)) return t;
             Vec3d up = Math.Abs(dir.Y) > 0.95 ? new Vec3d(1, 0, 0) : new Vec3d(0, 1, 0);
             Vec3d right = Cross(up, dir).Normalized;
             Vec3d up2 = Cross(dir, right).Normalized;
@@ -44,7 +46,7 @@ namespace Sculpt.Core
                     double th = k * Math.PI / 4.0;
                     Vec3d d = (dir * Math.Cos(a) + (right * Math.Cos(th) + up2 * Math.Sin(th)) * Math.Sin(a)).Normalized;
                     TileTarget c = Ray(terrain, walls, eye, d, range);
-                    if (!c.Valid || TileHealing.StateCheck(walls[c.Tile], kind, walls.Config) != HealResult.Ok) continue;
+                    if (!c.Valid || !Healable(walls, c, kind)) continue;
                     double dot = (c.Point - eye).Normalized.Dot(dir);
                     if (dot > bestDot) { bestDot = dot; pick = c; }
                 }
@@ -66,7 +68,9 @@ namespace Sculpt.Core
                 if (h.Hit && h.Distance < dist - 1e-6 && (ht < 0 || walls.IsFollower(ht))) return TileTarget.None; // frame, floor, rock in front
             }
             if ((walls.BoundsOf(tile).ClosestPoint(eye) - eye).Length > range) return TileTarget.None;
-            return new TileTarget { Tile = tile, Point = eye + dir * dist };
+            Vec3d at = eye + dir * dist;
+            int cell = walls.HasCells(tile) ? walls.CellAt(tile, at + dir * 0.01) : 0;
+            return new TileTarget { Tile = tile, Cell = cell, Point = at };
         }
 
         /// <summary>Nearest tile box (broken ones too) the ray enters within <paramref name="max"/> metres, or -1.</summary>
@@ -118,6 +122,13 @@ namespace Sculpt.Core
             }
             t = t0;
             return true;
+        }
+
+        /// <summary>Would this heal (or reinforce) have anything to do there?</summary>
+        public static bool Healable(TileWalls walls, in TileTarget t, HealKind kind)
+        {
+            if (!walls.HasCells(t.Tile)) return TileHealing.StateCheck(walls[t.Tile], kind, walls.Config) == HealResult.Ok;
+            return walls.HasHealWork(t.Tile, t.Cell, kind);
         }
 
         private static Vec3d Cross(Vec3d a, Vec3d b) => new Vec3d(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X);

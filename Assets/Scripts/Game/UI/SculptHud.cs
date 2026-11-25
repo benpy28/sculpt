@@ -70,7 +70,7 @@ namespace Sculpt.Game.UI
             if (hand.Mode == HandMode.Disarmed) { label = "DISARMED"; red = true; }
             else if (refusedRecently) { label = Reason(_view.LastReject).ToUpperInvariant(); red = true; }
             else if (_player.Heals && Time.time - _player.HealRejectTime < 0.9f) { label = HealReason(_player.LastHealReject).ToUpperInvariant(); red = true; }
-            else if (_player.Heals && hand.InSculptMode) HealChip(net, hand, out label, out cost, out col);
+            else if (_player.Heals && (hand.InSculptMode || _player.QuickHeal)) HealChip(net, hand, out label, out cost, out col);
             else if (hand.Mode == HandMode.SculptEnter) label = "SCULPT";
             else if (hand.Mode == HandMode.Sculpt)
             {
@@ -254,7 +254,8 @@ namespace Sculpt.Game.UI
             float bar = net.DisplayBar / (float)SculptConfig.BarMax;
             const float radius = 26f, thick = 3f;
             const float start = 225f, span = 270f; // gap at the bottom, full bar reads clockwise from bottom-left
-            float alpha = hand.InSculptMode ? 1f : (bar < 0.999f ? 0.55f : 0.0f);
+            bool aimedHeal = _player.QuickHeal && _player.HealTarget.Valid && (_player.HealCheck == HealResult.Ok || _player.HealCheck == HealResult.NotEnoughBar);
+            float alpha = hand.InSculptMode || aimedHeal ? 1f : (bar < 0.999f ? 0.55f : 0.0f);
             if (alpha <= 0) return;
             Arc(cx, cy, radius, thick, start, span, Tint(BarBack, alpha));
             Arc(cx, cy, radius, thick, start, span * bar, Tint(BarColour, alpha));
@@ -265,7 +266,7 @@ namespace Sculpt.Game.UI
                 if (r == HealResult.Ok || r == HealResult.NotEnoughBar || r == HealResult.NotInSculptMode) hoverCost = TileHealing.CostOf(_player.HealKindNow, net.Heals.Config);
             }
             else if (_player.HasHover) hoverCost = _player.HoverCheck.Cost;
-            if (hoverCost > 0 && hand.InSculptMode)
+            if (hoverCost > 0 && (hand.InSculptMode || aimedHeal))
             {
                 float cost = hoverCost / (float)SculptConfig.BarMax;
                 if (cost > 0)
@@ -297,12 +298,20 @@ namespace Sculpt.Game.UI
             col = HudDraw.Text;
             bool reinforce = _player.HealKindNow == HealKind.Reinforce;
             string what = reinforce ? "REINFORCE" : "HEAL";
+            if (_player.QuickHeal) what = Key(_player.Input.SculptToggle) + "  " + what;
             if (net.TryGetOwnHeal(out HealJob mine, out _) && (!_player.HealTarget.Valid || _player.HealTarget.Tile == mine.Tile))
             {
                 label = mine.Kind == HealKind.Reinforce ? "REINFORCING" : "HEALING";
                 return;
             }
             if (hand.Mode == HandMode.SculptEnter) { label = "SCULPT"; return; }
+            if (_player.QuickHeal)
+            {
+                // No heal mode: say nothing unless what you aim at can be healed (a hole or bad cracks in range).
+                if (!_player.HealTarget.Valid) return;
+                HealResult q = _player.HealCheck;
+                if (q == HealResult.NothingToHeal || q == HealResult.AlreadyReinforced || q == HealResult.NoTile || q == HealResult.OutOfRange) return;
+            }
             if (!_player.HealTarget.Valid) { label = "AIM AT A CRACKED OR BROKEN WALL WITHIN " + Mathf.RoundToInt((float)net.Walls.Config.HealRange) + " M"; col = HudDraw.Dim; return; }
             HealResult r = _player.HealCheck;
             if (r == HealResult.Ok)
@@ -330,7 +339,7 @@ namespace Sculpt.Game.UI
                 case HealResult.PlayerInside: return "someone is in the way";
                 case HealResult.LeftRange: return "too far away";
                 case HealResult.Stopped: return "stopped";
-                case HealResult.Replaced: return "switched tile";
+                case HealResult.Replaced: return "switched to another spot";
                 default: return r.ToString();
             }
         }
