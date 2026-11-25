@@ -191,11 +191,13 @@ namespace Sculpt.Core.Net
             double gain = Config.AimGain;
             Vec3d aimAt = default;
             bool aimEnemy = false;
+            double aimUp = p.Height * 0.6; // the height it aims at on the target (chest, or the head)
             if (_engaged)
             {
                 double ahead = Config.ReactionTicks / (double)SimTime.TicksPerSecond * Config.Lead;
                 double h = p.Height;
                 double up = _aimHead ? h - 0.18 : h * 0.62 + _aimHeightOffset;
+                aimUp = up;
                 aimAt = p.Pos + p.Vel.WithY(0) * ahead + new Vec3d(0, up, 0);
                 aimEnemy = true;
             }
@@ -216,7 +218,8 @@ namespace Sculpt.Core.Net
                 if (_engaged && r2 > 1)
                 {
                     double rate = (d.X * s.Velocity.Z - d.Z * s.Velocity.X) / r2; // radians per second
-                    wantYaw += rate / SimTime.TicksPerSecond * (1 - gain) / Math.Max(0.05, gain) * Config.Lead;
+                    double gt = Math.Max(0.02, 1 - Math.Pow(1 - Clamp(gain, 0, 1), 1.0 / SimTime.Per60)); // the per-tick gain used below
+                    wantYaw += rate / SimTime.TicksPerSecond * (1 - gt) / gt * Config.Lead;
                 }
                 wantPitch = -Math.Asin(Math.Max(-1, Math.Min(1, d.Y / Math.Max(1e-6, d.Length)))) * 180 / Math.PI;
             }
@@ -279,7 +282,8 @@ namespace Sculpt.Core.Net
                 double range = held == Weapon.Pump ? 16 : held == Weapon.Smg ? 35 : 90;
                 // Fires when the crosshair is on where it believes the target is now (seen late, moved on by its velocity).
                 double ahead = Config.ReactionTicks / (double)SimTime.TicksPerSecond * Config.Lead;
-                Vec3d chest = p.Pos + p.Vel.WithY(0) * ahead + new Vec3d(0, p.Height * 0.6, 0);
+                // Checked against the point it aims at: a head aim checked against the chest was always ~4 degrees off at 8 m.
+                Vec3d chest = p.Pos + p.Vel.WithY(0) * ahead + new Vec3d(0, aimUp, 0);
                 double dTrue = (chest - eye).Length;
                 Vec3d look = WeaponRules.AimDir(_yaw + WobYaw(tick), _pitch + WobPitch(tick), 0, 0);
                 double err = Math.Acos(Clamp(look.Dot((chest - eye) / Math.Max(1e-6, dTrue)), -1, 1)) * 180 / Math.PI;

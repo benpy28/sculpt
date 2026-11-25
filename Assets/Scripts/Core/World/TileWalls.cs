@@ -67,7 +67,7 @@ namespace Sculpt.Core
         public double DamagedBelowFraction = 0.5;
         public int PatchedHealth = 50;
         public int ReinforcedHealth = 200;
-        /// <summary>Door leaves take this many times the damage a wall tile would: two AR bullets, one punch, any pump shot.</summary>
+        /// <summary>Door leaves take this many times the damage a wall tile would: with walls by cell (AR 50, punch 50 per hit) one hit of anything breaks a leaf.</summary>
         public int DoorDamageScale = 4;
 
         /// <summary>

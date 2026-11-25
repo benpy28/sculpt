@@ -25,7 +25,7 @@ namespace Sculpt.Game.Config
         [Tooltip("Healed tiles come back Patched with this max health.")]
         [Min(1)] public int patchedHealth = 50;
         [Min(1)] public int reinforcedHealth = 200;
-        [Tooltip("Door leaves take this many times a wall tile's damage (4: two AR bullets, one punch). A sprint charge always goes through a door.")]
+        [Tooltip("Door leaves take this many times a wall tile's damage (4: one hit of any gun or one punch). A sprint charge always goes through a door.")]
         [Min(1)] public int doorDamageScale = 4;
 
         [Header("Walls by area (damage lands on 19 cm cells round each hit, never by tile; never a pixel hole or a sliver)")]

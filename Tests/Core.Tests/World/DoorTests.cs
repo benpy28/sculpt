@@ -30,13 +30,13 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
-        public void ADoorLeaf_GoesWithOnePunchOrTwoArBullets_AWallTileDoesNot()
+        public void ADoorLeaf_GoesWithOnePunchOrOneArBullet_AWallTileDoesNot()
         {
             Arena(out TileWalls w, out int left, out int right);
             BreachConfig c = w.Config;
             Assert.That(w.Damage(left, c.PunchTileDamage, TileCause.Punch), Is.True, "one punch");
-            Assert.That(w.Damage(right, c.ArTileDamage, TileCause.Bullet), Is.False);
-            Assert.That(w.Damage(right, c.ArTileDamage, TileCause.Bullet), Is.True, "two AR bullets");
+            // Walls by cell made a wall bullet worth half a tile (AR 50), so at 4x any one bullet breaks a door leaf.
+            Assert.That(w.Damage(right, c.ArTileDamage, TileCause.Bullet), Is.True, "one AR bullet");
             Assert.That(w[left].State, Is.EqualTo(TileState.Broken));
             Assert.That(w[left].Kind, Is.EqualTo(TileKind.Door));
 
