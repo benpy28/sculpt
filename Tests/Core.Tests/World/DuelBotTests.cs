@@ -83,7 +83,7 @@ namespace Sculpt.Core.Tests
             public readonly SculptNetHarness H = Duel();
             public ServerPlayer A, B;
             public DuelBot BrainA, BrainB;
-            public double MovedA, MovedB;
+            public double MovedA, MovedB, HighestFeet;
             public int Ticks, FiresWithoutSight, Fires;
             private readonly Dictionary<int, bool>[] _sight = { new Dictionary<int, bool>(), new Dictionary<int, bool>() };
 
@@ -105,6 +105,8 @@ namespace Sculpt.Core.Tests
                     Ticks++;
                     if (!A.State.Dead && (A.State.Position - pa).Length < 2) MovedA += (A.State.Position - pa).HorizontalLength;
                     if (!B.State.Dead && (B.State.Position - pb).Length < 2) MovedB += (B.State.Position - pb).HorizontalLength;
+                    if (!A.State.Dead) HighestFeet = Math.Max(HighestFeet, A.State.Position.Y);
+                    if (!B.State.Dead) HighestFeet = Math.Max(HighestFeet, B.State.Position.Y);
                     Check(0, A, B, BrainA);
                     Check(1, B, A, BrainB);
                 }
@@ -133,7 +135,8 @@ namespace Sculpt.Core.Tests
         {
             var m = new BotMatch(BotLevel.Normal, BotLevel.Normal);
             m.Run(150);
-            TestContext.WriteLine($"A {m.A.Kills} kills / {m.A.Deaths} deaths, moved {m.MovedA:0} m; B {m.B.Kills} / {m.B.Deaths}, moved {m.MovedB:0} m; fires {m.Fires}, without sight {m.FiresWithoutSight}");
+            TestContext.WriteLine($"A {m.A.Kills} kills / {m.A.Deaths} deaths, moved {m.MovedA:0} m; B {m.B.Kills} / {m.B.Deaths}, moved {m.MovedB:0} m; fires {m.Fires}, without sight {m.FiresWithoutSight}, highest feet {m.HighestFeet:0.0} m");
+            Assert.That(m.HighestFeet, Is.GreaterThan(4.6), "they really climb stairs or ramps to an upper floor (the movement, not just the nav graph)");
             Assert.That(m.MovedA, Is.GreaterThan(60), "A walks the map");
             Assert.That(m.MovedB, Is.GreaterThan(60), "B walks the map");
             Assert.That(m.A.Kills + m.B.Kills, Is.GreaterThanOrEqualTo(3), "they find each other and fight");
