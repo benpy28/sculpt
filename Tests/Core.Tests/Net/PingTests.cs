@@ -230,7 +230,7 @@ namespace Sculpt.Core.Tests.Net
             Match(h.Server);
             var human = h.AddClient(Spawn(2), team: 2, seed: 2); // stands still at its spawn, behind the divide
             DuelMap.BuildBrushes(out BreachMapInfo info);
-            var brain = new DuelBot(DuelMap.BuildNav(), DuelBotConfig.For(BotLevel.Normal), seed: 3);
+            var brain = new DuelBot(DuelMap.BuildNav(), DuelBotConfig.For(BotLevel.Normal), seed: 1); // seed 1: on the door map some seeds find the human by roaming before any ping, which is fine but not this test
             ServerPlayer bot = h.Server.AddBot(brain, 1, Spawn(1), info.SpawnYaw[0]);
             // Let it roam, but keep it from ever seeing the human before the ping: a ping is only fired after 10 s
             // without sight anyway, so just find the first ping.
