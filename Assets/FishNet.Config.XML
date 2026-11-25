@@ -13,8 +13,8 @@
     <IncludedFolders />
   </PrefabGenerator>
   <CodeStripping>
-    <IsBuilding>true</IsBuilding>
-    <IsDevelopment>true</IsDevelopment>
+    <IsBuilding>false</IsBuilding>
+    <IsDevelopment>false</IsDevelopment>
     <IsHeadless>false</IsHeadless>
     <StripReleaseBuilds>false</StripReleaseBuilds>
     <StrippingType>0</StrippingType>

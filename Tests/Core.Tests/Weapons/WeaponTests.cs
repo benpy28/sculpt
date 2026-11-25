@@ -253,7 +253,11 @@ namespace Sculpt.Core.Tests.Weapons
             Assert.That(WeaponRules.Spread(s, _mc, ar), Is.GreaterThanOrEqualTo(3));
             WeaponStats pump = _mc.Weapons.Of(Weapon.Pump);
             s.Mode = MoveMode.Air;
-            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.LessThan(pump.PatternSpread * 0.5), "pump fairly accurate in air");
+            // Balance pass 2026-11-25 (Ben): the pump goes wide sliding and in the air (+1.5 deg each), still less than the AR.
+            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.GreaterThanOrEqualTo(1.5), "pump wide in the air");
+            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.LessThan(WeaponRules.Spread(s, _mc, ar)));
+            s.Mode = MoveMode.Slide;
+            Assert.That(WeaponRules.Spread(s, _mc, pump), Is.GreaterThanOrEqualTo(1.5), "pump wide sliding");
         }
 
         [Test]

@@ -67,6 +67,6 @@
         "*.sln": "*.csproj",
         "*.slnx": "*.csproj"
     },
-    "dotnet.defaultSolution": "sculpt-feel.slnx",
+    "dotnet.defaultSolution": "sculpt-balance.slnx",
     "dotnet.enableWorkspaceBasedDevelopment": false
 }
