@@ -96,8 +96,8 @@ namespace Sculpt.Game.Weapons
             { 1.55f, 150f, 18f, 0.6f, 44f, 1.05f }, // AR: a solid thump per round, settled before the next
             { 1.3f, 245f, 17f, 0.56f, 48f, 0.85f }, // pistol: sharp flip up, fast home
         };
-        /// <summary>Muzzle flash size (m) per gun, your own view; others' guns draw 1.35x so you can see them shoot.</summary>
-        private static readonly float[] FlashSize = { 0.34f, 0.15f, 0.2f, 0.17f };
+        // No muzzle flash on any gun (Ben 2026-11-25: too much, doesn't fit the game). Shots read from the kick, the
+        // tracer, a little muzzle smoke and the sound.
         /// <summary>The gun never tips further than this (deg) from a kick, so a fast pump follow-up never hides the target.</summary>
         private const float MaxKickPitch = 22f;
 
@@ -278,7 +278,6 @@ namespace Sculpt.Game.Weapons
             {
                 GunModel g = _guns[(int)p.Shot.Weapon];
                 Vector3 muzzle = g.Root.activeInHierarchy ? g.Muzzle.position : p.Shot.Origin.ToUnity() + p.Shot.Aim.ToUnity() * 0.6f;
-                _flashes.Add(new Flash { At = muzzle, Fwd = p.Shot.Aim.ToUnity(), Born = Time.time, Size = FlashSize[(int)p.Shot.Weapon], Local = true });
                 MuzzleSmoke(muzzle, p.Shot.Aim.ToUnity(), p.Shot.Weapon);
                 bool pellets = p.Ends.Count > 1;
                 foreach (Vector3 end in p.Ends)
@@ -319,7 +318,6 @@ namespace Sculpt.Game.Weapons
             _kickRotVel += new Vector3(-380f, Random.Range(-40f, 40f), Random.Range(-50f, 50f));
             _rollVel += (Random.value < 0.5f ? -1f : 1f) * 110f;
             _fp.Shake.FovPunch = Mathf.Max(_fp.Shake.FovPunch, 3.2f);
-            _flashes.Add(new Flash { At = _launcher.Muzzle.position, Fwd = _rig.Camera.transform.forward, Born = Time.time, Size = 0.3f, Local = true });
         }
 
         private void OnRemoteShot(in CombatEvent e, float now)
@@ -329,7 +327,6 @@ namespace Sculpt.Game.Weapons
             Vector3 fwd = shot.Aim.ToUnity();
             Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
             Vector3 muzzle = eye + fwd * 0.65f + right * 0.2f - Vector3.up * 0.18f;
-            _flashes.Add(new Flash { At = muzzle, Fwd = fwd, Born = now, Size = FlashSize[(int)shot.Weapon] * 1.35f });
             MuzzleSmoke(muzzle, fwd, shot.Weapon);
             GunAudio.PlayShot(shot.Weapon, _session.Client.Grid, muzzle, 1f, Random.Range(0.96f, 1.04f), true);
             if (shot.Weapon == Weapon.Pump) StartCoroutineRack(muzzle, now);

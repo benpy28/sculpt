@@ -61,6 +61,9 @@ namespace Sculpt.Core
 
         // ---- Recoil: moves the real aim (and the camera with it), recovers on its own ----
         public double RecoilPitchPerShot;
+        /// <summary>Extra pitch on the first shot of a burst (recoil fully recovered): a heavy, fixed, learnable kick
+        /// (Ben 2026-11-25). The first bullet still goes where you aimed; only the follow-up needs pulling down.</summary>
+        public double RecoilFirstShotPitch;
         /// <summary>Sideways kick per shot, scaled by a fixed learnable pattern (<see cref="WeaponRules.YawPattern"/>).</summary>
         public double RecoilYawPerShot;
         public double RecoilMaxPitch = 10;
@@ -118,7 +121,7 @@ namespace Sculpt.Core
                 BaseSpread = 0.0, MoveSpread = 0.3, CrouchFactor = 1, SlideSpread = 0.6, AirSpread = 0.8, PatternSpread = 2.6,
                 SwapBloom = 0.3, BloomRecoveryPerSecond = 4,
                 MagSize = 5, ShellReload = true, ShellStartTicks = 6 * SimTime.Per60, ShellTicks = 30 * SimTime.Per60,
-                RecoilPitchPerShot = 3.5, RecoilYawPerShot = 0.6, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 11, RecoilRecoveryDelayTicks = 8 * SimTime.Per60,
+                RecoilPitchPerShot = 3.5, RecoilFirstShotPitch = 0.5, RecoilYawPerShot = 0.6, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 11, RecoilRecoveryDelayTicks = 8 * SimTime.Per60,
             },
             // SMG: 12.75 (was 15), 12 shots/s, heavy falloff past 10 m; head 1.25x (Ben 2026-11-20).
             new WeaponStats
@@ -127,7 +130,7 @@ namespace Sculpt.Core
                 FalloffDistances = new double[] { 10, 20, 35 }, FalloffFactors = new double[] { 1.0, 0.6, 0.4 },
                 BaseSpread = 0.9, MoveSpread = 0.7, CrouchFactor = 0.8, SlideSpread = 1.2, AirSpread = 1.8,
                 BloomPerShot = 0.12, BloomMax = 1.6, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 7 * SimTime.Per60,
-                RecoilPitchPerShot = 0.28, RecoilYawPerShot = 0.2, RecoilMaxPitch = 5, RecoilRecoveryPerSecond = 10, RecoilRecoveryDelayTicks = 7 * SimTime.Per60,
+                RecoilPitchPerShot = 0.28, RecoilFirstShotPitch = 0.25, RecoilYawPerShot = 0.2, RecoilMaxPitch = 5, RecoilRecoveryPerSecond = 10, RecoilRecoveryDelayTicks = 7 * SimTime.Per60,
             },
             // AR: 21.5 body / 34 head (was 25/40; 7 body shots kill instead of 6), 5.5 shots/s, first shot accurate then spread builds; strongly penalised sliding/airborne.
             new WeaponStats
@@ -135,7 +138,7 @@ namespace Sculpt.Core
                 Name = "AR", BodyDamage = 21.5, HeadDamage = 34, MagSize = 25, ReloadTicks = 114 * SimTime.Per60, SwapBloom = 0.4, AimFovScale = 0.8, FireIntervalMilliTicks = 10909 * SimTime.Per60, Automatic = true, Range = 250,
                 BaseSpread = 0.0, MoveSpread = 0.9, CrouchFactor = 0.75, SlideSpread = 3.0, AirSpread = 4.0,
                 BloomPerShot = 0.45, BloomMax = 3.0, BloomRecoveryPerSecond = 6, BloomRecoveryDelayTicks = 13 * SimTime.Per60,
-                RecoilPitchPerShot = 0.7, RecoilYawPerShot = 0.3, RecoilMaxPitch = 7, RecoilRecoveryPerSecond = 9, RecoilRecoveryDelayTicks = 13 * SimTime.Per60,
+                RecoilPitchPerShot = 0.7, RecoilFirstShotPitch = 0.6, RecoilYawPerShot = 0.3, RecoilMaxPitch = 7, RecoilRecoveryPerSecond = 9, RecoilRecoveryDelayTicks = 13 * SimTime.Per60,
             },
             // Pistol: 25.5 body / 42.5 head (was 30/50), semi-auto, max 5 shots/s, accurate; falloff from 25 m to 70% at 50 m.
             new WeaponStats
@@ -145,7 +148,7 @@ namespace Sculpt.Core
                 FalloffDistances = new double[] { 25, 50 }, FalloffFactors = new double[] { 1.0, 0.7 },
                 BaseSpread = 0.1, MoveSpread = 0.5, CrouchFactor = 0.8, SlideSpread = 1.5, AirSpread = 2.0,
                 BloomPerShot = 0.5, BloomMax = 2.0, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 14 * SimTime.Per60,
-                RecoilPitchPerShot = 1.4, RecoilYawPerShot = 0.25, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 14, RecoilRecoveryDelayTicks = 4 * SimTime.Per60,
+                RecoilPitchPerShot = 1.4, RecoilFirstShotPitch = 0.45, RecoilYawPerShot = 0.25, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 14, RecoilRecoveryDelayTicks = 4 * SimTime.Per60,
             },
         };
 
