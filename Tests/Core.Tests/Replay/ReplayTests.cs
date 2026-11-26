@@ -465,6 +465,46 @@ namespace Sculpt.Core.Tests.Replay
             }
         }
 
+        [Test]
+        public void StateHash_CoversCellHealthItemsScoresBarsAndTheMatch()
+        {
+            // The re-run check can only prove what the hash covers. Each of these is simulated server state a re-run
+            // must reproduce; a difference in any one of them must change the hash.
+            NetServer Fresh()
+            {
+                NetServer s = NewDuelServer(out BreachMapInfo info, (c, d, r) => { });
+                SpawnItems(s, info);
+                s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Easy), 1), 1, info.TeamSpawns[0][0], info.SpawnYaw[0]);
+                s.Step();
+                return s;
+            }
+            Assert.That(MatchStream.StateHash(Fresh()), Is.EqualTo(MatchStream.StateHash(Fresh())), "same state, same hash");
+
+            int tile = -1;
+            NetServer probe = Fresh();
+            for (int i = 0; i < probe.Walls.Count && tile < 0; i++) if (probe.Walls.HasCells(i)) tile = i;
+            Assert.That(tile, Is.GreaterThanOrEqualTo(0));
+            byte[] Hp(int cell) { var h = new byte[Brush.CellCount]; for (int c = 0; c < h.Length; c++) h[c] = 100; h[cell] = 40; return h; }
+
+            var changes = new Dictionary<string, Action<NetServer>>
+            {
+                ["the same damage on another cell"] = s => s.Walls.WriteCells(tile, 0, 0, 0, Hp(1), TileCause.Bullet),
+                ["a ground item"] = s => s.SpawnItem(Item.Grenade, 1, new Vec3d(40, 0, 40)),
+                ["a score"] = s => s.Players[0].MatchKills++,
+                ["the kill credit"] = s => { s.Players[0].LastHurtBy = 7; s.Players[0].LastHurtTick = s.Tick; },
+                ["a sculpt bar"] = s => s.BarOf(s.Players[0].Id).Spend(10, s.Tick),
+                ["the match phase"] = s => s.Match.PhaseEndTick += 5,
+                ["the storm"] = s => s.Match.Storm.ToRadius += 1,
+            };
+            foreach (var kv in changes)
+            {
+                NetServer a = Fresh(), b = Fresh();
+                if (kv.Key.StartsWith("the same damage")) a.Walls.WriteCells(tile, 0, 0, 0, Hp(0), TileCause.Bullet);
+                kv.Value(b);
+                Assert.That(MatchStream.StateHash(b), Is.Not.EqualTo(MatchStream.StateHash(a)), kv.Key);
+            }
+        }
+
         // ------------------------------------------------------------------ re-run check (anti-cheat groundwork)
 
         [Test]
