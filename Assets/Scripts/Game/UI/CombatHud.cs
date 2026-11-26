@@ -185,27 +185,39 @@ namespace Sculpt.Game.UI
             {
                 GroundItem g = net.Items[_player.PickTarget];
                 PickupPlan plan = _player.PickPlan;
-                string key = _player.InteractKeyName;
-                string what = Items.Name(g.Kind, g.Rarity) + (g.Count > 1 ? " x" + g.Count : "");
-                string line;
+                string key = InteractKey();
                 Color col = g.Rarity != Rarity.None ? RarityColours.Of(g.Rarity) : HudDraw.Text;
-                if (plan.Opens) line = $"{key}  Open chest";
-                else if (plan.Result == PickupResult.Swapped && plan.SwapOut == g.Kind) line = $"{key}  Swap your {Items.Name(g.Kind, s.Hand.Bag.RarityOf(plan.Slot))} for {what}";
-                else if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
-                else if (plan.Allowed) line = $"{key}  Pick up {what}";
-                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full"
-                    : g.Kind == Item.Bandage ? "Bandages full" : g.Kind == Item.Medkit ? "First-aid kits full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
-                else { line = what; col = HudDraw.Dim; }
-                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), line, 14, col, TextAnchor.MiddleCenter, true);
+                bool dim = !plan.Opens && !plan.Allowed && plan.Result != PickupResult.Swapped;
+                var pk = (key, g.Kind, g.Rarity, g.Count, plan.Opens, plan.Allowed, plan.Result, plan.SwapOut, s.Hand.Bag.RarityOf(plan.Slot));
+                if (!_pickKeyValid || !pk.Equals(_pickKey))
+                {
+                    _pickKey = pk;
+                    _pickKeyValid = true;
+                    string what = Items.Name(g.Kind, g.Rarity) + (g.Count > 1 ? " x" + g.Count : "");
+                    string line;
+                    if (plan.Opens) line = $"{key}  Open chest";
+                    else if (plan.Result == PickupResult.Swapped && plan.SwapOut == g.Kind) line = $"{key}  Swap your {Items.Name(g.Kind, s.Hand.Bag.RarityOf(plan.Slot))} for {what}";
+                    else if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
+                    else if (plan.Allowed) line = $"{key}  Pick up {what}";
+                    else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full"
+                        : g.Kind == Item.Bandage ? "Bandages full" : g.Kind == Item.Medkit ? "First-aid kits full" : "Have " + Items.Name(g.Kind); }
+                    else line = what;
+                    _pickLine = line;
+                }
+                if (dim) col = HudDraw.Dim;
+                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), _pickLine, 14, col, TextAnchor.MiddleCenter, true);
             }
             else if (!s.Dead && _player.DoorTarget >= 0)
             {
-                string key = _player.InteractKeyName;
-                if (key != _doorKey) { _doorKey = key; _openLine = key + "  Open door"; _shutLine = key + "  Close door"; }
+                string key = InteractKey();
+                if (!ReferenceEquals(key, _doorKey)) { _doorKey = key; _openLine = key + "  Open door"; _shutLine = key + "  Close door"; }
                 HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), _player.DoorTargetOpen ? _shutLine : _openLine, 14, HudDraw.Text, TextAnchor.MiddleCenter, true);
             }
             else if (!s.Dead && _player.DropHold > 0f)
-                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), "Dropping " + Items.Name(s.Hand.HeldItem) + "...", 13, HudDraw.Dim, TextAnchor.MiddleCenter, true);
+            {
+                if (s.Hand.HeldItem != _dropItem || _dropLine == null) { _dropItem = s.Hand.HeldItem; _dropLine = "Dropping " + Items.Name(_dropItem) + "..."; }
+                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), _dropLine, 13, HudDraw.Dim, TextAnchor.MiddleCenter, true);
+            }
 
             // Damage dealt by the last hit, next to the crosshair.
             if (Sculpt.Game.Settings.ClientSettings.Current.DamageNumbers && Time.time - _view.HitTime < 0.5f)
@@ -238,6 +250,26 @@ namespace Sculpt.Game.UI
 
         /// <summary>False for a death with no respawn (battle royale: out until the next match).</summary>
         private static bool Respawns(in MotorState s) => s.RespawnTick != int.MaxValue;
+
+        // Prompt text under the crosshair, rebuilt only when what it says changes. The interact key's name is re-read
+        // at most twice a second (reading a bind's display name builds a dozen strings; a rebind shows within 0.5 s).
+        private string _interactKey;
+        private float _interactKeyAt = -1f;
+        private (string, Item, Rarity, int, bool, bool, PickupResult, Item, Rarity) _pickKey;
+        private bool _pickKeyValid;
+        private string _pickLine = "", _dropLine;
+        private Item _dropItem;
+
+        private string InteractKey()
+        {
+            if (_interactKey == null || Time.unscaledTime >= _interactKeyAt)
+            {
+                string k = _player.InteractKeyName;
+                if (k != _interactKey) _interactKey = k; // same text keeps the same reference, so caches stay valid
+                _interactKeyAt = Time.unscaledTime + 0.5f;
+            }
+            return _interactKey;
+        }
 
         private const float Margin = 24f, PanelW = 240f, PanelH = 64f, HealthX = 24f;
 
