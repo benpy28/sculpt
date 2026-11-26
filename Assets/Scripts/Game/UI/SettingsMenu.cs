@@ -1030,10 +1030,15 @@ namespace Sculpt.Game.UI
             AudioClip[] steps = MovementAudio.Steps;
             if (steps == null || steps.Length == 0) return;
             // Not routed (nothing in the way matters for a test), but the head shadow is: apply it by hand.
-            Sculpt.Core.Audio.SoundPaths.HeadShadow(ear.forward.ToCore(), (at - ear.position).normalized.ToCore(), SoundRouter.Config, out double db, out double hz);
-            db *= _settings.HeadShadow;
+            // Level and top end both, exactly as a routed sound gets them (the dulling is most of the cue).
+            var clear = new Sculpt.Core.Audio.SoundRoute
+            {
+                Way = Sculpt.Core.Audio.SoundWay.Direct, ArrivesFrom = (at - ear.position).normalized.ToCore(), CutoffHz = SoundRouter.Config.OpenCutoffHz,
+            };
+            Sculpt.Core.Audio.SoundPaths.Hear(clear, ear.forward.ToCore(), _settings.HeadShadow, SoundRouter.Config, out double db, out double hz, out _);
             float gain = Mathf.Pow(10f, (float)db / 20f);
-            Synth.Play(steps[UnityEngine.Random.Range(0, steps.Length)], at, 0.9f * gain, 1f, true, 1.5f, 30f, route: false, bus: SoundBus.Movement);
+            Synth.Play(steps[UnityEngine.Random.Range(0, steps.Length)], at, 0.9f * gain, 1f, true, 1.5f, 30f, route: false, bus: SoundBus.Movement,
+                       cutoffHz: SoundMix.Cutoff((float)hz, (float)SoundRouter.Config.OpenCutoffHz));
         }
 
         // ---------------------------------------------------------------- Accessibility
