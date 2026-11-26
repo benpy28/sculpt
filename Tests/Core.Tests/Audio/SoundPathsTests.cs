@@ -165,6 +165,34 @@ namespace Sculpt.Core.Tests.Audio
         }
 
         [Test]
+        public void DuelMap_RandomPairs_SoundTheSameBothWays()
+        {
+            // Spec: "Symmetric: whoever can hear you, you can hear back." Random ears and sources on the duel map, each at
+            // least a player's half-width clear of every wall (where ears and footsteps really are).
+            CompositeTerrain t = DuelMap.Terrain(DuelMap.BuildGround(), DuelMap.BuildBrushes(out BreachMapInfo info));
+            var paths = new SoundPaths(t);
+            var rng = new Random(11);
+            double size = info.SizeX;
+            var hb = new Vec3d(0.36, 0.36, 0.36);
+            int n = 0, wayDiff = 0, distDiff = 0;
+            string first = null;
+            while (n < 1500)
+            {
+                var a = new Vec3d(size * 0.2 + rng.NextDouble() * size * 0.6, 0.3 + rng.Next(3) * 4.8 + 1.3, size * 0.2 + rng.NextDouble() * size * 0.6);
+                double ang = rng.NextDouble() * Math.PI * 2, d = 3 + rng.NextDouble() * 27;
+                var b = new Vec3d(a.X + Math.Cos(ang) * d, 0.3 + rng.Next(3) * 4.8 + 1.3, a.Z + Math.Sin(ang) * d);
+                if (t.BoxOverlapsSolid(new Aabb(a - hb, a + hb)) || t.BoxOverlapsSolid(new Aabb(b - hb, b + hb))) continue;
+                n++;
+                SoundRoute ab = paths.Route(a, b, 34), ba = paths.Route(b, a, 34);
+                if (ab.Way != ba.Way) { wayDiff++; first ??= $"{a} -> {b}: {ab.Way} ({ab.Distance:0.00} m) but back {ba.Way} ({ba.Distance:0.00} m)"; }
+                else if (ab.Audible && Math.Abs(ab.Distance - ba.Distance) > 0.05) { distDiff++; first ??= $"({a.X:R}, {a.Y:R}, {a.Z:R}) -> ({b.X:R}, {b.Y:R}, {b.Z:R}): {ab.Way} {ab.Distance:0.00} m but back {ba.Distance:0.00} m"; }
+            }
+            TestContext.Out.WriteLine($"{n} pairs: way differs {wayDiff}, distance differs {distDiff}. {first}");
+            Assert.That(wayDiff, Is.EqualTo(0), first);
+            Assert.That(distDiff, Is.EqualTo(0), first);
+        }
+
+        [Test]
         public void ANearSoundThroughOneWall_BeatsAFarWayRound()
         {
             // Door on the south wall; listener hugging the outside of the east wall, source just inside it: 0.8 m through
