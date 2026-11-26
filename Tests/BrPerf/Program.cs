@@ -52,7 +52,7 @@ internal static class Program
         s.AddPlayer(1, 1, info.TeamSpawns[0][0], 0);
         double clientWorst = 0, clientTotal = 0; int clientWorstTick = 0;
 
-        int ticks = 0, playTicks = 0;
+        int ticks = 0, playTicks = 0, playStartTick = -1;
         int maxTicks = (int)(secs * SimTime.TicksPerSecond);
         long gc0 = GC.CollectionCount(0);
         var wall = Stopwatch.StartNew();
@@ -80,6 +80,15 @@ internal static class Program
                 tl[4] += TickMs[(int)Prof.Section.Simulate];
                 tl[5] += TickMs[(int)Prof.Section.Bots];
             }
+            foreach (CombatEvent ce in s.CombatEvents)
+                if (ce.Type == CombatEventType.Kill)
+                {
+                    ServerPlayer v = null, a = null;
+                    foreach (ServerPlayer p in s.Players) { if (p.Id == ce.Victim) v = p; if (p.Id == ce.Attacker) a = p; }
+                    Deaths.Add($"{(ticks - playStartTick) / (double)SimTime.TicksPerSecond,6:0.0}s {s.Match.Phase,-9} {ce.Source,-8} victim {ce.Victim} attacker {ce.Attacker}" +
+                        (a != null && v != null ? $" dist {(a.State.Position - v.State.Position).Length:0.0} m" : ""));
+                }
+            if (s.Match.Phase == MatchPhase.Playing && playStartTick < 0) playStartTick = ticks;
             if (s.Match.Phase != MatchPhase.Playing) { if (playTicks > 0 && s.Match.Phase == MatchPhase.Ended) break; continue; }
             playTicks++;
             for (int i = 0; i < N; i++)
@@ -103,6 +112,8 @@ internal static class Program
             double P(double q) => l.Count == 0 ? 0 : l[Math.Min(l.Count - 1, (int)(l.Count * q))];
             Console.WriteLine($"{(Prof.Section)i,-13} {TotalMs[i] / Math.Max(1, playTicks),9:0.000} {P(0.99),8:0.00} {P(0.999),8:0.00} {WorstMs[i],8:0.00} {TotalAlloc[i] / 1024.0 / Math.Max(1, playTicks),8:0.00}");
         }
+        Console.WriteLine($"deaths ({Deaths.Count}), seconds after play starts:");
+        foreach (string d in Deaths.GetRange(0, Math.Min(40, Deaths.Count))) Console.WriteLine("  " + d);
         Console.WriteLine("timeline (half seconds: phase, server ms avg/worst per tick, interest/simulate/bots avg):");
         int per = SimTime.TicksPerSecond / 2;
         for (int i = 0; i < Math.Min(Timeline.Count, 60); i++)
@@ -114,4 +125,5 @@ internal static class Program
     }
 
     private static readonly List<double[]> Timeline = new List<double[]>();
+    private static readonly List<string> Deaths = new List<string>();
 }

@@ -44,7 +44,7 @@ namespace Sculpt.Game.Net
                 {
                     IPEndPoint from = null;
                     byte[] got = _udp.Receive(ref from);
-                    if (!LanRoom.TryReadAsk(got, got.Length, out string code, out uint nonce) || code != Code) continue;
+                    if (!LanRoom.TryReadAsk(got, got.Length, out string code, out uint nonce) || (code != Code && code != LanRoom.AnyCode)) continue;
                     byte[] answer = LanRoom.Answer(Reply(nonce));
                     _udp.Send(answer, answer.Length, from);
                 }

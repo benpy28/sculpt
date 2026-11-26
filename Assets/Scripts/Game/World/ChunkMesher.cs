@@ -97,13 +97,55 @@ namespace Sculpt.Game.World
 
         public void Build(SubGrid g, Int3 chunkCoord, Mesh mesh)
         {
+            ClearLists();
+            Append(g, chunkCoord, Vector3.zero);
+            Upload(mesh);
+        }
+
+        /// <summary>
+        /// Several chunks drawn as one mesh (flat maps: 16 thousand ground chunks were 16 thousand renderers for the
+        /// render thread to walk every frame). <paramref name="offsets"/>: each chunk's origin in the mesh's space.
+        /// </summary>
+        public void BuildGroup(SubGrid g, List<Int3> chunks, List<Vector3> offsets, Mesh mesh)
+        {
+            ClearLists();
+            for (int i = 0; i < chunks.Count; i++) Append(g, chunks[i], offsets[i]);
+            Upload(mesh);
+        }
+
+        private void ClearLists()
+        {
             _verts.Clear();
             _colors.Clear();
             _uvs.Clear();
             _uv1.Clear();
             _normals.Clear();
             _tris.Clear();
+        }
 
+        private void Upload(Mesh mesh)
+        {
+            mesh.Clear();
+            if (_verts.Count == 0) return;
+            mesh.indexFormat = IndexFormat.UInt32;
+            mesh.SetVertices(_verts);
+            mesh.SetNormals(_normals);
+            mesh.SetColors(_colors);
+            mesh.SetUVs(0, _uvs);
+            mesh.SetUVs(1, _uv1);
+            mesh.SetTriangles(_tris, 0, false);
+            mesh.RecalculateBounds();
+        }
+
+        private Vector3 _offset;
+        private int _chunkStartV, _chunkStartT;
+
+        /// <summary>Adds one chunk's faces to the lists, moved by <paramref name="offset"/>.</summary>
+        private void Append(SubGrid g, Int3 chunkCoord, Vector3 offset)
+        {
+            _offset = offset;
+            _chunkStartV = _verts.Count;
+            _chunkStartT = _tris.Count;
             Int3 o = g.ChunkOrigin(chunkCoord);
             const int n = SubGrid.ChunkSize;
             const float h = (float)TerrainShape.H;
@@ -118,8 +160,8 @@ namespace Sculpt.Game.World
             int y0 = 0;
             if (NoSurface(g, o))
             {
-                if (ny == n) { mesh.Clear(); return; }
-                if (FlatFastPath && FlatTop(g, chunkCoord, o, mesh)) return;
+                if (ny == n) return;
+                if (FlatFastPath && FlatTop(g, chunkCoord, o)) return;
                 y0 = n;
             }
             for (int y = y0; y < ny; y++)
@@ -138,16 +180,6 @@ namespace Sculpt.Game.World
                             EmitFace(g, f, cellMin, vx, vy, vz, cfg);
                         }
                     }
-
-            mesh.Clear();
-            mesh.indexFormat = IndexFormat.UInt32;
-            mesh.SetVertices(_verts);
-            mesh.SetNormals(_normals);
-            mesh.SetColors(_colors);
-            mesh.SetUVs(0, _uvs);
-            mesh.SetUVs(1, _uv1);
-            mesh.SetTriangles(_tris, 0, false);
-            mesh.RecalculateBounds();
         }
 
         /// <summary>
@@ -157,7 +189,7 @@ namespace Sculpt.Game.World
         /// colour): the same picture with a sixteenth of the vertices, and far faster to build (the 614 m map has 16
         /// thousand ground chunks). False: not plain here, use the kernel.
         /// </summary>
-        private bool FlatTop(SubGrid g, Int3 chunk, Int3 o, Mesh mesh)
+        private bool FlatTop(SubGrid g, Int3 chunk, Int3 o)
         {
             const int n = SubGrid.ChunkSize;
             if (chunk.X <= 0 || chunk.Z <= 0 || chunk.X >= g.ChunksX - 1 || chunk.Z >= g.ChunksZ - 1) return false; // the edge has walls
@@ -214,10 +246,10 @@ namespace Sculpt.Game.World
                         // The run's squares: x from runStart to x - 1, each 2h wide round its lattice vertex.
                         float x0 = runStart * sz - h + lx0, x1 = (x - 1) * sz - h + lx1, z0 = z * sz - h + lz0, z1 = z * sz - h + lz1;
                         int start = _verts.Count;
-                        _verts.Add(new Vector3(x0, faceY, z0));
-                        _verts.Add(new Vector3(x0, faceY, z1));
-                        _verts.Add(new Vector3(x1, faceY, z1));
-                        _verts.Add(new Vector3(x1, faceY, z0));
+                        _verts.Add(_offset + new Vector3(x0, faceY, z0));
+                        _verts.Add(_offset + new Vector3(x0, faceY, z1));
+                        _verts.Add(_offset + new Vector3(x1, faceY, z1));
+                        _verts.Add(_offset + new Vector3(x1, faceY, z0));
                         for (int k = 0; k < 4; k++)
                         {
                             _normals.Add(up);
@@ -234,15 +266,6 @@ namespace Sculpt.Game.World
                     runSculpt = sculpt;
                 }
             }
-            mesh.Clear();
-            mesh.indexFormat = IndexFormat.UInt32;
-            mesh.SetVertices(_verts);
-            mesh.SetNormals(_normals);
-            mesh.SetColors(_colors);
-            mesh.SetUVs(0, _uvs);
-            mesh.SetUVs(1, _uv1);
-            mesh.SetTriangles(_tris, 0, false);
-            mesh.RecalculateBounds();
             return true;
         }
 
@@ -306,9 +329,16 @@ namespace Sculpt.Game.World
             }
         }
 
+        /// <summary>Takes back what this chunk's fast path already added (the kernel draws it instead).</summary>
         private bool Abandon()
         {
-            _verts.Clear(); _colors.Clear(); _uvs.Clear(); _uv1.Clear(); _normals.Clear(); _tris.Clear();
+            int v = _chunkStartV;
+            _verts.RemoveRange(v, _verts.Count - v);
+            _colors.RemoveRange(v, _colors.Count - v);
+            _uvs.RemoveRange(v, _uvs.Count - v);
+            _uv1.RemoveRange(v, _uv1.Count - v);
+            _normals.RemoveRange(v, _normals.Count - v);
+            _tris.RemoveRange(_chunkStartT, _tris.Count - _chunkStartT);
             return false;
         }
 
@@ -366,7 +396,7 @@ namespace Sculpt.Game.World
             for (int i = 0; i < f.Verts.Length; i++)
             {
                 Vec3d lv = f.Verts[i];
-                _verts.Add(cellMin + new Vector3((float)lv.X, (float)lv.Y, (float)lv.Z) * h);
+                _verts.Add(_offset + cellMin + new Vector3((float)lv.X, (float)lv.Y, (float)lv.Z) * h);
                 _normals.Add(normal);
                 Color vc = albedo;
                 float ao = OnlyId != 0 ? 1f : Occlusion(g, worldMin + lv * TerrainShape.H);

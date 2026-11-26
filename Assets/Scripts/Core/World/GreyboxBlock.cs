@@ -83,9 +83,9 @@ namespace Sculpt.Core
             public readonly Dictionary<(int, bool, int, int, int, int), int> WallTiles = new Dictionary<(int, bool, int, int, int, int), int>();
             public readonly Dictionary<(int, int, int, int, int), int> FloorTiles = new Dictionary<(int, int, int, int, int), int>();
 
-            public Building(double x0, double z0, int mx, int mz)
+            public Building(double x0, double z0, int mx, int mz, int storeys = 2)
             {
-                X0 = x0; Z0 = z0; Mx = mx; Mz = mz;
+                X0 = x0; Z0 = z0; Mx = mx; Mz = mz; Storeys = storeys;
                 AlongX = new WallKind[Storeys, mz + 1, mx];
                 AlongZ = new WallKind[Storeys, mx + 1, mz];
                 Hole = new bool[Storeys, mx, mz];

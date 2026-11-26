@@ -19,6 +19,13 @@ namespace Sculpt.Game.World
         private Material _material;
         private Mesh[] _meshes;
         private GameObject[] _chunkObjects;
+        // Chunks are drawn in groups of G x G columns (all heights): flat maps have tens of thousands of nearly empty
+        // ground chunks, and a renderer each cost the render thread more than drawing them. A change re-meshes its
+        // group. Maps with sculptable detail keep one chunk per group (an edit re-meshes only its own chunk).
+        private int _group = 1, _groupsX, _groupsZ;
+        private readonly HashSet<int> _dirtyGroups = new HashSet<int>();
+        private readonly List<Int3> _groupChunks = new List<Int3>();
+        private readonly List<Vector3> _groupOffsets = new List<Vector3>();
         private readonly List<int> _dirty = new List<int>();
         private SculptClient _sculpt;
         private float _tintTimer;
@@ -102,12 +109,17 @@ namespace Sculpt.Game.World
             {
                 if (_chunkObjects != null) foreach (var go in _chunkObjects) Destroy(go);
                 if (_meshes != null) foreach (var m in _meshes) Destroy(m);
-                _meshes = new Mesh[grid.ChunkCount];
-                _chunkObjects = new GameObject[grid.ChunkCount];
-                for (int i = 0; i < grid.ChunkCount; i++)
+                _group = grid.AllocatedChunks == 0 ? 4 : 1;
+                _groupsX = (grid.ChunksX + _group - 1) / _group;
+                _groupsZ = (grid.ChunksZ + _group - 1) / _group;
+                int groups = _groupsX * _groupsZ * (_group == 1 ? grid.ChunksY : 1);
+                if (_group == 1) groups = grid.ChunkCount;
+                _meshes = new Mesh[groups];
+                _chunkObjects = new GameObject[groups];
+                for (int i = 0; i < groups; i++)
                 {
-                    Int3 cc = grid.ChunkCoordFromIndex(i);
-                    var go = new GameObject($"Chunk {cc.X},{cc.Y},{cc.Z}");
+                    Int3 cc = _group == 1 ? grid.ChunkCoordFromIndex(i) : new Int3((i % _groupsX) * _group, 0, (i / _groupsX) * _group);
+                    var go = new GameObject(_group == 1 ? $"Chunk {cc.X},{cc.Y},{cc.Z}" : $"Chunks {cc.X},{cc.Z} +{_group}");
                     go.transform.SetParent(transform, false);
                     go.transform.localPosition = grid.ChunkOrigin(cc).ToUnity() * (float)SubGrid.SubSize;
                     var mf = go.AddComponent<MeshFilter>();
@@ -177,10 +189,39 @@ namespace Sculpt.Game.World
             if (!_grid.HasDirtyChunks) return 0;
             _dirty.Clear();
             _grid.DrainDirtyChunks(_dirty);
+            if (_group == 1)
+            {
+                foreach (int i in _dirty)
+                {
+                    _mesher.Build(_grid, _grid.ChunkCoordFromIndex(i), _meshes[i]);
+                    _grass?.Rebuild(i);
+                }
+                return _dirty.Count;
+            }
+            _dirtyGroups.Clear();
             foreach (int i in _dirty)
             {
-                _mesher.Build(_grid, _grid.ChunkCoordFromIndex(i), _meshes[i]);
+                Int3 cc = _grid.ChunkCoordFromIndex(i);
+                _dirtyGroups.Add((cc.Z / _group) * _groupsX + cc.X / _group);
                 _grass?.Rebuild(i);
+            }
+            float sub = (float)SubGrid.SubSize;
+            foreach (int gi in _dirtyGroups)
+            {
+                Int3 g0 = new Int3((gi % _groupsX) * _group, 0, (gi / _groupsX) * _group);
+                Vector3 origin = _grid.ChunkOrigin(g0).ToUnity() * sub;
+                _groupChunks.Clear();
+                _groupOffsets.Clear();
+                for (int cy = 0; cy < _grid.ChunksY; cy++)
+                    for (int dz = 0; dz < _group; dz++)
+                        for (int dx = 0; dx < _group; dx++)
+                        {
+                            var cc = new Int3(g0.X + dx, cy, g0.Z + dz);
+                            if (cc.X >= _grid.ChunksX || cc.Z >= _grid.ChunksZ) continue;
+                            _groupChunks.Add(cc);
+                            _groupOffsets.Add(_grid.ChunkOrigin(cc).ToUnity() * sub - origin);
+                        }
+                _mesher.BuildGroup(_grid, _groupChunks, _groupOffsets, _meshes[gi]);
             }
             return _dirty.Count;
         }

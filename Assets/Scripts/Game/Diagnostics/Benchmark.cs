@@ -288,6 +288,9 @@ namespace Sculpt.Game.Diagnostics
             int nf = Math.Max(1, _allocFrames);
             sb.Append(string.Format(ci, "  drawn per frame: {0:0} draw calls in {1:0} batches, {2:0} shader passes, {3:0} thousand triangles (most {4:0} thousand)",
                 _drawCalls / nf, _batches / nf, _setPass / nf, _triangles / nf / 1000.0, _trianglesMax / 1000.0)).AppendLine();
+            int renderers = 0, enabled = 0;
+            foreach (Renderer r in FindObjectsByType<Renderer>(FindObjectsSortMode.None)) { renderers++; if (r.enabled && r.gameObject.activeInHierarchy) enabled++; }
+            sb.Append(string.Format(ci, "  renderers in the scene at the end: {0} ({1} on)", renderers, enabled)).AppendLine();
             sb.Append(string.Format(ci, "  latency, {0} stand-in clicks ({1} lost), median / average ms: tick wait {2:0.0} / {3:0.0}, read to frame sent {4:0.0} / {5:0.0}, server hold {6:0.0} / {7:0.0}, read to server result on a frame {8:0.0} / {9:0.0} (worst {10:0.0})",
                 _total.Count, p.TimedOut, _tickWait.PercentileMs(0.5), _tickWait.AverageMs, _clickToFrame.PercentileMs(0.5), _clickToFrame.AverageMs,
                 _server.PercentileMs(0.5), _server.AverageMs, _total.PercentileMs(0.5), _total.AverageMs, _total.MaxMs)).AppendLine();
