@@ -60,7 +60,12 @@ half3 SculptLight(half3 c, float3 ws, float3 n, float4 positionCS, float scenery
     if (_SculptLook.w > 0.0)
     {
         AmbientOcclusionFactor ao = GetScreenSpaceAmbientOcclusion(GetNormalizedScreenSpaceUV(positionCS));
-        c *= lerp(1.0, ao.indirectAmbientOcclusion, _SculptLook.w);
+        // Never deeper than ~45% darker, and faded out right in front of the camera: pressed against a wall the
+        // screen-space estimate sees "everything occluded" and turned the whole view black and noisy.
+        // positionCS.w in the fragment stage is the view depth in metres.
+        float nearFade = smoothstep(0.6, 2.0, positionCS.w);
+        half occ = max(ao.indirectAmbientOcclusion, half(0.55));
+        c *= lerp(1.0, occ, _SculptLook.w * nearFade);
     }
     #endif
     return c;

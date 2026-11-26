@@ -295,6 +295,25 @@ namespace Sculpt.Game.Rendering
             if (_sun == null) UpdateSun();
             bool fog = _look.Fog > 0;
             if (RenderSettings.fog != fog) RenderSettings.fog = fog;
+            if (!_diagLogged && Debug.isDebugBuild && Time.realtimeSinceStartup > 6f) LogDiagnostics();
+        }
+
+        private bool _diagLogged;
+
+        /// <summary>Dev builds: one line with what decides whether sun shadows draw, a few seconds in.</summary>
+        private void LogDiagnostics()
+        {
+            _diagLogged = true;
+            int directional = 0;
+            foreach (Light li in UnityEngine.Object.FindObjectsByType<Light>(FindObjectsSortMode.None))
+                if (li.type == LightType.Directional) directional++;
+            UniversalAdditionalCameraData data = _camera != null ? _camera.GetUniversalAdditionalCameraData() : null;
+            UniversalRenderPipelineAsset a = UniversalRenderPipeline.asset;
+            Debug.Log("[SCULPT] Picture check: sun " + (_sun != null ? $"'{_sun.name}' shadows {_sun.shadows} strength {_sun.shadowStrength:0.##} enabled {_sun.isActiveAndEnabled}" : "none") +
+                      $", RenderSettings.sun is ours {RenderSettings.sun == _sun}, directional lights {directional}" +
+                      (a != null ? $", asset '{a.name}' main shadows {a.supportsMainLightShadows} mode {a.mainLightRenderingMode} distance {a.shadowDistance} cascades {a.shadowCascadeCount}" : ", no URP asset") +
+                      (data != null ? $", camera renderShadows {data.renderShadows} far {_camera.farClipPlane} near {_camera.nearClipPlane}" : "") +
+                      $", quality level '{QualitySettings.names[QualitySettings.GetQualityLevel()]}'.");
         }
 
         // ------------------------------------------------------------------ Our passes
