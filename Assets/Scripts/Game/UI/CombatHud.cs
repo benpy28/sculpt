@@ -107,7 +107,7 @@ namespace Sculpt.Game.UI
                     if (!s.Dead) DrawCrosshair(s, cfg, w / 2f, h / 2f);
                     if (Sculpt.Game.Settings.ClientSettings.Current.HitMarkers) DrawHitMarker(w / 2f, h / 2f);
                     DrawHurt(w, h);
-                    if (s.Dead) HudDraw.RoundRect(w / 2f - 220, h * 0.64f - 110, 440, 120, 12, new Color(0.05f, 0.06f, 0.08f, 0.6f));
+                    if (s.Dead && Respawns(s)) HudDraw.RoundRect(w / 2f - 220, h * 0.64f - 110, 440, 120, 12, new Color(0.05f, 0.06f, 0.08f, 0.6f));
                     DrawHealthBar(s, cfg);
                     DrawAmmo(s, cfg, net.Tick, w);
                     DrawHotbar(s, net.Tick, w);
@@ -214,15 +214,30 @@ namespace Sculpt.Game.UI
 
             if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeed(net, w);
 
-            if (s.Dead)
+            // The death card, only when you will respawn: a battle royale death (or sitting a match out) never does
+            // (RespawnTick = int.MaxValue) and has its own "you're out" card in BrHud.
+            if (s.Dead && Respawns(s))
             {
-                float left = Mathf.Max(0, (s.RespawnTick - net.Tick) / (float)SimTime.TicksPerSecond);
-                string by = _view.KilledBy != 0 && _view.KilledBy != net.PlayerId ? $"by P{_view.KilledBy}  ·  {SourceName(_view.KilledWith)}" : SourceName(_view.KilledWith);
+                int tenths = Mathf.Max(0, Mathf.CeilToInt((s.RespawnTick - net.Tick) * 10f / SimTime.TicksPerSecond));
+                if (tenths != _deathTenths) { _deathTenths = tenths; _deathLeft = $"respawning in {tenths / 10}.{tenths % 10} s"; }
+                if (_view.KilledBy != _deathBy || _view.KilledWith != _deathWith || net.PlayerId != _deathMe)
+                {
+                    _deathBy = _view.KilledBy; _deathWith = _view.KilledWith; _deathMe = net.PlayerId;
+                    _deathByText = _deathBy != 0 && _deathBy != _deathMe ? $"by P{_deathBy}  ·  {SourceName(_deathWith)}" : SourceName(_deathWith);
+                }
                 HudDraw.Label(new Rect(0, h * 0.36f, w, 40), "ELIMINATED", 30, HudDraw.Red, TextAnchor.MiddleCenter, true);
-                HudDraw.Label(new Rect(0, h * 0.36f + 38, w, 22), by, 15, HudDraw.Text, TextAnchor.MiddleCenter);
-                HudDraw.Label(new Rect(0, h * 0.36f + 64, w, 22), $"respawning in {left:0.0} s", 13, HudDraw.Dim, TextAnchor.MiddleCenter);
+                HudDraw.Label(new Rect(0, h * 0.36f + 38, w, 22), _deathByText, 15, HudDraw.Text, TextAnchor.MiddleCenter);
+                HudDraw.Label(new Rect(0, h * 0.36f + 64, w, 22), _deathLeft, 13, HudDraw.Dim, TextAnchor.MiddleCenter);
             }
         }
+
+        // Death card text, rebuilt only when it changes.
+        private int _deathTenths = -1, _deathBy = int.MinValue, _deathMe;
+        private DamageSource _deathWith;
+        private string _deathLeft = "", _deathByText = "";
+
+        /// <summary>False for a death with no respawn (battle royale: out until the next match).</summary>
+        private static bool Respawns(in MotorState s) => s.RespawnTick != int.MaxValue;
 
         private const float Margin = 24f, PanelW = 240f, PanelH = 64f, HealthX = 24f;
 
