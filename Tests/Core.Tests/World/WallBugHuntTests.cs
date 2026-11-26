@@ -59,5 +59,54 @@ namespace Sculpt.Core.Tests.World
             Assert.That(a.Client.Walls.CellHealth(cracked, 0), Is.EqualTo(100), "on the client too");
             Assert.That(a.Client.Walls[mixed].Steel, Is.EqualTo(0ul), "on the client too");
         }
+
+        /// <summary>Flat ground, a wall column (x 6..7.5, 3 tiles), a double door (x 7.5..10.5, 3 m), a wall column (x 10.5..12), a lintel row.</summary>
+        private static CompositeTerrain DoorArena(out TileWalls walls, out int left, out int right)
+        {
+            var g = new SubGrid(8, 4, 8, -16);
+            g.FillBaseGround();
+            g.ClearChanges();
+            var w = new BrushWorld();
+            double s = w.Tiles.Config.TileSize, th = w.Tiles.Config.TileThickness;
+            w.Tiles.AddWall(new Vec3d(6, 0, 12), Dir.East, 1, 3);
+            w.Tiles.AddWall(new Vec3d(10.5, 0, 12), Dir.East, 1, 3);
+            w.Tiles.AddWall(new Vec3d(7.5, 3, 12), Dir.East, 2, 1);
+            left = w.Tiles.AddTile(new Aabb(new Vec3d(7.5, 0, 12), new Vec3d(9, 2 * s, 12 + th)), Dir.North, TileKind.Door);
+            right = w.Tiles.AddTile(new Aabb(new Vec3d(9, 0, 12), new Vec3d(10.5, 2 * s, 12 + th)), Dir.North, TileKind.Door);
+            w.Tiles.PairDoor(left, right);
+            w.Tiles.Changes.Clear();
+            walls = w.Tiles;
+            var t = new CompositeTerrain(g, w);
+            w.Tiles.Outside = g;
+            return t;
+        }
+
+        /// <summary>Open cells of the wall column beside the door (tiles 0..2), as one opening count (they are stacked).</summary>
+        private static int OpenInColumn(TileWalls w)
+        {
+            int n = 0;
+            for (int t = 0; t < 3; t++) n += TileWalls.PopCount(w.OpenCells(t));
+            return n;
+        }
+
+        [Test]
+        public void AHoleBesideAnOpenDoor_IsStillAFairHole_OnceTheDoorShuts()
+        {
+            DoorArena(out TileWalls w, out int left, out _);
+            var leaves = new List<int>();
+            DoorRules.Set(w, left, true, TileCause.Door, 1, leaves);
+            // Two AR bullets on the wall right beside the open doorway: the hole joins the doorway.
+            var at = new Vec3d(7.45, 1.0, 12);
+            int tile = 0;
+            w.Damage(tile, w.Config.ArTileDamage, at, TileCause.Bullet, 1, w.Config.ArHitRadius);
+            w.Damage(tile, w.Config.ArTileDamage, at, TileCause.Bullet, 1, w.Config.ArHitRadius);
+            int open = OpenInColumn(w);
+            Assert.That(open, Is.GreaterThan(0), "the two taps opened something");
+            Assert.That(DoorRules.Set(w, left, false, TileCause.Door, 1, leaves), Is.EqualTo(2));
+            open = OpenInColumn(w);
+            int min = w.MinHoleCells(tile);
+            Assert.That(open == 0 || open >= min, Is.True,
+                $"with the door shut the hole beside it is its own opening: {open} cells, the minimum is {min}");
+        }
     }
 }

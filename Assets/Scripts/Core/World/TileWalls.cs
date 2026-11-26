@@ -474,11 +474,26 @@ namespace Sculpt.Core
             Changes.Add(new TileChange { Tick = Tick, Tile = tile, From = from, To = state, Health = health, Cause = cause, By = by });
             Revision++;
             _beyond.Clear(); // what lies past a tile grid's edge may have changed (frame follows tiles)
-            if ((from == TileState.Broken) != (state == TileState.Broken))
+            if ((from == TileState.Broken) != (state == TileState.Broken)) Propagate(tile, cause, by);
+            if (Gone(from) != Gone(state))
             {
-                Propagate(tile, cause, by);
-                ShapeAround(tile); // a celled neighbour's corners can depend on this tile being there
+                ShapeAround(tile); // a celled neighbour's corners can depend on this tile being there (a door too)
+                // A plain tile came back (a door shut, a broken door or frame piece healed): a hole beside it that only
+                // counted as fair because it opened onto this gap is now an opening of its own, so it must be big
+                // enough or fill in, like any opening beside cells that come back.
+                if (!Gone(state) && !CopyOnly && !_filling) FillBeside(tile, cause, by);
             }
+        }
+
+        /// <summary>Runs the small-hole fill on the celled tiles touching a plain tile that just came back.</summary>
+        private void FillBeside(int tile, TileCause cause, int by)
+        {
+            var near = new List<int>();
+            Aabb b = BoundsOf(tile);
+            TilesNear(new Aabb(b.Min - new Vec3d(0.05, 0.05, 0.05), b.Max + new Vec3d(0.05, 0.05, 0.05)), near);
+            near.Sort();
+            foreach (int u in near)
+                if (u != tile && HasCells(u) && _tiles[u].State != TileState.Broken && _tiles[u].Open != 0) FillSmallHoles(u, cause, by);
         }
 
         /// <summary>Brings the followers of a tile in line with their links (Broken exactly when all links are Broken).</summary>
