@@ -52,7 +52,7 @@ namespace Sculpt.Game.Player
 
         private void LateUpdate()
         {
-            if (_player == null || !_player.Net.Joined) return;
+            if (_player == null || !_player.Net.Playing) return;
             MotorState s = _player.State;
             Vector3 feet = _player.RenderFeet;
             Vector3 d = feet - _lastFeet;

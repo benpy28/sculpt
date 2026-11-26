@@ -641,6 +641,10 @@ namespace Sculpt.Game.Weapons
 
         private void PoseViewmodel(float dt)
         {
+            // Watching: there is no local gun to hold.
+            bool playing = _session.Client.Playing;
+            if (_vmRoot.gameObject.activeSelf != playing) _vmRoot.gameObject.SetActive(playing);
+            if (!playing) return;
             MotorState s = _player.State;
             HandState hand = s.Hand;
             int tick = _session.Client.Tick;

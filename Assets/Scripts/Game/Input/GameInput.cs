@@ -15,7 +15,7 @@ namespace Sculpt.Game.Input
         private const string DevOverridesKey = "sculpt.devBindOverrides";
 
         /// <summary>Which mode an action is used in, for the duplicate-bind warning (gun and sculpt binds may share keys).</summary>
-        public enum Context { Always, Gun, Sculpt, Dev }
+        public enum Context { Always, Gun, Sculpt, Dev, Watch }
 
         public readonly InputActionMap Player;
         public readonly InputActionMap Dev;
@@ -41,6 +41,18 @@ namespace Sculpt.Game.Input
         public readonly InputAction SculptReinforce;
         public readonly InputAction SculptThrow;
         public readonly InputAction[] Hotbar = new InputAction[5];
+        // Watching (spectating live or a replay). The free camera flies with Move, Jump (up), Crouch (down), Sprint (fast).
+        public readonly InputAction WatchNext;
+        public readonly InputAction WatchPrev;
+        public readonly InputAction WatchCamera;
+        public readonly InputAction WatchPause;
+        public readonly InputAction WatchSlower;
+        public readonly InputAction WatchFaster;
+        public readonly InputAction WatchBack;
+        public readonly InputAction WatchForward;
+        public readonly InputAction WatchPrevKill;
+        public readonly InputAction WatchNextKill;
+        public readonly InputAction WatchHud;
 
         // Dev map.
         public readonly InputAction DevRespawn;
@@ -95,6 +107,20 @@ namespace Sculpt.Game.Input
             SculptReinforce = Player.AddAction("Sculpt Reinforce (hold)", InputActionType.Button, "<Mouse>/backButton");
             SculptReinforce.AddBinding("<Keyboard>/leftAlt");
 
+            WatchNext = Player.AddAction("Watch: next player", InputActionType.Button, "<Mouse>/leftButton");
+            WatchPrev = Player.AddAction("Watch: previous player", InputActionType.Button, "<Mouse>/rightButton");
+            WatchCamera = Player.AddAction("Watch: change camera", InputActionType.Button, "<Keyboard>/v");
+            WatchPause = Player.AddAction("Replay: pause", InputActionType.Button, "<Keyboard>/p");
+            WatchSlower = Player.AddAction("Replay: slower", InputActionType.Button, "<Keyboard>/minus");
+            WatchSlower.AddBinding("<Keyboard>/leftBracket");
+            WatchFaster = Player.AddAction("Replay: faster", InputActionType.Button, "<Keyboard>/equals");
+            WatchFaster.AddBinding("<Keyboard>/rightBracket");
+            WatchBack = Player.AddAction("Replay: back 5 s", InputActionType.Button, "<Keyboard>/leftArrow");
+            WatchForward = Player.AddAction("Replay: forward 5 s", InputActionType.Button, "<Keyboard>/rightArrow");
+            WatchPrevKill = Player.AddAction("Replay: previous kill", InputActionType.Button, "<Keyboard>/comma");
+            WatchNextKill = Player.AddAction("Replay: next kill", InputActionType.Button, "<Keyboard>/period");
+            WatchHud = Player.AddAction("Watch: hide HUD", InputActionType.Button, "<Keyboard>/h");
+
             Dev = new InputActionMap("Dev");
             DevRespawn = Dev.AddAction("Respawn", InputActionType.Button, "<Keyboard>/f1");
             DevHud = Dev.AddAction("Dev HUD", InputActionType.Button, "<Keyboard>/f2");
@@ -118,10 +144,13 @@ namespace Sculpt.Game.Input
             if (a.actionMap == Dev) return Context.Dev;
             if (a == Fire || a == Aim || a == Reload || a == LastWeapon || Array.IndexOf(Hotbar, a) >= 0) return Context.Gun;
             if (a == SculptPush || a == SculptPull || a == SculptRaise || a == SculptSink || a == SculptThrow || a == SculptReinforce) return Context.Sculpt;
+            if (a == WatchNext || a == WatchPrev || a == WatchCamera || a == WatchPause || a == WatchSlower || a == WatchFaster ||
+                a == WatchBack || a == WatchForward || a == WatchPrevKill || a == WatchNextKill || a == WatchHud) return Context.Watch;
             return Context.Always;
         }
 
-        /// <summary>Two contexts clash if both can be live at once (Always clashes with everything but Dev only with Dev and Always).</summary>
+        /// <summary>Two contexts clash if both can be live at once (Always clashes with everything but Dev only with Dev and Always).
+        /// Watch keys are only live while spectating, so they share keys with the guns and sculpt mode freely.</summary>
         public static bool Clashes(Context a, Context b)
         {
             if (a == b) return true;

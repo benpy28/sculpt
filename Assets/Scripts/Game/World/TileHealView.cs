@@ -79,7 +79,7 @@ namespace Sculpt.Game.World
             if (net != _bound) { ClearHums(); _jobs.Clear(); _target.Rev = -1; _redUntil = -1f; _bound = net; }
             _lines.Begin(_rig.Camera.transform.position);
             _alive.Clear();
-            if (net.Joined && net.Heals != null && _player.Heals)
+            if (net.Playing && net.Heals != null && _player.Heals)
             {
                 DrainEvents(net);
                 DrawTarget(net);

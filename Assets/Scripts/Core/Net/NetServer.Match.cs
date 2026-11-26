@@ -127,8 +127,7 @@ namespace Sculpt.Core.Net
             FillScores();
             _w.Clear();
             MatchProtocol.Write(_w, Match, Tick);
-            byte[] data = _w.ToArray();
-            foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
+            Broadcast(_w.ToArray());
         }
 
         private void FillScores()
@@ -140,12 +139,14 @@ namespace Sculpt.Core.Net
             Match.Version++;
         }
 
-        private void SendMatchTo(ServerPlayer p)
+        private void SendMatchTo(ServerPlayer p) => Send(p.ConnectionId, MatchBytes(), true);
+
+        private byte[] MatchBytes()
         {
             FillScores();
             _w.Clear();
             MatchProtocol.Write(_w, Match, Tick);
-            Send(p.ConnectionId, _w.ToArray(), true);
+            return _w.ToArray();
         }
     }
 }

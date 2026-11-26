@@ -71,6 +71,26 @@ namespace Sculpt.Game.UI
             if (!net.Joined) return;
             // Draw-only HUD: nothing here reacts to mouse or key events, so only the repaint call does any work.
             if (Event.current.type != EventType.Repaint) return;
+            if (net.IsSpectator)
+            {
+                // Watching: only the kill feed (the watch HUD shows the watched player).
+                float sw = Screen.width, sh = Screen.height;
+                _gl.SetPass(0);
+                GL.PushMatrix();
+                try
+                {
+                    HudDraw.LoadPixels();
+                    HudDraw.BeginBatch();
+                    DrawFeedPanels(net, sw, sh);
+                }
+                finally
+                {
+                    HudDraw.EndBatch();
+                    GL.PopMatrix();
+                }
+                DrawFeed(net, sw);
+                return;
+            }
 
             MotorState s = _player.State;
             WeaponsConfig cfg = _player.Config.Weapons;

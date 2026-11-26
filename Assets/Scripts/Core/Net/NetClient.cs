@@ -30,7 +30,7 @@ namespace Sculpt.Core.Net
     ///   rewinds to the server state and replays the newer commands. The sim snaps; only the drawn position is smoothed.
     /// - Draws other players interpolated a few ticks in the past.
     /// </summary>
-    public sealed class NetClient
+    public sealed partial class NetClient
     {
         public delegate void SendFn(byte[] data, bool reliable);
 
@@ -186,6 +186,14 @@ namespace Sculpt.Core.Net
                 switch (Protocol.PeekType(data, offset, count))
                 {
                     case MsgType.Welcome: OnWelcome(Protocol.ReadWelcome(ref r)); break;
+                    case MsgType.SpecFrame:
+                        if (Joined && !IsSpectator) return; // players never watch; a replay's key frame brings its own welcome
+                        OnSpecFrame(data, offset, count);
+                        break;
+                    case MsgType.SpecSnap:
+                        if (!Joined || !IsSpectator) return;
+                        OnSpecSnap(ref r);
+                        break;
                     case MsgType.World:
                         if (!Joined || Sculpt == null) return;
                         Sculpt.OnWorld(WorldProtocol.Read(ref r, _worldOps, _worldEvents));
@@ -194,6 +202,7 @@ namespace Sculpt.Core.Net
                     {
                         if (!Joined) return;
                         CombatMsg cm = CombatProtocol.Read(ref r, _combatScratch);
+                        if (Muted) break; // a replay seek: what already happened is not shown again
                         foreach (CombatEvent e in cm.Events) Combat.Add(new KeyValuePair<int, CombatEvent>(cm.Tick, e));
                         if (Combat.Count > 4096) Combat.RemoveRange(0, 2048); // nobody is draining (tests)
                         break;
@@ -206,7 +215,7 @@ namespace Sculpt.Core.Net
                         {
                             if (c.Tile >= Walls.Count) { DroppedPackets++; continue; }
                             Walls.Tick = tm.Tick;
-                            TileCause cause = tm.Join ? TileCause.Server : c.Cause;
+                            TileCause cause = tm.Join || Muted ? TileCause.Server : c.Cause;
                             if (c.Hp != null && Walls.HasCells(c.Tile))
                                 Walls.WriteCells(c.Tile, c.To == TileState.Broken ? ulong.MaxValue : c.Open, c.Patch, c.Steel, c.Hp, cause, c.By);
                             else Walls.Set(c.Tile, c.To, c.Health, cause, c.By);
@@ -237,7 +246,7 @@ namespace Sculpt.Core.Net
                         OnReveal(ref r);
                         break;
                     case MsgType.Snapshot:
-                        if (!Joined) return;
+                        if (!Joined || IsSpectator) return;
                         OnSnapshot(Protocol.ReadSnapshot(ref r, _snapOthers));
                         break;
                     default: DroppedPackets++; break;
@@ -257,6 +266,9 @@ namespace Sculpt.Core.Net
                 throw new NetFormatException($"Protocol {m.ProtocolVersion}, expected {Protocol.Version}.");
             }
             Joined = true;
+            IsSpectator = m.IsSpectator;
+            SpectatorDelayTicks = m.SpectatorDelayTicks;
+            ResetSpectator();
             Match.Phase = MatchPhase.Off;
             Match.Scores.Clear();
             PlayerId = m.PlayerId;
@@ -406,7 +418,7 @@ namespace Sculpt.Core.Net
         /// <summary>How many prediction ticks to run this frame (dilated clock, catch-up capped).</summary>
         public int BeginFrame(double dt)
         {
-            if (!Joined) return 0;
+            if (!Joined || IsSpectator) return 0; // spectators predict nothing
             _accum += dt * (1.0 + Dilation);
             int n = (int)Math.Floor(_accum / TickSeconds);
             if (n <= 0) return 0;
@@ -424,7 +436,8 @@ namespace Sculpt.Core.Net
             double k = Math.Exp(-dt / Config.CorrectionSmoothSeconds);
             Vec3d o = CorrectionOffset * k;
             CorrectionOffset = o.LengthSquared < 1e-10 ? Vec3d.Zero : o;
-            if (_serverTimeValid) _serverTime += dt * SimTime.TicksPerSecond;
+            if (_serverTimeValid && !ExternalClock) _serverTime += dt * SimTime.TicksPerSecond;
+            if (IsSpectator && !ExternalClock) Tick = (int)Math.Floor(_serverTime);
         }
 
         /// <summary>Dev only: the next predicted tick carries a warp to the dev warp point (F6 showcase).</summary>

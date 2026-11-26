@@ -196,6 +196,9 @@ namespace Sculpt.Game.Player
             }
             else LookDelta = Vector2.zero;
 
+            // Watching: the mouse look drives the spectator camera; nothing else of the local player runs.
+            if (Net.IsSpectator) { PickTarget = -1; DoorTarget = -1; return; }
+
             UpdateSculptAim();
             UpdateItems();
 

@@ -163,7 +163,7 @@ namespace Sculpt.Game.Diagnostics
                 Latency.Press(ClickKind.Other, double.NaN, now);
                 return;
             }
-            if (_player == null || _input == null || !_player.CursorLocked || _player.InputBlocked || !_player.Net.Joined || _player.State.Dead) return;
+            if (_player == null || _input == null || !_player.CursorLocked || _player.InputBlocked || !_player.Net.Playing || _player.State.Dead) return;
             bool sculpt = _player.InSculptMode;
             if (!sculpt && _input.Fire.WasPressedThisFrame()) Latency.Press(ClickKind.Fire, _fireMs, now);
             else if (sculpt && _player.Heals && _player.State.Hand.CanConfirmSculpt && _input.SculptPush.WasPressedThisFrame()) Latency.Press(ClickKind.Heal, _healMs, now);

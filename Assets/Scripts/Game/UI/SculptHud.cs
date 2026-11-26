@@ -48,7 +48,7 @@ namespace Sculpt.Game.UI
             if (_player == null || _session == null || _view == null) return;
             NetClient net = _session.Client;
             SculptClient sc = net.Sculpt;
-            if (sc == null || !net.Joined) return;
+            if (sc == null || !net.Playing) return;
             if (Event.current.type != EventType.Repaint) return; // draw-only: nothing here reacts to input events
             if (_small == null)
             {

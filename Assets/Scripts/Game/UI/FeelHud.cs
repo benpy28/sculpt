@@ -61,7 +61,7 @@ namespace Sculpt.Game.UI
 
         private void OnGUI()
         {
-            if (_player == null || !_player.Net.Joined) return;
+            if (_player == null || !_player.Net.Playing) return;
             if (Event.current.type != EventType.Repaint) return; // draw-only: nothing here reacts to input events
             float w = Screen.width, h = Screen.height;
             float stripW = Mathf.Min(520f, w * 0.42f), stripH = 30f, top = 10f;

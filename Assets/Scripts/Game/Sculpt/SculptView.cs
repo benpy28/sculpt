@@ -190,7 +190,7 @@ namespace Sculpt.Game.Sculpting
             NetClient net = _session.Client;
             SculptClient sc = net.Sculpt;
             if (sc != _boundSculpt) { ClearAll(); _boundSculpt = sc; }
-            if (sc == null || !net.Joined) return;
+            if (sc == null || !net.Playing) return;
 
             // With block moving parked the ground is not sculptable: no purple ripple or glow on it (tiles glow instead).
             _world.SetSculptView(_player.SimEye.ToUnity(), _player.InSculptMode, _player.Heals ? 0f : (float)_player.SculptConfig.RangeMeters);

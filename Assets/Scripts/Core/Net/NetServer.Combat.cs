@@ -241,8 +241,7 @@ namespace Sculpt.Core.Net
                 for (int k = start; k < Walls.Changes.Count && k < start + TileProtocol.MaxChanges; k++) _tileScratch.Add(Walls.Changes[k]);
                 _w.Clear();
                 TileProtocol.Write(_w, new TilesMsg { Tick = Tick, Changes = _tileScratch, Heals = start == 0 ? heals : null });
-                byte[] data = _w.ToArray();
-                foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
+                Broadcast(_w.ToArray());
             }
             Walls.Changes.Clear();
         }
@@ -250,7 +249,14 @@ namespace Sculpt.Core.Net
         /// <summary>Late join: the current state of every tile that ever changed (the rest are as built).</summary>
         private void SendTileJoinState(ServerPlayer to)
         {
-            if (Walls == null) return;
+            byte[] data = TileJoinBytes();
+            if (data != null) Send(to.ConnectionId, data, true);
+        }
+
+        /// <summary>The late-join tile message, or null when nothing ever changed.</summary>
+        private byte[] TileJoinBytes()
+        {
+            if (Walls == null) return null;
             var all = new List<TileChange>();
             for (int i = 0; i < Walls.Count; i++)
             {
@@ -263,16 +269,17 @@ namespace Sculpt.Core.Net
                     });
             }
             List<HealEvent> running = RunningHeals();
-            if (all.Count == 0 && running.Count == 0) return;
+            if (all.Count == 0 && running.Count == 0) return null;
             var w = new ByteWriter(16 + all.Count * 8 + running.Count * 8);
             TileProtocol.Write(w, new TilesMsg { Tick = Tick, Join = true, Changes = all, Heals = running });
-            Send(to.ConnectionId, w.ToArray(), true);
+            return w.ToArray();
         }
 
         /// <summary>One reliable message per tick with events. Shots skip their shooter; health is told only to the two involved.</summary>
         private void SendCombat()
         {
             if (_combat.Count == 0) return;
+            if (Stream != null) StreamCombat();
             foreach (ServerPlayer to in _players)
             {
                 _combatTo.Clear();

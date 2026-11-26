@@ -73,7 +73,7 @@ namespace Sculpt.Game.UI
         }
 
         private static string SectionOf(GameInput.Context c) =>
-            c == GameInput.Context.Gun ? "Guns" : c == GameInput.Context.Sculpt ? "Sculpt mode" : "Movement and modes";
+            c == GameInput.Context.Gun ? "Guns" : c == GameInput.Context.Sculpt ? "Sculpt mode" : c == GameInput.Context.Watch ? "Spectating and replays" : "Movement and modes";
 
         private void AddRows(InputAction a)
         {

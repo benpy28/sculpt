@@ -43,7 +43,11 @@ namespace Sculpt.Game.UI
 
         // ---------------------------------------------------------------- Menu state
 
-        private enum Mode { Duel, Bot, Practice }
+        private enum Mode { Duel, Bot, Practice, Replays }
+        private enum WatchPick { Saved, Live }
+        private WatchPick _watch = WatchPick.Saved;
+        private List<ReplayLibrary.Entry> _replays;
+        private int _replayAt;
         private enum DuelPick { Host, Join }
         private enum PracticePick { FreeRoam, Breach }
 
@@ -66,7 +70,8 @@ namespace Sculpt.Game.UI
             _session = session;
             _settings = GetComponent<SettingsMenu>();
             _address = PlayerPrefs.GetString(JoinKey, "");
-            _mode = (Mode)Mathf.Clamp(PlayerPrefs.GetInt(ModeKey, 0), 0, 2);
+            _mode = (Mode)Mathf.Clamp(PlayerPrefs.GetInt(ModeKey, 0), 0, 3);
+            if (GameBootstrap.ReplayError.Length > 0) { _mode = Mode.Replays; _error = GameBootstrap.ReplayError; }
             _gl = new Material(Shader.Find("Hidden/Internal-Colored")) { hideFlags = HideFlags.HideAndDontSave };
             _gl.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
             _gl.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
@@ -79,6 +84,7 @@ namespace Sculpt.Game.UI
         public void Open()
         {
             _open = true;
+            _replays = null; // re-read the replay folder (a match may just have been saved)
             _player.InputBlocked = true;
             LocalPlayer.LockCursor(false);
             SceneOn();
@@ -185,6 +191,24 @@ namespace Sculpt.Game.UI
                 case Mode.Bot:
                     Launch(GameBootstrap.Launch.VsBot, GameBootstrap.MapChoice.Duel);
                     break;
+                case Mode.Replays when _watch == WatchPick.Saved:
+                {
+                    ReplayLibrary.Entry? r = SelectedReplay;
+                    if (r == null) return;
+                    if (r.Value.Problem != null) { _error = "That replay can't be played: " + r.Value.Problem + "."; return; }
+                    PlayerPrefs.SetInt(ModeKey, (int)_mode);
+                    PlayerPrefs.Save();
+                    GameBootstrap.RelaunchReplay(r.Value.Path, r.Value.Map);
+                    break;
+                }
+                case Mode.Replays:
+                {
+                    string wa = _address.Trim();
+                    if (wa.Length == 0) { _focusJoin = true; return; }
+                    PlayerPrefs.SetString(JoinKey, wa);
+                    Launch(GameBootstrap.Launch.Spectate, GameBootstrap.MapChoice.Duel, wa);
+                    break;
+                }
                 case Mode.Practice when _practice == PracticePick.FreeRoam:
                     // Already offline on the 1v1 map behind the menu: just step in.
                     if (_session.Mode == NetMode.Offline && GameBootstrap.CurrentMap == GameBootstrap.MapChoice.Duel)
@@ -508,6 +532,10 @@ namespace Sculpt.Game.UI
                     for (int i = 0; i < 3; i++)
                         if (Segment(ix, sy, iw, 3, i, LevelNames[i], GameBootstrap.NextBotLevel == Levels[i])) GameBootstrap.NextBotLevel = Levels[i];
                     break;
+                case Mode.Replays:
+                    if (Segment(ix, sy, iw, 2, 0, "Saved replays", _watch == WatchPick.Saved)) _watch = WatchPick.Saved;
+                    if (Segment(ix, sy, iw, 2, 1, "Watch by IP", _watch == WatchPick.Live)) { _watch = WatchPick.Live; _focusJoin = true; }
+                    break;
                 default:
                     if (Segment(ix, sy, iw, 2, 0, "Free roam", _practice == PracticePick.FreeRoam)) _practice = PracticePick.FreeRoam;
                     if (Segment(ix, sy, iw, 2, 1, "Breach test map", _practice == PracticePick.Breach)) _practice = PracticePick.Breach;
@@ -531,31 +559,55 @@ namespace Sculpt.Game.UI
 
             // Status line: a join error in red, else a one-line hint for the choice.
             float ly = by + bh + 10;
-            if (_error.Length > 0 && _mode == Mode.Duel) Text(ix, ly, iw, 24, _error, 15, HudDraw.Red, TextAnchor.MiddleLeft, true);
+            if (_error.Length > 0 && (_mode == Mode.Duel || _mode == Mode.Replays)) Text(ix, ly, iw, 24, _error, 15, HudDraw.Red, TextAnchor.MiddleLeft, true);
             else Text(ix, ly, iw, 24, Hint, 15, Faint);
 
             // Mode tiles.
-            float ty = py + ph + 16, th = 74, tgap = 12, tw = (PanelW - 2 * tgap) / 3;
+            float ty = py + ph + 16, th = 74, tgap = 12, tw = (PanelW - 3 * tgap) / 4;
             ModeTile(LX, ty, tw, th, Mode.Duel, "1v1 Duel", "Host · Join by IP");
             ModeTile(LX + (tw + tgap), ty, tw, th, Mode.Bot, "vs Bot", "Same match · 3 levels");
             ModeTile(LX + 2 * (tw + tgap), ty, tw, th, Mode.Practice, "Practice", "Free roam · Test map");
+            ModeTile(LX + 3 * (tw + tgap), ty, tw, th, Mode.Replays, "Replays", "Saved · Watch live");
         }
 
         private string ModeName => _mode switch
         {
             Mode.Duel => "1v1 Duel",
             Mode.Bot => "1v1 vs Bot",
+            Mode.Replays => _watch == WatchPick.Saved ? "Replays" : "Watch live",
             _ => "Practice",
         };
 
-        private string MapName => _mode == Mode.Practice && _practice == PracticePick.Breach ? "Breach test map" : "1v1 map";
+        private string MapName => _mode == Mode.Replays ? (_watch == WatchPick.Live ? "Host's map" : SelectedReplay?.Map == "Breach" ? "Breach test map" : "1v1 map")
+            : _mode == Mode.Practice && _practice == PracticePick.Breach ? "Breach test map" : "1v1 map";
 
-        private string PlayLabel => _mode == Mode.Duel ? (_duel == DuelPick.Host ? "HOST" : "JOIN") : "PLAY";
+        private string PlayLabel => _mode == Mode.Duel ? (_duel == DuelPick.Host ? "HOST" : "JOIN") : _mode == Mode.Replays ? "WATCH" : "PLAY";
+
+        /// <summary>The replay picked in the list (newest first), or null when there are none.</summary>
+        private ReplayLibrary.Entry? SelectedReplay
+        {
+            get
+            {
+                EnsureReplays();
+                return _replays.Count == 0 ? (ReplayLibrary.Entry?)null : _replays[_replayAt];
+            }
+        }
+
+        private void EnsureReplays()
+        {
+            if (_replays != null) return;
+            try { _replays = ReplayLibrary.List(); }
+            catch (System.Exception e) { _replays = new List<ReplayLibrary.Entry>(); Debug.LogWarning("[SCULPT] Replay list: " + e.Message); }
+            _replayAt = Mathf.Clamp(_replayAt, 0, Mathf.Max(0, _replays.Count - 1));
+        }
 
         private string Hint => _mode switch
         {
             Mode.Duel => _duel == DuelPick.Host ? _ipHint : "Same network as the host. Their address shows on their screen while they wait.",
             Mode.Bot => "The same 1v1 match against a bot, offline: most kills in 5 minutes.",
+            Mode.Replays => _watch == WatchPick.Saved
+                ? (SelectedReplay == null ? "No replays yet: every match you play or host is saved (newest 20, star one to keep it)." : "Your last 20 matches are kept; star one to keep it for good.")
+                : "Watch a match someone hosts on your network, a little behind (the host sets the delay).",
             _ => _practice == PracticePick.FreeRoam ? "Offline on the 1v1 map with nobody else: try walls, guns and movement."
                 : "Practice dummy, test walls and the movement course (F6 races the TAS in dev builds).",
         };
@@ -609,6 +661,51 @@ namespace Sculpt.Game.UI
                     Card(x, y, w, h, "Bot level", LevelNames[i]);
                     Card(x2, y, w, h, "Rules", "Most kills · 5 min");
                     Card(x3, y, w, h, "Network", "Offline");
+                    break;
+                }
+                case Mode.Replays when _watch == WatchPick.Saved:
+                {
+                    float fw = 2 * w + gap;
+                    ReplayLibrary.Entry? r = SelectedReplay;
+                    int n = _replays.Count;
+                    Fill(x, y, fw, h, 10, CardBg);
+                    Text(x + 16, y + 10, fw - 120, 20, n == 0 ? "Replay" : $"Replay {_replayAt + 1} of {n}", 14, Soft);
+                    Text(x + 16, y + 30, fw - 110, 28, r == null ? "None yet" : r.Value.Label, 17, HudDraw.Text, TextAnchor.MiddleLeft, true);
+                    // Arrows: older and newer.
+                    float ax = x + fw - 92;
+                    bool hl = Hot(ax, y + 14, 40, 40), hr = Hot(ax + 46, y + 14, 40, 40);
+                    Fill(ax, y + 14, 40, 40, 8, hl ? CardHover : new Color(1, 1, 1, 0.06f));
+                    Fill(ax + 46, y + 14, 40, 40, 8, hr ? CardHover : new Color(1, 1, 1, 0.06f));
+                    Text(ax, y + 14, 40, 40, "<", 20, HudDraw.Text, TextAnchor.MiddleCenter, true);
+                    Text(ax + 46, y + 14, 40, 40, ">", 20, HudDraw.Text, TextAnchor.MiddleCenter, true);
+                    if (n > 0 && Click(ax, y + 14, 40, 40)) _replayAt = (_replayAt + n - 1) % n;
+                    if (n > 0 && Click(ax + 46, y + 14, 40, 40)) _replayAt = (_replayAt + 1) % n;
+                    bool kept = r != null && r.Value.Kept;
+                    bool hk = Hot(x3, y, w, h);
+                    Fill(x3, y, w, h, 10, hk && r != null ? CardHover : CardBg);
+                    Text(x3 + 16, y + 10, w - 24, 20, "Keep for good", 14, Soft);
+                    Text(x3 + 16, y + 30, w - 24, 28, r == null ? "-" : kept ? "Starred" : "No (click)", 19, kept ? HudDraw.Amber : HudDraw.Text, TextAnchor.MiddleLeft, true);
+                    if (r != null && Click(x3, y, w, h))
+                    {
+                        try { ReplayLibrary.SetKept(r.Value.Path, !kept); }
+                        catch (System.Exception e) { _error = "Couldn't move the replay: " + e.Message; }
+                        string path = System.IO.Path.GetFileName(r.Value.Path);
+                        _replays = null;
+                        EnsureReplays(); // re-read, then find it again
+                        for (int i = 0; i < _replays.Count; i++) if (System.IO.Path.GetFileName(_replays[i].Path) == path) _replayAt = i;
+                    }
+                    break;
+                }
+                case Mode.Replays:
+                {
+                    float fw = 2 * w + gap;
+                    bool focused = GUI.GetNameOfFocusedControl() == "joinField";
+                    Fill(x, y, fw, h, 10, focused ? new Color(1, 1, 1, 0.1f) : CardBg);
+                    if (focused) Outline(x, y, fw, h, 10, 1.5f, HudDraw.Amber);
+                    Text(x + 16, y + 10, fw - 24, 20, "Host's address", 14, Soft);
+                    if (_address.Length == 0 && !focused) Text(x + 16, y + 30, fw - 24, 28, "Click and type it, e.g. 192.168.1.20", 19, Faint);
+                    if (_phase == Phase.Text) JoinField(x + 12, y + 28, fw - 24, 32);
+                    Card(x3, y, w, h, "Delay", "Set by host");
                     break;
                 }
                 case Mode.Practice when _practice == PracticePick.FreeRoam:

@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using Sculpt.Core;
 using Sculpt.Core.Net;
+using Sculpt.Core.Replay;
 using UnityEngine;
 
 namespace Sculpt.Game.Net
@@ -9,7 +12,8 @@ namespace Sculpt.Game.Net
     {
         Offline,  // local server in memory, nobody else can join
         Host,     // local server in memory plus FishNet server for remote players
-        Client,   // joined someone else's server over FishNet
+        Client,   // joined someone else's server over FishNet (to play, or to watch: Client.IsSpectator)
+        Replay,   // playing a saved replay (no server; the client is fed from the file)
     }
 
     /// <summary>
@@ -47,6 +51,29 @@ namespace Sculpt.Game.Net
         /// <summary>Raised when Client is replaced (joining or leaving a server). The local player re-reads it.</summary>
         public event Action ClientChanged;
 
+        // ---- Replays and spectating ----
+        /// <summary>Record every local or hosted server to a replay file (off with -noreplay).</summary>
+        public static bool RecordReplays = true;
+        /// <summary>How far behind live spectators of this host watch (Ben's roadmap: 2 minutes; -specdelay seconds).</summary>
+        public static int SpectatorDelaySeconds = 120;
+        /// <summary>The replay being played (Mode == Replay), else null.</summary>
+        public ReplayPlayer Replay { get; private set; }
+        /// <summary>Joining to watch rather than play.</summary>
+        public bool Spectating { get; private set; }
+        /// <summary>The file being recorded now, or null.</summary>
+        public string RecordingPath { get; private set; }
+        /// <summary>Map name written into replays (and read back to rebuild the world when playing one).</summary>
+        public string MapName = "";
+        /// <summary>Mode label written into replays ("Vs bot", "1v1 hosted", "Practice").</summary>
+        public string ModeLabel = "";
+        private ReplayWriter _recWriter;
+        private FileStream _recFile;
+        private double _recMovedMeters;
+        private Vec3d _recLastPos;
+        private bool _recHadLast;
+        private bool _recMatchPlayed;
+        private readonly HashSet<int> _pendingConns = new HashSet<int>();
+
         private readonly Func<SubGrid> _makeGrid;
         private readonly Func<SubGrid, ITerrain> _terrain;
         /// <summary>Map setup on every new local server (items lying on the map).</summary>
@@ -70,8 +97,10 @@ namespace Sculpt.Game.Net
         /// <param name="terrain">What movement and bullets collide with, built around each side's ground grid (the
         /// breach map adds its buildings). Null: the ground grid alone.</param>
         public NetSession(Func<SubGrid> makeGrid, SubGrid clientGrid, MovementConfig movement, NetConfig config, SculptConfig sculpt, Vec3d[][] teamSpawns, double[] teamYaw,
-                          Func<SubGrid, ITerrain> terrain = null, Action<NetServer> setupServer = null)
+                          Func<SubGrid, ITerrain> terrain = null, Action<NetServer> setupServer = null, string mapName = "", string modeLabel = "")
         {
+            MapName = mapName ?? "";
+            ModeLabel = modeLabel ?? "";
             _setupServer = setupServer;
             _makeGrid = makeGrid;
             _terrain = terrain ?? (g => g);
@@ -88,6 +117,9 @@ namespace Sculpt.Game.Net
 
         public void StartOffline()
         {
+            StopRecording();
+            Replay = null;
+            Spectating = false;
             ShutdownFishNet();
             CreateLocalServer();
             Server.MatchConfig.Enabled = MatchOffline;
@@ -110,8 +142,12 @@ namespace Sculpt.Game.Net
             else Status = _fish.LastError;
         }
 
-        public void Join(string address, ushort port)
+        /// <param name="spectate">Watch instead of play (the host decides the delay).</param>
+        public void Join(string address, ushort port, bool spectate = false)
         {
+            StopRecording();
+            Replay = null;
+            Spectating = spectate;
             ShutdownFishNet();
             Server = null;
             ServerSculpt = null;
@@ -123,7 +159,7 @@ namespace Sculpt.Game.Net
             NewClient();
             EnsureFishNet();
             Mode = NetMode.Client;
-            Status = $"Connecting to {address}:{port}...";
+            Status = spectate ? $"Connecting to {address}:{port} to watch..." : $"Connecting to {address}:{port}...";
             if (!_fish.StartClient(address, port)) { Status = _fish.LastError; }
             Debug.Log($"[SCULPT] Joining {address}:{port}.");
         }
@@ -135,6 +171,8 @@ namespace Sculpt.Game.Net
             Server = new NetServer(_terrain(serverGrid), _movement, _config, SendFromServer);
             ServerSculpt = new SculptSystem(serverGrid, _sculptConfig);
             Server.Sculpt = ServerSculpt;
+            Server.SpectatorDelayTicks = Math.Max(0, SpectatorDelaySeconds) * SimTime.TicksPerSecond;
+            StartRecording(); // before the map setup adds bots, so the whole server is in the replay (and can be re-run)
             _setupServer?.Invoke(Server);
             _serverAccum = 0;
             _nextSpawn = 0;
@@ -182,16 +220,29 @@ namespace Sculpt.Game.Net
             _fish.ServerClientConnected += id =>
             {
                 if (Server == null) return;
-                AddServerPlayer(id);
-                Debug.Log($"[SCULPT] Player joined (connection {id}).");
+                // Nothing is added until the connection says hello: play or watch (protocol 30).
+                _pendingConns.Add(id);
+                Debug.Log($"[SCULPT] Connection {id} opened.");
             };
             _fish.ServerClientDisconnected += id =>
             {
+                _pendingConns.Remove(id);
+                bool watcher = Server != null && Server.IsSpectator(id);
                 Server?.RemovePlayer(id);
-                Debug.Log($"[SCULPT] Player left (connection {id}).");
+                Debug.Log($"[SCULPT] {(watcher ? "Spectator" : "Player")} left (connection {id}).");
             };
-            _fish.ServerReceived += (id, data, reliable) => Server?.Receive(id, data, 0, data.Length);
-            _fish.ClientConnected += () => { if (Mode == NetMode.Client) Status = $"Connected to {JoinAddress}:{Port}"; };
+            _fish.ServerReceived += (id, data, reliable) =>
+            {
+                if (Server == null) return;
+                if (_pendingConns.Contains(id)) { OnHello(id, data); return; }
+                Server.Receive(id, data, 0, data.Length);
+            };
+            _fish.ClientConnected += () =>
+            {
+                if (Mode != NetMode.Client) return;
+                Status = Spectating ? $"Watching {JoinAddress}:{Port}" : $"Connected to {JoinAddress}:{Port}";
+                _fish?.SendToServer(SpecProtocol.Hello(Spectating), true);
+            };
             _fish.ServerClientConnected += id => { if (Server != null && Mode == NetMode.Host) Status = $"Hosting on port {Port}: {Server.Players.Count} player(s)"; };
             _fish.ClientDisconnected += () =>
             {
@@ -201,6 +252,141 @@ namespace Sculpt.Game.Net
             };
             // Received packets go through the simulated downlink, so fake latency applies to real traffic too.
             _fish.ClientReceived += (data, reliable) => _down.Send(data, reliable, _nowMs);
+        }
+
+        /// <summary>A new connection's first packet: hello (play or watch), or anything else from an older build.</summary>
+        private void OnHello(int id, byte[] data)
+        {
+            _pendingConns.Remove(id);
+            if (!SpecProtocol.TryReadHello(data, 0, data.Length, out byte version, out bool spectate) || version != Protocol.Version)
+            {
+                Server.SendVersion(id); // their client shows "the host runs a newer/older build"
+                Debug.Log($"[SCULPT] Connection {id} runs another build (protocol {(version == 0 ? "older than 30" : version.ToString())}).");
+                return;
+            }
+            if (spectate)
+            {
+                Server.AddSpectator(id);
+                Debug.Log($"[SCULPT] Spectator joined (connection {id}), watching {SpectatorDelaySeconds} s behind.");
+            }
+            else
+            {
+                AddServerPlayer(id);
+                Debug.Log($"[SCULPT] Player joined (connection {id}).");
+            }
+            if (Mode == NetMode.Host)
+            {
+                int watchers = Server.SpectatorConnections.Count;
+                Status = $"Hosting on port {Port}: {Server.Players.Count} player(s)" + (watchers > 0 ? $", {watchers} watching" : "");
+            }
+        }
+
+        // ================================================================ Replays
+
+        private void StartRecording()
+        {
+            if (!RecordReplays || Server == null) return;
+            try
+            {
+                RecordingPath = ReplayLibrary.NewPath(MapName);
+                _recFile = new FileStream(RecordingPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+                MatchStream stream = Server.StartStream();
+                _recWriter = new ReplayWriter(_recFile, new ReplayHeader
+                {
+                    Map = MapName,
+                    Mode = ModeLabel,
+                    Build = Application.version,
+                    StartedUtcTicks = DateTime.UtcNow.Ticks,
+                }, stream);
+                _recMovedMeters = 0;
+                _recHadLast = false;
+                _recMatchPlayed = false;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[SCULPT] Replay recording off: " + e.Message);
+                _recFile?.Dispose();
+                _recFile = null;
+                _recWriter = null;
+                RecordingPath = null;
+            }
+        }
+
+        /// <summary>Per frame while recording: is anything worth keeping happening (a match, or the local player moving about)?</summary>
+        private void WatchRecording()
+        {
+            if (_recWriter == null || Server == null) return;
+            if (Server.Match.Phase == MatchPhase.Playing) _recMatchPlayed = true;
+            ServerPlayer me = LocalServerPlayer;
+            if (me == null || me.State.Dead) { _recHadLast = false; return; }
+            if (_recHadLast)
+            {
+                double d = (me.State.Position - _recLastPos).Length;
+                if (d < 4) _recMovedMeters += d; // respawns don't count
+            }
+            _recLastPos = me.State.Position;
+            _recHadLast = true;
+        }
+
+        /// <summary>Finishes the file. Keeps it if something happened (a kill, a match, or 50 m of moving about for 20 s);
+        /// the menu's background practice server and quick peeks are deleted. Then trims to the newest 20.</summary>
+        private void StopRecording()
+        {
+            if (_recWriter == null) return;
+            string path = RecordingPath;
+            bool keep = false;
+            try
+            {
+                MatchStream stream = Server?.Stream;
+                int kills = stream?.Markers.Count ?? 0;
+                double seconds = stream != null && stream.LastTick != int.MinValue ? (stream.LastTick - stream.FirstTick) / (double)SimTime.TicksPerSecond : 0;
+                keep = seconds >= 20 && (kills > 0 || _recMatchPlayed || _recMovedMeters >= 50);
+                _recWriter.Finish();
+                Server?.StopStream();
+            }
+            catch (Exception e) { Debug.LogWarning("[SCULPT] Replay didn't finish cleanly: " + e.Message); }
+            _recFile?.Dispose();
+            _recFile = null;
+            _recWriter = null;
+            RecordingPath = null;
+            try
+            {
+                if (!keep && path != null) File.Delete(path);
+                else if (path != null) Debug.Log($"[SCULPT] Replay saved: {path}");
+                ReplayLibrary.Prune();
+            }
+            catch (Exception e) { Debug.LogWarning("[SCULPT] Replay folder: " + e.Message); }
+        }
+
+        /// <summary>Plays a saved replay (the scene must already be built for its map). False with a reason if it can't.</summary>
+        public bool StartReplay(string path, out string error)
+        {
+            error = null;
+            ReplayFile file;
+            try { file = ReplayFile.Read(File.ReadAllBytes(path)); }
+            catch (Exception e) { error = "The replay can't be read: " + e.Message; return false; }
+            if (file.Incompatible != null) { error = "This replay was " + file.Incompatible + "."; return false; }
+            if (file.Segments.Count == 0) { error = "The replay is empty."; return false; }
+            StopRecording();
+            ShutdownFishNet();
+            Server = null;
+            ServerSculpt = null;
+            Spectating = false;
+            NewLocalLinks();
+            try
+            {
+                Replay = new ReplayPlayer(file, () => { NewClient(); return Client; });
+            }
+            catch (Exception e)
+            {
+                error = "The replay can't be played: " + e.Message;
+                StartOffline();
+                return false;
+            }
+            Mode = NetMode.Replay;
+            Status = $"Replay: {file.Header.Mode} on {file.Header.Map}" + (file.Complete ? "" : " (cut short)");
+            Debug.Log($"[SCULPT] Playing replay {path}: {file.Seconds:0} s, {file.Segments.Count} segments, {file.Markers.Count} kills.");
+            return true;
         }
 
         private void ShutdownFishNet()
@@ -234,6 +420,7 @@ namespace Sculpt.Game.Net
             }
             DeliverUp();
 
+            if (Replay != null && Mode == NetMode.Replay) Replay.Advance(dt);
             if (Server != null)
             {
                 _serverAccum += Math.Min(dt, 0.25);
@@ -244,6 +431,7 @@ namespace Sculpt.Game.Net
                 }
             }
             DeliverDown();
+            WatchRecording();
         }
 
         /// <summary>End of frame, after the local player's ticks: hand new packets to the network now.</summary>
@@ -272,6 +460,7 @@ namespace Sculpt.Game.Net
 
         public void Dispose()
         {
+            StopRecording();
             ShutdownFishNet();
         }
     }

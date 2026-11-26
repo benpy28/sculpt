@@ -53,7 +53,7 @@ namespace Sculpt.Game.UI
         {
             if (_session == null || _player == null) return;
             NetClient net = _session.Client;
-            if (!net.Joined) return;
+            if (!net.Joined || net.IsSpectator) return; // spectators get the watch HUD's clock and scores
             MatchState m = net.Match;
             if (m.Phase == MatchPhase.Off) return;
             if (Event.current.type != EventType.Repaint) return; // draw-only: nothing here reacts to input events

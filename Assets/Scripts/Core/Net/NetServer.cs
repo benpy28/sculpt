@@ -160,7 +160,10 @@ namespace Sculpt.Core.Net
 
         public ServerPlayer FindByConnection(int connectionId) => _byConn.TryGetValue(connectionId, out var p) ? p : null;
 
-        public ServerPlayer AddPlayer(int connectionId, int team, Vec3d spawn, double spawnYaw)
+        public ServerPlayer AddPlayer(int connectionId, int team, Vec3d spawn, double spawnYaw) =>
+            AddPlayer(connectionId, team, spawn, spawnYaw, Replay.JoinKind.Human, true);
+
+        private ServerPlayer AddPlayer(int connectionId, int team, Vec3d spawn, double spawnYaw, Replay.JoinKind kind, bool countsAsPlayer)
         {
             if (_byConn.ContainsKey(connectionId)) throw new InvalidOperationException("Connection already has a player.");
             var p = new ServerPlayer(_ringSize, Config.LeadWindowTicks, Config.ServerHistoryTicks)
@@ -178,6 +181,7 @@ namespace Sculpt.Core.Net
             _players.Add(p);
             _byConn[connectionId] = p;
             Sculpt?.AddPlayer(p.Body);
+            Stream?.OnJoin(Tick, p, kind, countsAsPlayer);
 
             _w.Clear();
             Protocol.Write(_w, new WelcomeMsg
@@ -200,7 +204,9 @@ namespace Sculpt.Core.Net
 
         public void RemovePlayer(int connectionId)
         {
+            RemoveSpectator(connectionId);
             if (!_byConn.TryGetValue(connectionId, out var p)) return;
+            Stream?.OnLeave(Tick, p.Id);
             _byConn.Remove(connectionId);
             _players.Remove(p);
             _matchDirty = true;
@@ -340,6 +346,7 @@ namespace Sculpt.Core.Net
         public void Step(List<MoveEvent> events = null)
         {
             Tick++;
+            Stream?.BeginTick(Tick);
             StepMatch();
             _combat.Clear();
             ItemActions.Clear();
@@ -398,6 +405,7 @@ namespace Sculpt.Core.Net
                     p.CarrySculpt = false;
                 }
                 p.LastCmd = cmd;
+                Stream?.AddInput(p.Id, cmd);
 
                 // Sculpt shoves move the shared body between ticks; friction drags and throw kicks add velocity.
                 // A dead player's body is parked out of the world, so it is not theirs to copy back.
@@ -453,6 +461,11 @@ namespace Sculpt.Core.Net
             SendMatch();
             if (Config.SnapshotEveryTicks <= 1 || Tick % Config.SnapshotEveryTicks == 0)
                 SendSnapshots();
+            if (Stream != null)
+            {
+                Stream.EndTick(this);
+                StepSpectators();
+            }
         }
 
         // ================================================================ Items
@@ -480,7 +493,7 @@ namespace Sculpt.Core.Net
             ItemsProtocol.Write(w, new ItemsMsg { Tick = Tick, Items = new List<GroundItem>(Items.All) });
             byte[] data = w.ToArray();
             if (connectionId >= 0) { Send(connectionId, data, true); return; }
-            foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
+            Broadcast(data);
         }
 
         /// <summary>Puts an item on the map (map setup, tests). It rests on the surface below the point.</summary>
@@ -619,12 +632,13 @@ namespace Sculpt.Core.Net
             _opsSent = ops.Count;
             _w.Clear();
             WorldProtocol.Write(_w, new WorldMsg { Tick = Tick, Ops = _opsScratch, Events = _worldEvents });
-            byte[] data = _w.ToArray();
-            foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
+            Broadcast(_w.ToArray());
         }
 
         /// <summary>Late join: the whole op log, windups in progress, pieces in flight.</summary>
-        private void SendJoinState(ServerPlayer to)
+        private void SendJoinState(ServerPlayer to) => Send(to.ConnectionId, JoinStateBytes(), true);
+
+        private byte[] JoinStateBytes()
         {
             var events = new List<WorldEvent>();
             foreach (ServerPlayer o in _players)
@@ -639,7 +653,7 @@ namespace Sculpt.Core.Net
             for (int k = 0; k < _opsSent && k < Sculpt.Pieces.Ops.Count; k++) ops.Add(Sculpt.Pieces.Ops[k]);
             var w = new ByteWriter(4096);
             WorldProtocol.Write(w, new WorldMsg { Tick = Tick, Join = true, Ops = ops, Events = events });
-            Send(to.ConnectionId, w.ToArray(), true);
+            return w.ToArray();
         }
 
         /// <summary>

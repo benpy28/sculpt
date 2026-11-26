@@ -35,16 +35,27 @@ namespace Sculpt.Game.Bootstrap
         public enum MapKind { Arena, MovementCourse }
 
         // ---- What the next scene load starts (the main menu picks it, then reloads the scene) ----
-        public enum Launch { Menu, Offline, Host, Join, VsBot }
+        public enum Launch { Menu, Offline, Host, Join, VsBot, Replay, Spectate }
         public enum MapChoice { Duel, Breach }
         public static Launch NextLaunch = Launch.Menu;
         public static MapChoice NextMap = MapChoice.Duel;
         public static string NextAddress = "";
+        /// <summary>The replay file a Replay launch plays.</summary>
+        public static string NextReplayPath = "";
+        /// <summary>Why the last replay couldn't be played (the menu shows it), or empty.</summary>
+        public static string ReplayError = "";
         /// <summary>How good the bot is in a "Play vs bot" launch.</summary>
         public static BotLevel NextBotLevel = BotLevel.Normal;
         private static bool _commandLineDone;
 
         /// <summary>Reloads the game with a new map and start (menu buttons). Everything is rebuilt from code.</summary>
+        /// <summary>Plays a saved replay: reloads the scene on the replay's map, then feeds it in.</summary>
+        public static void RelaunchReplay(string path, string mapName)
+        {
+            NextReplayPath = path ?? "";
+            Relaunch(Launch.Replay, mapName == "Breach" ? MapChoice.Breach : MapChoice.Duel);
+        }
+
         public static void Relaunch(Launch launch, MapChoice map, string address = "")
         {
             NextLaunch = launch;
@@ -75,6 +86,8 @@ namespace Sculpt.Game.Bootstrap
         [SerializeField] private int mapSeed = 1;
 
         private SubGrid _grid;
+        private FirstPersonMode _firstPerson;
+        private SpectatorCamera _spectatorCam;
         private WorldView _world;
         private LocalPlayer _player;
         private CameraRig _rig;
@@ -187,7 +200,9 @@ namespace Sculpt.Game.Bootstrap
                     if (withDummy) server.AddDummy(new PracticeDummy(bi.RoomCentre, Math.PI, bi.Room, dummy), team: 2);
                 };
             }
-            _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup);
+            string mapName = NextMap == MapChoice.Duel ? "Duel" : breachMap ? "Breach" : map.ToString();
+            string modeLabel = vsBot ? "Vs bot " + NextBotLevel : NextLaunch == Launch.Host ? "1v1 hosted" : "Practice";
+            _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup, mapName, modeLabel);
             _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
             if (vsBot) { _session.MatchOffline = true; _session.Server.MatchConfig.Enabled = true; }
 
@@ -250,7 +265,9 @@ namespace Sculpt.Game.Bootstrap
             _rig = new GameObject("Camera Rig").AddComponent<CameraRig>();
             _rig.Init();
             var firstPerson = new FirstPersonMode(_player, client);
+            _firstPerson = firstPerson;
             _rig.Mode = firstPerson;
+            _spectatorCam = new SpectatorCamera(_player, client, _session, movement, _input);
 
             _weapons = new GameObject("Weapon View").AddComponent<WeaponView>();
             _weapons.Init(_player, _session, _rig, firstPerson, client, movement);
@@ -278,6 +295,7 @@ namespace Sculpt.Game.Bootstrap
             gameObject.AddComponent<SettingsMenu>().Init(_player, client, _input);
             gameObject.AddComponent<MatchHud>().Init(_player, _session);
             gameObject.AddComponent<PingHud>().Init(_session, _rig.Camera);
+            gameObject.AddComponent<SpectatorHud>().Init(_player, _session, _spectatorCam, _input);
             var menu = gameObject.AddComponent<MainMenu>();
             menu.Init(_player, _session);
 
@@ -288,6 +306,11 @@ namespace Sculpt.Game.Bootstrap
             {
                 case Launch.Host: _session.StartHost(FishNetTransport.DefaultPort); break;
                 case Launch.Join: JoinAddress(NextAddress); break;
+                case Launch.Spectate: JoinAddress(NextAddress, spectate: true); break;
+                case Launch.Replay:
+                    if (!_session.StartReplay(NextReplayPath, out string why)) { ReplayError = why; Debug.LogWarning("[SCULPT] " + why); menu.Open(); }
+                    else ReplayError = "";
+                    break;
                 case Launch.Menu: menu.Open(); break;
             }
             ApplyCommandLine(); // sim ping/loss/jitter, and a non-default -port
@@ -318,6 +341,11 @@ namespace Sculpt.Game.Bootstrap
 
             net.UpdateVisual(dt);
             _player.Render((float)net.Alpha);
+            // Watching (live or a replay): the spectator camera, else first person.
+            bool watching = net.IsSpectator;
+            if (watching) _spectatorCam.HandleInput();
+            else Player.RemotePlayersView.HiddenPlayer = 0;
+            _rig.Mode = watching ? _spectatorCam : (ICameraMode)_firstPerson;
             _weapons.PreCamera(Time.unscaledDeltaTime);  // this frame's shots kick the view before it is placed
             _rig.Apply(Time.unscaledDeltaTime);
             _weapons.PostCamera(Time.unscaledDeltaTime); // tracers from the muzzle as drawn this frame
@@ -350,14 +378,14 @@ namespace Sculpt.Game.Bootstrap
             };
         }
 
-        /// <summary>Joins "address" or "address:port".</summary>
-        private void JoinAddress(string text)
+        /// <summary>Joins "address" or "address:port" (to play, or to watch).</summary>
+        private void JoinAddress(string text, bool spectate = false)
         {
             string addr = (text ?? "").Trim();
             ushort port = FishNetTransport.DefaultPort;
             int colon = addr.LastIndexOf(':');
             if (colon > 0 && ushort.TryParse(addr.Substring(colon + 1), out ushort cp)) { port = cp; addr = addr.Substring(0, colon); }
-            if (addr.Length > 0) _session.Join(addr, port);
+            if (addr.Length > 0) _session.Join(addr, port, spectate);
         }
 
         /// <summary>First boot only: -host / -connect address[:port] / -breach skip the menu.</summary>
@@ -374,6 +402,21 @@ namespace Sculpt.Game.Bootstrap
                 else if (a == "-bot") NextLaunch = Launch.VsBot;
                 else if (a == "-breach") NextMap = MapChoice.Breach;
                 else if (a == "-phototour") NextLaunch = Launch.Offline;
+                else if (a == "-spectate" && i + 1 < args.Length) { NextLaunch = Launch.Spectate; NextAddress = args[i + 1]; }
+                else if (a == "-replay" && i + 1 < args.Length)
+                {
+                    // Play a replay file at start (needs its map: read the header first).
+                    NextLaunch = Launch.Replay;
+                    NextReplayPath = args[i + 1];
+                    try
+                    {
+                        var f = Sculpt.Core.Replay.ReplayFile.Read(System.IO.File.ReadAllBytes(NextReplayPath));
+                        NextMap = f.Header.Map == "Breach" ? MapChoice.Breach : MapChoice.Duel;
+                    }
+                    catch (Exception) { /* the launch reports it */ }
+                }
+                else if (a == "-noreplay") NetSession.RecordReplays = false;
+                else if (a == "-specdelay" && i + 1 < args.Length && int.TryParse(args[i + 1], out int sd)) NetSession.SpectatorDelaySeconds = Math.Max(0, sd);
             }
         }
 

@@ -20,6 +20,9 @@ namespace Sculpt.Core.Net
         Items = 9,     // server -> client, reliable: the whole list of items on the ground, whenever it changes (and on join)
         Match = 10,    // server -> client, reliable: match phase, timer and scores, whenever they change (and on join)
         Reveal = 11,   // server -> client, reliable: an enemy shown through walls by the anti-hiding ping (only to those two players, only when it starts or is cancelled)
+        Hello = 12,    // client -> server, reliable, first packet after connecting: version, and play or watch (Replay/SpecProtocol)
+        SpecFrame = 13, // server -> spectator, reliable: one tick's spectator packets bundled (also what a replay file stores)
+        SpecSnap = 14, // inside spectator frames only: every player, delta-coded (Replay/SpecProtocol)
     }
 
     public struct WelcomeMsg
@@ -30,6 +33,11 @@ namespace Sculpt.Core.Net
         public int ServerTick;
         public Vec3d Spawn;
         public double SpawnYaw;
+        /// <summary>Spectators only: how far behind the live match they watch, in ticks (0 for players).</summary>
+        public int SpectatorDelayTicks;
+
+        /// <summary>Player id 0 is never a player: a welcome with it makes the client a spectator.</summary>
+        public bool IsSpectator => PlayerId == 0;
     }
 
     public struct InputsMsg
@@ -79,7 +87,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 29; // 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
+        public const byte Version = 30; // 30 replays and spectators (Hello, spectator frames, welcome gains the spectator delay); 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
@@ -102,20 +110,22 @@ namespace Sculpt.Core.Net
             w.I32(m.ServerTick);
             w.Vec(m.Spawn);
             w.F64(m.SpawnYaw);
+            w.I32(m.SpectatorDelayTicks);
         }
 
         public static WelcomeMsg ReadWelcome(ref ByteReader r)
         {
             Expect(ref r, MsgType.Welcome);
-            return new WelcomeMsg
-            {
-                ProtocolVersion = r.U8(),
-                PlayerId = r.I32(),
-                Team = r.I32(),
-                ServerTick = r.I32(),
-                Spawn = r.Vec(),
-                SpawnYaw = r.F64(),
-            };
+            var m = new WelcomeMsg { ProtocolVersion = r.U8() };
+            // Another build's welcome may be laid out differently: the version alone tells the client what is wrong.
+            if (m.ProtocolVersion != Version) return m;
+            m.PlayerId = r.I32();
+            m.Team = r.I32();
+            m.ServerTick = r.I32();
+            m.Spawn = r.Vec();
+            m.SpawnYaw = r.F64();
+            m.SpectatorDelayTicks = r.I32();
+            return m;
         }
 
         // ---------------------------------------------------------------- Inputs
