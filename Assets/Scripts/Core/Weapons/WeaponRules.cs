@@ -78,8 +78,8 @@ namespace Sculpt.Core
         /// <summary>Random cone half-angle for this shot, degrees.</summary>
         public double Spread;
         public uint Seed;
-        /// <summary>The rarity of the copy that fired it (battle royale; None elsewhere). Taken at the shot, so a pickup or
-        /// a death later in the same tick never changes its damage.</summary>
+        /// <summary>Rarity of the copy that fired (battle royale damage), fixed at the shot: the bag can change before the
+        /// server resolves it (a pickup or drop on the same tick, or a death that drops the bag).</summary>
         public Rarity Rarity;
     }
 
@@ -164,7 +164,7 @@ namespace Sculpt.Core
                 Aim = AimDir(input.Yaw, pitchDegrees, w.RecoilPitch, w.RecoilYaw),
                 Spread = Spread(s, mc, st),
                 Seed = Hash((uint)tick, (uint)w.ShotCount, (uint)s.Hand.Held),
-                Rarity = s.Hand.Bag.RarityOf(s.Hand.Slot),
+                Rarity = s.Hand.Bag.RarityOfGun(held, s.Hand.Slot),
             };
             shots?.Add(shot);
 

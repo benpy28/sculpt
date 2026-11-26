@@ -66,6 +66,24 @@ namespace Sculpt.Core.Tests.Net
         }
 
         [Test]
+        public void Rarity_ScalesTheRawShotDamage_RoundedOnce()
+        {
+            // A hit is rounded once (WeaponsConfig.Round, half away from zero). Scaling the already rounded number rounds
+            // twice: a common pistol body shot (25.5 x 0.95 = 24.2) did 25, so a common pistol killed in 6 body shots
+            // instead of 7, and a common AR body shot (21.5 x 0.95 = 20.4) did 21.
+            var wc = new WeaponsConfig();
+            var pistol = new ShotVictim { Raw = wc.Of(Weapon.Pistol).BodyDamage };
+            var ar = new ShotVictim { Raw = wc.Of(Weapon.Ar).BodyDamage };
+            var pump = new ShotVictim { Raw = 9 * wc.Of(Weapon.Pump).BodyDamage };
+            Assert.That(wc.ScaleDamage(pistol.Raw, Rarity.Common), Is.EqualTo(24));
+            Assert.That(wc.ScaleDamage(ar.Raw, Rarity.Common), Is.EqualTo(20));
+            Assert.That(wc.ScaleDamage(pump.Raw, Rarity.Common), Is.EqualTo(80), "84.6 x 0.95 = 80.4");
+            Assert.That(wc.ScaleDamage(pistol.Raw, Rarity.None), Is.EqualTo(pistol.Damage), "no rarity: exactly the old rounding");
+            Assert.That(wc.ScaleDamage(ar.Raw, Rarity.Uncommon), Is.EqualTo(ar.Damage));
+            Assert.That(wc.ScaleDamage(12.5, Rarity.Uncommon), Is.EqualTo(13), "half rounds away from zero like every hit");
+        }
+
+        [Test]
         public void ALegendaryGun_ReloadsFivePercentFaster_InTheRealRules()
         {
             var mc = new MovementConfig();

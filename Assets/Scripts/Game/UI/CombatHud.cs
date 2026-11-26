@@ -477,7 +477,7 @@ namespace Sculpt.Game.UI
             if (s.Weapon.Reloading && s.Weapon.ReloadGun == held)
             {
                 // Progress of the magazine (or of the next shell for the pump).
-                int total = st.ShellReload ? st.ShellTicks : st.ReloadTicks;
+                int total = cfg.ScaleReload(st.ShellReload ? st.ShellTicks : st.ReloadTicks, s.Hand.Bag.RarityOfGun(held, s.Hand.Slot)); // legendary reloads faster
                 float k = Mathf.Clamp01(1f - (s.Weapon.ReloadTick - tick) / (float)Mathf.Max(1, total));
                 HudDraw.Bar(bx, by, bw, 5, k, HudDraw.Text);
             }
