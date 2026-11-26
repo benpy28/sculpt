@@ -81,7 +81,7 @@ namespace Sculpt.Core.Audio
         // Persistent caches, cleared near any change of the world (Invalidate).
         private readonly Dictionary<long, bool>[] _faces = { new Dictionary<long, bool>(), new Dictionary<long, bool>(), new Dictionary<long, bool>() };
         private readonly Dictionary<long, bool> _chunkEmpty = new Dictionary<long, bool>();
-        private readonly Dictionary<(long, long, int), CachedRoute> _routes = new Dictionary<(long, long, int), CachedRoute>();
+        private readonly Dictionary<(long, long, long), CachedRoute> _routes = new Dictionary<(long, long, long), CachedRoute>();
 
         // Search scratch (reused, never shrunk).
         private readonly List<Vec3d> _chain = new List<Vec3d>();
@@ -139,8 +139,10 @@ namespace Sculpt.Core.Audio
             if (dist < 1e-6) { r.Way = SoundWay.Direct; r.Apparent = source; r.ArrivesFrom = new Vec3d(0, 0, 1); return r; }
 
             double rc = Config.RouteCacheCell;
-            (long, long, int) key = (KeyOf(Cell(listener.X), Cell(listener.Y), Cell(listener.Z)),
-                                     KeyOf(Cell(source.X), Cell(source.Y), Cell(source.Z)), (int)Math.Ceiling(range * 8 + sourceRadius * 64));
+            // Range to 1/8 m and source radius to 1/64 m, each in its own half of the third key (never folded together).
+            (long, long, long) key = (KeyOf(Cell(listener.X), Cell(listener.Y), Cell(listener.Z)),
+                                      KeyOf(Cell(source.X), Cell(source.Y), Cell(source.Z)),
+                                      ((long)Math.Ceiling(range * 8) << 32) | (uint)(int)Math.Ceiling(sourceRadius * 64));
             if (now >= 0 && _routes.TryGetValue(key, out CachedRoute c) && now - c.Time <= Config.RouteCacheSeconds && now >= c.Time)
                 return Reposition(c.Route, listener, source);
 

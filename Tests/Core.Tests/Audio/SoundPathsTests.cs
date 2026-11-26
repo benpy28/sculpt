@@ -301,6 +301,23 @@ namespace Sculpt.Core.Tests.Audio
         }
 
         [Test]
+        public void ACachedRoute_IsNeverReusedForADifferentRangeOrSourceRadius()
+        {
+            // The cache key folded range and source radius into one number (8 x range + 64 x radius), so a sound that
+            // carries 1 m further with 0.125 m less radius got the other sound's cached answer.
+            CompositeTerrain t = Room(door: true, roof: true, out _, out _);
+            double round = new SoundPaths(t).Route(Outside, Inside, Range).AroundDistance;
+            double straight = (Inside - Outside).Length;
+            double a = Math.Floor((round - 0.1) * 8) / 8 + 1.0 / 16, b = a + 1;
+            Assume.That(a, Is.GreaterThan(straight).And.LessThan(round), "a range that hears it only through the wall");
+            var paths = new SoundPaths(t);
+            SoundRoute shortRange = paths.Route(Outside, Inside, a, now: 1.0, sourceRadius: 0.175);
+            Assert.That(shortRange.Way, Is.EqualTo(SoundWay.Through));
+            SoundRoute longRange = paths.Route(Outside, Inside, b, now: 1.05, sourceRadius: 0.05);
+            Assert.That(longRange.Way, Is.EqualTo(SoundWay.Around), "carries far enough to come round through the door");
+        }
+
+        [Test]
         public void TheFastGrid_AgreesWithRayCasts_OnEveryBuildingFace()
         {
             // Buildings only (no sub-cell ground, whose chamfers the grid counts as solid), with holes and broken tiles.
