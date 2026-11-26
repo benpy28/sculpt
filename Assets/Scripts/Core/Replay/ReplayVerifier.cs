@@ -13,17 +13,33 @@ namespace Sculpt.Core.Replay
         /// <summary>Anti-cheat flags worked out from the simulation (integrity, interest, aim) in the recording, and whether the re-run logged exactly the same ones.</summary>
         public int FlagsChecked;
         public bool FlagsMatch = true;
+        /// <summary>Every anti-cheat flag in the recording, both the re-run-verifiable ones and the host-recorded input/network ones. A non-zero count means the match is NOT clean, whatever <see cref="Passed"/> says.</summary>
+        public int FlagsLogged;
         /// <summary>The re-run server's flag log (with per-player shot and hit counts), for a reviewer.</summary>
         public AntiCheat.FlagLog ReRunFlags;
         /// <summary>Why the check couldn't run (no inputs, recorded mid-match, a join the re-run couldn't match), or null.</summary>
         public string Problem;
+
+        /// <summary>
+        /// The recording is internally CONSISTENT: it re-runs to the same state hashes and its simulation flags reproduce.
+        /// This proves the record wasn't tampered with and no simulation-level cheat (speed, teleport, impossible fire,
+        /// hit-unseen, aim stats) fired. It does NOT mean "no cheating": a match full of logged flags still passes. Gate
+        /// ranked/cup eligibility on <see cref="Clean"/>, never on Passed alone.
+        /// </summary>
         public bool Passed => Problem == null && FirstMismatchTick < 0 && HashesChecked > 0 && FlagsMatch;
+
+        /// <summary>
+        /// Eligible as a clean match: consistent AND no anti-cheat flag of any kind was logged. On a listen server the
+        /// input/network half of the flags is host-written and strippable, so Clean is only trustworthy from a dedicated
+        /// server whose flags are attested; a reviewer should still read <see cref="ReRunFlags"/>.
+        /// </summary>
+        public bool Clean => Passed && FlagsLogged == 0;
 
         public override string ToString() =>
             Problem != null ? "can't check: " + Problem :
             FirstMismatchTick >= 0 ? $"MISMATCH at tick {FirstMismatchTick} ({HashesChecked} hashes checked, {TicksRun} ticks run)" :
             !FlagsMatch ? $"state matches ({HashesChecked} hashes) but the anti-cheat flags differ from the recording's {FlagsChecked}" :
-            $"matches: {HashesChecked} state hashes over {TicksRun} ticks, {FlagsChecked} simulation flags reproduced";
+            $"{(Clean ? "clean" : FlagsLogged + " flag(s) logged — NOT clean")}: {HashesChecked} state hashes over {TicksRun} ticks, {FlagsChecked} simulation flags reproduced";
     }
 
     /// <summary>
@@ -108,7 +124,11 @@ namespace Sculpt.Core.Replay
             }
 
             var recorded = new List<AntiCheat.Flag>();
-            foreach (AntiCheat.Flag fl in file.Flags) if (AntiCheat.FlagLog.FromSimulation(fl.Kind)) recorded.Add(fl);
+            foreach (AntiCheat.Flag fl in file.Flags)
+            {
+                check.FlagsLogged++;
+                if (AntiCheat.FlagLog.FromSimulation(fl.Kind)) recorded.Add(fl);
+            }
 
             NetServer s = makeServer();
             check.ReRunFlags = s.Flags;
