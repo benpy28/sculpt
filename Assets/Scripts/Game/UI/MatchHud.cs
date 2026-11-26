@@ -104,7 +104,9 @@ namespace Sculpt.Game.UI
                     HudDraw.Label(new Rect(mid.x, mid.y + 18 * s, mid.width, 44 * s), "Waiting for an opponent", Mathf.RoundToInt(30 * s), HudDraw.Text, TextAnchor.MiddleCenter, true);
                     if (_session.Mode == NetMode.Host)
                     {
-                        _ipLine ??= MainMenu.LanAddresses().Count > 0 ? "They join with " + string.Join("  or  ", MainMenu.LanAddresses()) : "No network address found";
+                        _ipLine ??= MainMenu.LanAddresses().Count > 0
+                            ? (LanRoomBeacon.Problem.Length > 0 ? "They join with " : "They join with room code " + LanRoomBeacon.Code + "  or  ") + string.Join("  or  ", MainMenu.LanAddresses())
+                            : "No network address found";
                         HudDraw.Label(new Rect(mid.x, mid.y + 72 * s, mid.width, 34 * s), _ipLine, Mathf.RoundToInt(20 * s), HudDraw.Dim, TextAnchor.MiddleCenter);
                     }
                     break;

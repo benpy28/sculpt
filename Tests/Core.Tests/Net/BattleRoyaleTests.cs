@@ -419,6 +419,70 @@ namespace Sculpt.Core.Tests.Net
             StepUntil(s, () => s.Players.Count == 0, 10);
         }
 
+        // ------------------------------------------------------------------ the locker gun
+
+        [Test]
+        public void TheLockerPick_IsTheSecondGun_OnlyLockerGunsAreTaken_AndNoneMeansTheDefault()
+        {
+            NetServer s = NewServer(Quick(BrMode.Solos), out _, out _);
+            ServerPlayer smg = s.AddPlayer(1, 1, new Vec3d(150, 1, 150), 0);
+            ServerPlayer pistol = s.AddPlayer(2, 1, new Vec3d(152, 1, 150), 0);
+            ServerPlayer back = s.AddPlayer(3, 1, new Vec3d(154, 1, 150), 0);
+            Assert.That(s.SetLocker(smg, Item.Smg));
+            Assert.That(s.SetLocker(pistol, Item.Pistol));
+            Assert.That(s.SetLocker(back, Item.Pistol));
+            Assert.That(s.SetLocker(back, Item.None), "None goes back to the default");
+            foreach (Item no in new[] { Item.Pump, Item.Grenade, Item.C4, Item.Launcher, Item.Chest })
+            {
+                Assert.That(s.SetLocker(smg, no), Is.False, $"{no} is not a locker gun");
+                Assert.That(smg.Locker, Is.EqualTo(Item.Smg), "a refused pick changes nothing");
+            }
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            Assert.That(smg.State.Hand.Bag.S1, Is.EqualTo(Item.Smg));
+            Assert.That(pistol.State.Hand.Bag.S1, Is.EqualTo(Item.Pistol));
+            Assert.That(back.State.Hand.Bag.S1, Is.EqualTo(Item.Ar), "the default locker gun");
+            foreach (ServerPlayer p in new[] { smg, pistol, back })
+            {
+                Assert.That(p.State.Hand.Bag.S0, Is.EqualTo(Item.Pump), "everyone keeps the common pump");
+                Assert.That(p.State.Hand.Bag.R1, Is.EqualTo(Rarity.Common), "the locker gun is common");
+            }
+        }
+
+        [Test]
+        public void LockerPicks_AreInTheReplay_SoTheReRunDealsTheSameLoadouts()
+        {
+            BrConfig cfg = Quick(BrMode.Duos);
+            NetServer s = NewServer(cfg, out _, out _);
+            var ms = new MemoryStream();
+            MatchStream stream = s.StartStream();
+            var writer = new ReplayWriter(ms, new ReplayHeader { Map = "BattleRoyale", Mode = "Duos", Build = "tests", StartedUtcTicks = 1 }, stream);
+            ServerPlayer me = s.AddPlayer(1, 1, new Vec3d(150, 1, 150), 0);
+            Assert.That(s.SetLocker(me, Item.Smg));
+            s.Step();
+            // Picks between ticks after others joined (a later pick replaces an earlier one), all before the deal.
+            ServerPlayer bot = null;
+            foreach (ServerPlayer p in s.Players) if (p != me) { bot = p; break; }
+            Assert.That(bot, Is.Not.Null, "bots filled the lobby after the first tick");
+            Assert.That(s.SetLocker(bot, Item.Ar));
+            Assert.That(s.SetLocker(bot, Item.Pistol));
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            for (int i = 0; i < 3 * SimTime.TicksPerSecond; i++) s.Step();
+            writer.Finish();
+            Assert.That(me.State.Hand.Bag.S1, Is.EqualTo(Item.Smg));
+            Assert.That(bot.State.Hand.Bag.S1, Is.EqualTo(Item.Pistol));
+
+            ReplayFile f = ReplayFile.Read(ms.ToArray());
+            ReplayCheck check = ReplayVerifier.Run(f, () =>
+            {
+                BrConfig again = Quick(BrMode.Duos);
+                again.MakeBot = null;
+                return NewServer(again, out _, out _);
+            });
+            TestContext.WriteLine(check.ToString());
+            Assert.That(check.HashesChecked, Is.GreaterThan(10));
+            Assert.That(check.Passed, check.ToString());
+        }
+
         // ------------------------------------------------------------------ the whole thing, with bots
 
         private static BrConfig Fast(BrMode mode, int seed) => new BrConfig

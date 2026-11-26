@@ -36,8 +36,10 @@ namespace Sculpt.Core.Net
         public int StormHurtEveryTicks = 60 * SimTime.Per60;
 
         // ---- Loot.
-        /// <summary>The gun every player starts with besides the common pump (the locker pick; a stub until the locker exists).</summary>
+        /// <summary>The gun a player starts with besides the common pump when they haven't picked one in the locker.</summary>
         public Item LockerGun = Item.Ar;
+        /// <summary>The guns the locker offers (Ben: a common pump plus one basic gun picked in the locker).</summary>
+        public static readonly Item[] LockerChoices = { Item.Smg, Item.Ar, Item.Pistol };
         /// <summary>Chest rarity odds, common to legendary.</summary>
         public int[] RarityWeights = { 34, 30, 20, 11, 5 };
         /// <summary>Chest guns and their odds: pump, SMG, AR, pistol.</summary>
@@ -214,6 +216,23 @@ namespace Sculpt.Core.Net
                     yaw = r.PadYaw[slot % 4];
                     return;
             }
+        }
+
+        /// <summary>True for a gun the locker offers (SMG, AR or pistol).</summary>
+        public static bool IsLockerChoice(Item gun) => Array.IndexOf(BrConfig.LockerChoices, gun) >= 0;
+
+        /// <summary>
+        /// Sets the gun <paramref name="p"/> starts each battle royale match with (their locker pick), from the next deal
+        /// on. Call between ticks. Recorded in the replay stream so a re-run deals the same loadout. Anything the locker
+        /// doesn't offer is refused (returns false, nothing changes); <see cref="Item.None"/> goes back to the default.
+        /// </summary>
+        public bool SetLocker(ServerPlayer p, Item gun)
+        {
+            if (p == null || (gun != Item.None && !IsLockerChoice(gun))) return false;
+            if (p.Locker == gun) return true;
+            p.Locker = gun;
+            Stream?.OnLocker(Tick, p.Id, gun);
+            return true;
         }
 
         /// <summary>The start-of-match bag: a common pump and the common locker gun, nothing in the utility slot.</summary>

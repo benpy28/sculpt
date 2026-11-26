@@ -2,12 +2,14 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using Sculpt.Core;
 using Sculpt.Core.Net;
 using Sculpt.Game.Bootstrap;
 using Sculpt.Game.Cameras;
 using Sculpt.Game.Input;
 using Sculpt.Game.Net;
 using Sculpt.Game.Player;
+using Sculpt.Game.Settings;
 using UnityEngine;
 
 namespace Sculpt.Game.UI
@@ -16,6 +18,10 @@ namespace Sculpt.Game.UI
     /// The home screen, laid out like Ben's approved mockup A "side panel" (2026-11-25): the 1v1 map behind it with a
     /// blasted brick wall (<see cref="MainMenuScene"/>), the cracked-S logo, a play panel on the left driven by the mode
     /// tiles under it, a what's-new card on the right and key hints at the bottom.
+    ///
+    /// Joining takes a LAN room code (the host's screen shows it; <see cref="LanRoomFinder"/> finds the host on the local
+    /// network and the right map from its answer) or an address. The Royale card picks your locker gun (<see cref="LockerPick"/>).
+    /// The footer is the server info line (roadmap item 22). Every launch fades through the <see cref="LoadingScreen"/>.
     ///
     /// Only what works today is on it (Ben: everything else on the mockup is future roadmap, no stubs): 1v1 Duel (host,
     /// or join by IP), vs Bot (Easy, Normal, Hard), Practice (free roam on the 1v1 map, the breach test map), settings
@@ -38,6 +44,10 @@ namespace Sculpt.Game.UI
         private List<string> _ips;
         private string _ipText, _ipHint;
         private Material _gl;
+        /// <summary>A room code lookup under way (Join by room code), or null.</summary>
+        private LanRoomFinder _finder;
+        private Mode _finderMode;
+        private Item _locker;
 
         public bool IsOpen => _open;
 
@@ -72,6 +82,7 @@ namespace Sculpt.Game.UI
             _session = session;
             _settings = GetComponent<SettingsMenu>();
             _address = PlayerPrefs.GetString(JoinKey, "");
+            _locker = LockerPick.Load();
             _mode = (Mode)Mathf.Clamp(PlayerPrefs.GetInt(ModeKey, 0), 0, 4);
             if (GameBootstrap.ReplayError.Length > 0) { _mode = Mode.Replays; _error = GameBootstrap.ReplayError; }
             _gl = new Material(Shader.Find("Hidden/Internal-Colored")) { hideFlags = HideFlags.HideAndDontSave };
@@ -106,6 +117,7 @@ namespace Sculpt.Game.UI
 
         private void OnDestroy()
         {
+            StopFinding();
             if (_gl != null) Destroy(_gl);
         }
 
@@ -167,6 +179,67 @@ namespace Sculpt.Game.UI
                 && Time.frameCount != SettingsMenu.ClosedFrame)
                 _settings.Open();
             if (_shotPath != null) TakeShot();
+            PollFinder();
+        }
+
+        // ---------------------------------------------------------------- Room codes
+
+        /// <summary>
+        /// The join box takes a room code or an address. A code is looked up on the local network first; whatever
+        /// answers is joined at its own address and port, on the map it says it runs.
+        /// </summary>
+        private void StartFinding(string code, Mode mode)
+        {
+            StopFinding();
+            _error = "";
+            _finder = new LanRoomFinder(code);
+            _finderMode = mode;
+        }
+
+        private void StopFinding()
+        {
+            _finder?.Dispose();
+            _finder = null;
+        }
+
+        private void PollFinder()
+        {
+            if (_finder == null) return;
+            _finder.Poll();
+            switch (_finder.Now)
+            {
+                case LanRoomFinder.State.Looking: return;
+                case LanRoomFinder.State.Found:
+                {
+                    LanRoomReply r = _finder.Reply;
+                    string addr = _finder.Host.ToString() + (r.GamePort != FishNetTransport.DefaultPort ? ":" + r.GamePort : "");
+                    var map = r.Map == LanRoomMap.BattleRoyale ? GameBootstrap.MapChoice.BattleRoyale
+                        : r.Map == LanRoomMap.Breach ? GameBootstrap.MapChoice.Breach : GameBootstrap.MapChoice.Duel;
+                    if (r.Map == LanRoomMap.BattleRoyale && r.BrMode != BrMode.None) GameBootstrap.NextBrMode = r.BrMode;
+                    string what = r.Map == LanRoomMap.BattleRoyale ? "Battle royale " + r.BrMode : r.Map == LanRoomMap.Breach ? "Breach test map" : "1v1";
+                    string note = $"Room {_finder.Code}  ·  {what}  ·  {addr}  ·  {_finder.PingMs} ms";
+                    bool watch = _finderMode == Mode.Replays;
+                    StopFinding();
+                    PlayerPrefs.SetInt(ModeKey, (int)_mode);
+                    PlayerPrefs.Save();
+                    GameBootstrap.Relaunch(watch ? GameBootstrap.Launch.Spectate : GameBootstrap.Launch.Join, map, addr, note);
+                    return;
+                }
+                default:
+                    _error = _finder.Error;
+                    StopFinding();
+                    return;
+            }
+        }
+
+        /// <summary>Join (or watch) what the box says: a room code is looked up first, anything else is an address.</summary>
+        private void JoinTyped(Mode mode, GameBootstrap.Launch launch, GameBootstrap.MapChoice map)
+        {
+            string a = _address.Trim();
+            if (a.Length == 0) { _focusJoin = true; return; }
+            PlayerPrefs.SetString(JoinKey, a);
+            if (LanRoom.IsCode(a)) { StartFinding(a, mode); return; }
+            Launch(launch, map, a);
         }
 
         private void Launch(GameBootstrap.Launch launch, GameBootstrap.MapChoice map, string address = "")
@@ -179,27 +252,22 @@ namespace Sculpt.Game.UI
         /// <summary>The big button: whatever the panel shows.</summary>
         private void Play()
         {
+            // The big button cancels a room code lookup under way.
+            if (_finder != null) { StopFinding(); return; }
             switch (_mode)
             {
                 case Mode.Duel when _duel == DuelPick.Host:
                     Launch(GameBootstrap.Launch.Host, GameBootstrap.MapChoice.Duel);
                     break;
                 case Mode.Duel:
-                    string a = _address.Trim();
-                    if (a.Length == 0) { _focusJoin = true; return; }
-                    PlayerPrefs.SetString(JoinKey, a);
-                    Launch(GameBootstrap.Launch.Join, GameBootstrap.MapChoice.Duel, a);
+                    JoinTyped(Mode.Duel, GameBootstrap.Launch.Join, GameBootstrap.MapChoice.Duel);
                     break;
                 case Mode.Bot:
                     Launch(GameBootstrap.Launch.VsBot, GameBootstrap.MapChoice.Duel);
                     break;
                 case Mode.Br when _brNet == BrNet.Join:
-                {
-                    string ba = _address.Trim();
-                    if (ba.Length == 0) { _error = "Type the host's address in 1v1 Duel > Join by IP first."; return; }
-                    Launch(GameBootstrap.Launch.Join, GameBootstrap.MapChoice.BattleRoyale, ba);
+                    JoinTyped(Mode.Br, GameBootstrap.Launch.Join, GameBootstrap.MapChoice.BattleRoyale);
                     break;
-                }
                 case Mode.Br:
                     Launch(_brNet == BrNet.Host ? GameBootstrap.Launch.Host : GameBootstrap.Launch.Offline, GameBootstrap.MapChoice.BattleRoyale);
                     break;
@@ -214,13 +282,8 @@ namespace Sculpt.Game.UI
                     break;
                 }
                 case Mode.Replays:
-                {
-                    string wa = _address.Trim();
-                    if (wa.Length == 0) { _focusJoin = true; return; }
-                    PlayerPrefs.SetString(JoinKey, wa);
-                    Launch(GameBootstrap.Launch.Spectate, GameBootstrap.MapChoice.Duel, wa);
+                    JoinTyped(Mode.Replays, GameBootstrap.Launch.Spectate, GameBootstrap.MapChoice.Duel);
                     break;
-                }
                 case Mode.Practice when _practice == PracticePick.FreeRoam:
                     // Already offline on the 1v1 map behind the menu: just step in.
                     if (_session.Mode == NetMode.Offline && GameBootstrap.CurrentMap == GameBootstrap.MapChoice.Duel)
@@ -538,7 +601,7 @@ namespace Sculpt.Game.UI
             {
                 case Mode.Duel:
                     if (Segment(ix, sy, iw, 2, 0, "Host", _duel == DuelPick.Host)) _duel = DuelPick.Host;
-                    if (Segment(ix, sy, iw, 2, 1, "Join by IP", _duel == DuelPick.Join)) { _duel = DuelPick.Join; _focusJoin = true; }
+                    if (Segment(ix, sy, iw, 2, 1, "Join", _duel == DuelPick.Join)) { _duel = DuelPick.Join; _focusJoin = true; }
                     break;
                 case Mode.Bot:
                     for (int i = 0; i < 3; i++)
@@ -550,7 +613,7 @@ namespace Sculpt.Game.UI
                     break;
                 case Mode.Replays:
                     if (Segment(ix, sy, iw, 2, 0, "Saved replays", _watch == WatchPick.Saved)) _watch = WatchPick.Saved;
-                    if (Segment(ix, sy, iw, 2, 1, "Watch by IP", _watch == WatchPick.Live)) { _watch = WatchPick.Live; _focusJoin = true; }
+                    if (Segment(ix, sy, iw, 2, 1, "Watch live", _watch == WatchPick.Live)) { _watch = WatchPick.Live; _focusJoin = true; }
                     break;
                 default:
                     if (Segment(ix, sy, iw, 2, 0, "Free roam", _practice == PracticePick.FreeRoam)) _practice = PracticePick.FreeRoam;
@@ -599,7 +662,7 @@ namespace Sculpt.Game.UI
         private string MapName => _mode == Mode.Br ? "Royale map" : _mode == Mode.Replays ? (_watch == WatchPick.Live ? "Host's map" : SelectedReplay?.Map == "Breach" ? "Breach test map" : SelectedReplay?.Map == "BattleRoyale" ? "Royale map" : "1v1 map")
             : _mode == Mode.Practice && _practice == PracticePick.Breach ? "Breach test map" : "1v1 map";
 
-        private string PlayLabel => _mode == Mode.Br ? (_brNet == BrNet.Host ? "HOST" : _brNet == BrNet.Join ? "JOIN" : "PLAY") : _mode == Mode.Duel ? (_duel == DuelPick.Host ? "HOST" : "JOIN") : _mode == Mode.Replays ? "WATCH" : "PLAY";
+        private string PlayLabel => _finder != null ? "SEARCHING" : _mode == Mode.Br ? (_brNet == BrNet.Host ? "HOST" : _brNet == BrNet.Join ? "JOIN" : "PLAY") : _mode == Mode.Duel ? (_duel == DuelPick.Host ? "HOST" : "JOIN") : _mode == Mode.Replays ? "WATCH" : "PLAY";
 
         /// <summary>The replay picked in the list (newest first), or null when there are none.</summary>
         private ReplayLibrary.Entry? SelectedReplay
@@ -621,16 +684,31 @@ namespace Sculpt.Game.UI
 
         private string Hint => _mode switch
         {
-            Mode.Duel => _duel == DuelPick.Host ? _ipHint : "Same network as the host. Their address shows on their screen while they wait.",
+            Mode.Duel when _finder != null => FinderHint,
+            Mode.Br when _finder != null => FinderHint,
+            Mode.Replays when _finder != null => FinderHint,
+            Mode.Duel => _duel == DuelPick.Host ? HostHint : "Same network as the host: type the room code on their screen (or their address).",
             Mode.Bot => "The same 1v1 match against a bot, offline: most kills in 5 minutes.",
             Mode.Br => _brNet == BrNet.Offline ? "32 players, bots take the empty places. Loot chests, stay in the circle, last team standing wins."
-                : _brNet == BrNet.Host ? "Friends on your network join with Royale > Join; bots fill the rest of the 32." : "Joins the address typed in 1v1 Duel > Join by IP.",
+                : _brNet == BrNet.Host ? HostHint : "Same network as the host: type the room code on their screen (or their address).",
             Mode.Replays => _watch == WatchPick.Saved
                 ? (SelectedReplay == null ? "No replays yet: every match you play or host is saved (newest 20, star one to keep it)." : "Your last 20 matches are kept; star one to keep it for good.")
-                : "Watch a match someone hosts on your network, a little behind (the host sets the delay).",
+                : "Type the room code (or address) of a match on your network: you watch a little behind.",
             _ => _practice == PracticePick.FreeRoam ? "Offline on the 1v1 map with nobody else: try walls, guns and movement."
                 : "Practice dummy, test walls and the movement course (F6 races the TAS in dev builds).",
         };
+
+        private string _hostHint, _finderHint, _finderHintCode;
+        private string HostHint => LanRoomBeacon.Problem.Length > 0 ? LanRoomBeacon.Problem
+            : _hostHint ??= _ips.Count > 0 ? $"Friends pick Join and type room code {LanRoomBeacon.Code} (or your address). Allow the firewall if asked." : _ipHint;
+        private string FinderHint
+        {
+            get
+            {
+                if (_finderHintCode != _finder.Code) { _finderHintCode = _finder.Code; _finderHint = $"Looking for room {_finder.Code} on your network...  (click to cancel)"; }
+                return _finderHint;
+            }
+        }
 
         /// <summary>One of n equal segments in the row; returns true on click.</summary>
         private bool Segment(float x, float y, float w, int n, int i, string label, bool on)
@@ -662,32 +740,38 @@ namespace Sculpt.Game.UI
             switch (_mode)
             {
                 case Mode.Duel when _duel == DuelPick.Host:
-                    Card(x, y, w, h, "Players", "1v1 · LAN");
-                    Card(x2, y, w, h, "Rules", "Most kills · 5 min");
+                    Card(x, y, w, h, "Rules", "Most kills · 5 min");
+                    Card(x2, y, w, h, "Room code", LanRoomBeacon.Code);
                     Card(x3, y, w, h, "Your address", _ipText);
                     break;
                 case Mode.Duel:
                 {
-                    float fw = 2 * w + gap;
-                    bool focused = GUI.GetNameOfFocusedControl() == "joinField";
-                    Fill(x, y, fw, h, 10, focused ? new Color(1, 1, 1, 0.1f) : CardBg);
-                    if (focused) Outline(x, y, fw, h, 10, 1.5f, HudDraw.Amber);
-                    Text(x + 16, y + 10, fw - 24, 20, "Host's address", 14, Soft);
-                    if (_address.Length == 0 && !focused) Text(x + 16, y + 30, fw - 24, 28, "Click and type it, e.g. 192.168.1.20", 19, Faint);
-                    if (_phase == Phase.Text) JoinField(x + 12, y + 28, fw - 24, 32);
+                    JoinCard(x, y, 2 * w + gap, h);
                     Card(x3, y, w, h, "Port (UDP)", PortText);
                     break;
                 }
                 case Mode.Br:
                 {
-                    int bi = GameBootstrap.NextBrMode == BrMode.Squads ? 2 : GameBootstrap.NextBrMode == BrMode.Duos ? 1 : 0;
-                    Card(x, y, w, h, "Teams", BrTeams[bi]);
-                    Card(x2, y, w, h, "Loot", "Chests · 5 rarities");
+                    if (_brNet == BrNet.Join)
+                    {
+                        JoinCard(x, y, 2 * w + gap, h);
+                    }
+                    else
+                    {
+                        int bi = GameBootstrap.NextBrMode == BrMode.Squads ? 2 : GameBootstrap.NextBrMode == BrMode.Duos ? 1 : 0;
+                        Card(x, y, w, h, "Teams", BrTeams[bi]);
+                        // The locker gun: a common pump plus this one at the start of every match (Ben's BR design).
+                        bool hl = Hot(x2, y, w, h);
+                        Fill(x2, y, w, h, 10, hl ? CardHover : CardBg);
+                        Text(x2 + 16, y + 10, w - 24, 20, "Locker gun (click)", 14, Soft);
+                        Text(x2 + 16, y + 30, w - 24, 28, "Pump + " + LockerPick.Name(_locker), 19, HudDraw.Text, TextAnchor.MiddleLeft, true);
+                        if (Click(x2, y, w, h)) { _locker = LockerPick.Next(_locker); LockerPick.Save(_locker); }
+                    }
                     bool hn = Hot(x3, y, w, h);
                     Fill(x3, y, w, h, 10, hn ? CardHover : CardBg);
                     Text(x3 + 16, y + 10, w - 24, 20, "Network (click)", 14, Soft);
-                    Text(x3 + 16, y + 30, w - 24, 28, _brNet == BrNet.Offline ? "Offline" : _brNet == BrNet.Host ? "Host on LAN" : "Join by IP", 19, HudDraw.Text, TextAnchor.MiddleLeft, true);
-                    if (Click(x3, y, w, h)) { _brNet = (BrNet)(((int)_brNet + 1) % 3); _error = ""; }
+                    Text(x3 + 16, y + 30, w - 24, 28, _brNet == BrNet.Offline ? "Offline" : _brNet == BrNet.Host ? "Host on LAN" : "Join", 19, HudDraw.Text, TextAnchor.MiddleLeft, true);
+                    if (Click(x3, y, w, h)) { _brNet = (BrNet)(((int)_brNet + 1) % 3); _error = ""; if (_brNet == BrNet.Join) _focusJoin = true; }
                     break;
                 }
                 case Mode.Bot:
@@ -733,13 +817,7 @@ namespace Sculpt.Game.UI
                 }
                 case Mode.Replays:
                 {
-                    float fw = 2 * w + gap;
-                    bool focused = GUI.GetNameOfFocusedControl() == "joinField";
-                    Fill(x, y, fw, h, 10, focused ? new Color(1, 1, 1, 0.1f) : CardBg);
-                    if (focused) Outline(x, y, fw, h, 10, 1.5f, HudDraw.Amber);
-                    Text(x + 16, y + 10, fw - 24, 20, "Host's address", 14, Soft);
-                    if (_address.Length == 0 && !focused) Text(x + 16, y + 30, fw - 24, 28, "Click and type it, e.g. 192.168.1.20", 19, Faint);
-                    if (_phase == Phase.Text) JoinField(x + 12, y + 28, fw - 24, 32);
+                    JoinCard(x, y, 2 * w + gap, h);
                     Card(x3, y, w, h, "Delay", "Set by host");
                     break;
                 }
@@ -754,6 +832,17 @@ namespace Sculpt.Game.UI
                     Card(x3, y, w, h, "Walls", "Every state");
                     break;
             }
+        }
+
+        /// <summary>The join box: a room code or the host's address.</summary>
+        private void JoinCard(float x, float y, float fw, float h)
+        {
+            bool focused = GUI.GetNameOfFocusedControl() == "joinField";
+            Fill(x, y, fw, h, 10, focused ? new Color(1, 1, 1, 0.1f) : CardBg);
+            if (focused) Outline(x, y, fw, h, 10, 1.5f, HudDraw.Amber);
+            Text(x + 16, y + 10, fw - 24, 20, "Room code or host's address", 14, Soft);
+            if (_address.Length == 0 && !focused) Text(x + 16, y + 30, fw - 24, 28, "Click and type the code on their screen, e.g. K7Q2", 19, Faint);
+            if (_phase == Phase.Text) JoinField(x + 12, y + 28, fw - 24, 32);
         }
 
         private static string _portText;
@@ -814,11 +903,17 @@ namespace Sculpt.Game.UI
             x = KeyHint(x, y, "ENTER", "Play");
             x = KeyHint(x, y, "ESC", "Settings");
             if (GameInput.DevBuild) KeyHint(x, y, "F3", "Latency panel");
-            Text(_w - 48 - 600, y, 600, 30, Version, 14, Faint, TextAnchor.MiddleRight);
+            Text(_w - 48 - 700, y, 700, 30, ServerInfo, 14, Faint, TextAnchor.MiddleRight);
         }
 
-        private static string _version;
-        private static string Version => _version ??= "Build " + Application.version + "  ·  pre-alpha";
+        private static string _serverInfo;
+        /// <summary>
+        /// The server info footer (Ben's roadmap item 22: always shown, small: region, ping, tick rate, version). There
+        /// are no online servers yet, so the region says where you can play today and there is no ping to show here; a
+        /// room code lookup shows its ping on the loading card.
+        /// </summary>
+        private static string ServerInfo => _serverInfo ??= "Offline and LAN  ·  " + SimTime.TicksPerSecond + " Hz tick  ·  Build "
+            + Application.version + "  ·  protocol " + Protocol.Version + "  ·  pre-alpha";
 
         private float KeyHint(float x, float y, string key, string what)
         {

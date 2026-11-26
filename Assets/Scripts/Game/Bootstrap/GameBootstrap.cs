@@ -63,13 +63,45 @@ namespace Sculpt.Game.Bootstrap
             Relaunch(Launch.Replay, MapOf(mapName));
         }
 
-        public static void Relaunch(Launch launch, MapChoice map, string address = "")
+        /// <param name="note">The loading card's second line, if the caller knows better (a room code and its ping).</param>
+        public static void Relaunch(Launch launch, MapChoice map, string address = "", string note = null)
         {
-            NextLaunch = launch;
-            NextMap = map;
-            NextAddress = address ?? "";
-            _relaunchClock = System.Diagnostics.Stopwatch.StartNew();
-            UnityEngine.SceneManagement.SceneManager.LoadScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+            // Through the loading screen: it fades in, the scene reloads under it, then it fades away (Ben 2026-11-26).
+            // A press while a load is already under way is ignored.
+            if (LoadingScreen.Busy) return;
+            LoadingTitle(launch, map, address, out string title, out string detail);
+            if (!string.IsNullOrEmpty(note)) detail = note;
+            LoadingScreen.Run(title, detail, () =>
+            {
+                NextLaunch = launch;
+                NextMap = map;
+                NextAddress = address ?? "";
+                _relaunchClock = System.Diagnostics.Stopwatch.StartNew();
+                UnityEngine.SceneManagement.SceneManager.LoadScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+            });
+        }
+
+        /// <summary>What the loading card says for a launch.</summary>
+        public static void LoadingTitle(Launch launch, MapChoice map, string address, out string title, out string detail)
+        {
+            string mapName = map == MapChoice.BattleRoyale ? "Royale map" : map == MapChoice.Breach ? "Breach test map" : "1v1 map";
+            string where = string.IsNullOrEmpty(address) ? "" : "  ·  " + address;
+            switch (launch)
+            {
+                case Launch.Menu: title = "Main menu"; detail = "Back to the home screen"; break;
+                case Launch.Host:
+                    title = map == MapChoice.BattleRoyale ? "Hosting a battle royale" : "Hosting a 1v1";
+                    detail = (map == MapChoice.BattleRoyale ? NextBrMode + "  ·  " : "") + mapName + "  ·  on your network";
+                    break;
+                case Launch.Join: title = "Joining"; detail = mapName + where; break;
+                case Launch.VsBot: title = "1v1 vs bot"; detail = NextBotLevel + "  ·  " + mapName; break;
+                case Launch.Replay: title = "Replay"; detail = mapName; break;
+                case Launch.Spectate: title = "Watching live"; detail = "On " + (string.IsNullOrEmpty(address) ? "the host" : address); break;
+                default:
+                    title = map == MapChoice.BattleRoyale ? "Battle royale" : "Practice";
+                    detail = (map == MapChoice.BattleRoyale ? NextBrMode + "  ·  32 players, bots fill  ·  " : "") + mapName;
+                    break;
+            }
         }
 
         private static System.Diagnostics.Stopwatch _relaunchClock;
@@ -239,6 +271,7 @@ namespace Sculpt.Game.Bootstrap
             string mapName = NextMap == MapChoice.BattleRoyale ? "BattleRoyale" : NextMap == MapChoice.Duel ? "Duel" : breachMap ? "Breach" : map.ToString();
             string modeLabel = brInfo != null ? "Battle royale " + NextBrMode + (NextLaunch == Launch.Host ? " hosted" : "")
                 : vsBot ? "Vs bot " + NextBotLevel : NextLaunch == Launch.Host ? "1v1 hosted" : "Practice";
+            NetSession.LocalLocker = LockerPick.Load();
             _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup, mapName, modeLabel);
             _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
             if (vsBot) { _session.MatchOffline = true; _session.Server.MatchConfig.Enabled = true; }
@@ -336,6 +369,7 @@ namespace Sculpt.Game.Bootstrap
             if (brInfo != null) new GameObject("Storm").AddComponent<StormView>().Init(_session);
             gameObject.AddComponent<PingHud>().Init(_session, _rig.Camera);
             gameObject.AddComponent<SpectatorHud>().Init(_player, _session, _spectatorCam, _input);
+            gameObject.AddComponent<LanRoomBeacon>().Init(_session); // room codes: answers LAN lookups while hosting
             var menu = gameObject.AddComponent<MainMenu>();
             menu.Init(_player, _session);
 

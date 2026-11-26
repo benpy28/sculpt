@@ -67,6 +67,7 @@ namespace Sculpt.Core.Replay
             var hashes = new SortedDictionary<int, ulong>();
             var joins = new List<Join>();
             var leaves = new List<KeyValuePair<int, int>>();
+            var lockers = new List<(int Tick, int Id, Item Gun)>();
             for (int i = 0; i < file.Segments.Count; i++)
             {
                 byte[] raw = file.SegmentBytes(i);
@@ -100,6 +101,9 @@ namespace Sculpt.Core.Replay
                                 Team = r.U8(), Spawn = r.Vec(), Yaw = r.F64(),
                             });
                             break;
+                        case ReplayRecord.Locker:
+                            lockers.Add(((int)r.VarU(), (int)r.VarU(), (Item)r.U8()));
+                            break;
                         case ReplayRecord.Leave:
                             leaves.Add(new KeyValuePair<int, int>((int)r.VarU(), (int)r.VarU()));
                             break;
@@ -115,7 +119,7 @@ namespace Sculpt.Core.Replay
             int start = file.FirstTick - 1;
             if (s.Tick != start) { check.Problem = $"the fresh server starts at tick {s.Tick}, the recording at {start}"; return check; }
             if (s.Players.Count != 0) { check.Problem = "the fresh server already has players"; return check; }
-            int ji = 0, li = 0;
+            int ji = 0, li = 0, ki = 0;
             var byId = new Dictionary<int, ServerPlayer>();
             for (int t = file.FirstTick; t <= file.LastTick; t++)
             {
@@ -128,6 +132,8 @@ namespace Sculpt.Core.Replay
                     if (p.Id != j.Id) { check.Problem = $"player {j.Id} came back as {p.Id}"; return check; }
                     byId[p.Id] = p;
                 }
+                for (; ki < lockers.Count && lockers[ki].Tick <= s.Tick; ki++)
+                    if (byId.TryGetValue(lockers[ki].Id, out ServerPlayer lp)) s.SetLocker(lp, lockers[ki].Gun);
                 s.Step();
                 check.TicksRun++;
                 if (hashes.TryGetValue(t, out ulong want))

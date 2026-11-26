@@ -15,6 +15,7 @@ namespace Sculpt.Game.UI
     /// </summary>
     public sealed class BrHud : MonoBehaviour
     {
+        private string _roomLine;
         private LocalPlayer _player;
         private NetSession _session;
         private Material _gl;
@@ -129,6 +130,11 @@ namespace Sculpt.Game.UI
                 case MatchPhase.Off:
                     HudDraw.Label(new Rect(mid.x, mid.y + 18 * s, mid.width, 44 * s), "Filling the lobby", Mathf.RoundToInt(30 * s), HudDraw.Text, TextAnchor.MiddleCenter, true);
                     HudDraw.Label(new Rect(mid.x, mid.y + 72 * s, mid.width, 34 * s), "32 players every match: bots take the empty places", Mathf.RoundToInt(19 * s), HudDraw.Dim, TextAnchor.MiddleCenter);
+                    if (_session.Mode == NetMode.Host && LanRoomBeacon.Problem.Length == 0)
+                    {
+                        _roomLine ??= "Friends on your network join with room code " + LanRoomBeacon.Code;
+                        HudDraw.Label(new Rect(mid.x, mid.y + 110 * s, mid.width, 34 * s), _roomLine, Mathf.RoundToInt(19 * s), HudDraw.Amber, TextAnchor.MiddleCenter, true);
+                    }
                     break;
                 case MatchPhase.Countdown:
                 {

@@ -177,8 +177,14 @@ namespace Sculpt.Game.Net
             _serverAccum = 0;
             _nextSpawn = 0;
             NewClient();
-            AddServerPlayer(LocalConnectionId);
+            ServerPlayer me = AddServerPlayer(LocalConnectionId);
+            // Your locker gun (battle royale): you play on this server, so it knows your pick. Players who join over
+            // the network start with the server's default until the hello carries their pick.
+            if (Server.Br != null && LocalLocker != Item.None) Server.SetLocker(me, LocalLocker);
         }
+
+        /// <summary>The local player's battle royale locker gun (SMG, AR or pistol; None = the default). Set before the session is made.</summary>
+        public static Item LocalLocker = Item.None;
 
         /// <summary>A fresh client with its own copy of the map (the server sends everything sculpted since).</summary>
         private void NewClient()
@@ -196,13 +202,13 @@ namespace Sculpt.Game.Net
             _down = new SimulatedLink(SimDown, 2);
         }
 
-        private void AddServerPlayer(int connectionId)
+        private ServerPlayer AddServerPlayer(int connectionId)
         {
             int k = _nextSpawn++;
             int team = 1 + (k % 2);
             Vec3d[] spots = _teamSpawns[team - 1];
             Vec3d spawn = spots[(k / 2) % spots.Length];
-            Server.AddPlayer(connectionId, team, spawn, _teamYaw[team - 1]);
+            return Server.AddPlayer(connectionId, team, spawn, _teamYaw[team - 1]);
         }
 
         private void SendFromServer(int connectionId, byte[] data, bool reliable)
