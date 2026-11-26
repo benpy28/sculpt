@@ -185,6 +185,18 @@ namespace Sculpt.Game.Net
 
         /// <summary>The local player's battle royale locker gun (SMG, AR or pistol; None = the default). Set before the session is made.</summary>
         public static Item LocalLocker = Item.None;
+        /// <summary>The local player's slot auto-sort. Set before the session is made; <see cref="SetLocalPrefs"/> changes it live.</summary>
+        public static SlotPrefs LocalSlotPrefs = SlotPrefs.Default;
+
+        /// <summary>What every new client tells its server (after the welcome): the auto-sort and the locker gun.</summary>
+        private static PrefsMsg LocalPrefs => new PrefsMsg { Slots = LocalSlotPrefs, Locker = LocalLocker };
+
+        /// <summary>The settings menu changed the auto-sort: the server hears it at once (it applies from the next pickup).</summary>
+        public void SetLocalPrefs(in SlotPrefs prefs)
+        {
+            LocalSlotPrefs = prefs;
+            Client?.SetPrefs(LocalPrefs);
+        }
 
         /// <summary>A fresh client with its own copy of the map (the server sends everything sculpted since).</summary>
         private void NewClient()
@@ -193,6 +205,7 @@ namespace Sculpt.Game.Net
             _firstClientGrid = null;
             var sculpt = new SculptClient(ClientGrid, _sculptConfig, _movement);
             Client = new NetClient(_terrain(ClientGrid), _movement, _config, (d, r) => _up.Send(d, r, _nowMs), sculpt);
+            Client.Prefs = LocalPrefs; // sent to the server after the welcome (a joiner's locker pick rides here too)
             ClientChanged?.Invoke();
         }
 

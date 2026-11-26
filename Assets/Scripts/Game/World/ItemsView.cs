@@ -84,7 +84,7 @@ namespace Sculpt.Game.World
             }
         }
 
-        private static int Visuals(in GroundItem g) => (g.Kind == Item.Grenade || g.Kind == Item.C4 ? Mathf.Clamp(g.Count, 1, 4) : 1) + (g.Rarity != Rarity.None ? 1 : 0);
+        private static int Visuals(in GroundItem g) => (g.Kind == Item.Grenade || g.Kind == Item.C4 || Items.IsHeal(g.Kind) ? Mathf.Clamp(g.Count, 1, 4) : 1) + (g.Rarity != Rarity.None ? 1 : 0);
 
         private Transform Build(in GroundItem g)
         {
@@ -130,6 +130,30 @@ namespace Sculpt.Game.World
                     c4.transform.localPosition = new Vector3(0, 0.035f + k * 0.07f, 0); // stacked bricks
                     c4.transform.localRotation = Quaternion.Euler(0, k * 17f, 0);
                     c4.transform.localScale = Vector3.one * 1.2f;
+                }
+            }
+            else if (g.Kind == Item.Bandage)
+            {
+                int n = Mathf.Clamp(g.Count, 1, 4);
+                for (int k = 0; k < n; k++)
+                {
+                    GameObject roll = GunModels.BuildBandage(_mat);
+                    roll.transform.SetParent(root, false);
+                    roll.transform.localPosition = new Vector3((k - (n - 1) * 0.5f) * 0.1f, 0.04f, 0);
+                    roll.transform.localRotation = Quaternion.Euler(0, k * 23f, 0);
+                    roll.transform.localScale = Vector3.one * 1.4f;
+                }
+            }
+            else if (g.Kind == Item.Medkit)
+            {
+                int n = Mathf.Clamp(g.Count, 1, 4);
+                for (int k = 0; k < n; k++)
+                {
+                    GameObject kit = GunModels.BuildMedkit(_mat);
+                    kit.transform.SetParent(root, false);
+                    kit.transform.localPosition = new Vector3(0, k * 0.13f, 0); // stacked cases
+                    kit.transform.localRotation = Quaternion.Euler(0, k * 11f, 0);
+                    kit.transform.localScale = Vector3.one * 1.2f;
                 }
             }
             else

@@ -32,6 +32,7 @@ namespace Sculpt.Game.UI
 
         private static string Slash(int n) => n < 0 || n >= SlashCache.Length ? "/ " + n : SlashCache[n] ?? (SlashCache[n] = "/ " + n);
         private static readonly string[] C4Cache = new string[16], GlCache = new string[16];
+        private static readonly string[] BandCache = new string[16], KitCache = new string[16];
         private static string Counted(string[] cache, string prefix, int n) => n < 0 || n >= cache.Length ? prefix + n : cache[n] ?? (cache[n] = prefix + n);
         private static readonly System.Collections.Generic.Dictionary<Item, string> UpperCache = new System.Collections.Generic.Dictionary<Item, string>();
         private static string UpperName(Item it) { if (!UpperCache.TryGetValue(it, out string u)) UpperCache[it] = u = Items.Name(it).ToUpperInvariant(); return u; }
@@ -140,6 +141,7 @@ namespace Sculpt.Game.UI
                 string hint = null;
                 if (heldItem == Item.C4 && out_ > 0) hint = DetonateHint(count == 0, out_);
                 else if (heldItem == Item.Launcher && net.Tick < s.LauncherReadyTick) hint = "LOADING";
+                else if (Items.IsHeal(heldItem)) hint = s.Hand.Using ? "HEALING" : s.Damage <= 0 ? "FULL HEALTH" : heldItem == Item.Medkit ? "FIRE  +100" : "FIRE  +25";
                 if (hint != null) HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 14, 200, 20), hint, 11, heldItem == Item.C4 ? HudDraw.Amber : HudDraw.Dim, TextAnchor.MiddleLeft, true);
             }
             else if (!s.Dead && s.Hand.HasGun)
@@ -172,7 +174,9 @@ namespace Sculpt.Game.UI
                 int n = s.Hand.Bag.Count(i);
                 string name = it == Item.None ? "—" : it == Item.Grenade ? Counted(NadeCache, "Nade x", n)
                     : it == Item.C4 ? (n == 0 ? "Det." : Counted(C4Cache, "C4 x", n))
-                    : it == Item.Launcher ? Counted(GlCache, "GL x", n) : Items.Name(it);
+                    : it == Item.Launcher ? Counted(GlCache, "GL x", n)
+                    : it == Item.Bandage ? Counted(BandCache, "Band. x", n)
+                    : it == Item.Medkit ? Counted(KitCache, "Kit x", n) : Items.Name(it);
                 HudDraw.Label(HudDraw.ToGui(r.x, r.y + 3, r.width, r.height - 8), name, 12, tc, TextAnchor.MiddleCenter, held);
             }
 
@@ -189,7 +193,8 @@ namespace Sculpt.Game.UI
                 else if (plan.Result == PickupResult.Swapped && plan.SwapOut == g.Kind) line = $"{key}  Swap your {Items.Name(g.Kind, s.Hand.Bag.RarityOf(plan.Slot))} for {what}";
                 else if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
                 else if (plan.Allowed) line = $"{key}  Pick up {what}";
-                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
+                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full"
+                    : g.Kind == Item.Bandage ? "Bandages full" : g.Kind == Item.Medkit ? "First-aid kits full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
                 else { line = what; col = HudDraw.Dim; }
                 HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), line, 14, col, TextAnchor.MiddleCenter, true);
             }
@@ -400,6 +405,14 @@ namespace Sculpt.Game.UI
                 float pw = (PanelW - 32 - 6 * (carry - 1)) / carry;
                 for (int i = 0; i < carry; i++)
                     HudDraw.RoundRect(gx + i * (pw + 6), gy, pw, 5, 1.5f, i < have ? HudDraw.A(HudDraw.Text, 0.9f) : new Color(1, 1, 1, 0.12f));
+                if (s.Hand.Using)
+                {
+                    // A bandage or first-aid kit in use: how far through it is (it takes effect at the end).
+                    HudDraw.Bar(gx, gy + 8, PanelW - 32, 3, (float)HealItemRules.Progress(s.Hand, tick), HudDraw.Text);
+                    float cx = w / 2f, cy = Screen.height / 2f - 70;
+                    HudDraw.RoundRect(cx - 60, cy, 120, 6, 2, new Color(0, 0, 0, 0.45f));
+                    HudDraw.RoundRect(cx - 60, cy, 120 * (float)HealItemRules.Progress(s.Hand, tick), 6, 2, HudDraw.A(HudDraw.Text, 0.9f));
+                }
                 if (s.Hand.HeldItem == Item.Launcher && tick < s.LauncherReadyTick)
                 {
                     // The next round loading: a thin bar under the pips.

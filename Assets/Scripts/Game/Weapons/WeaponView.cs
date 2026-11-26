@@ -43,7 +43,7 @@ namespace Sculpt.Game.Weapons
 
         private Transform _vmRoot;
         private readonly GunModel[] _guns = new GunModel[4];
-        private GameObject _grenade, _c4, _detonator;
+        private GameObject _grenade, _c4, _detonator, _bandage, _medkit;
         private GunModel _launcher;
         private bool _listening;
         private GameObject _fist;
@@ -140,6 +140,13 @@ namespace Sculpt.Game.Weapons
             _grenade = GunModels.BuildGrenade(_vmMat);
             _grenade.transform.SetParent(_vmRoot, false);
             _grenade.SetActive(false);
+            _bandage = GunModels.BuildBandage(_vmMat);
+            _bandage.transform.SetParent(_vmRoot, false);
+            _bandage.SetActive(false);
+            _medkit = GunModels.BuildMedkit(_vmMat);
+            _medkit.transform.SetParent(_vmRoot, false);
+            _medkit.transform.localRotation = Quaternion.Euler(-20f, 15f, 0f);
+            _medkit.SetActive(false);
             _c4 = GunModels.BuildC4(_vmMat);
             _c4.transform.SetParent(_vmRoot, false);
             _c4.transform.localRotation = Quaternion.Euler(-70f, 20f, 0f); // held up on its side, light toward you
@@ -659,6 +666,9 @@ namespace Sculpt.Game.Weapons
             }
             bool nade = item == Item.Grenade && !s.Dead;
             if (_grenade.activeSelf != nade) _grenade.SetActive(nade);
+            bool band = item == Item.Bandage && !s.Dead, kit = item == Item.Medkit && !s.Dead;
+            if (_bandage.activeSelf != band) _bandage.SetActive(band);
+            if (_medkit.activeSelf != kit) _medkit.SetActive(kit);
             bool c4 = item == Item.C4 && !s.Dead;
             bool charge = c4 && hand.Bag.CountIn(hand.Slot) > 0;
             if (_c4.activeSelf != charge) _c4.SetActive(charge);

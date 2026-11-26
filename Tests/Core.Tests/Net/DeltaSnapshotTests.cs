@@ -85,6 +85,23 @@ namespace Sculpt.Core.Tests.Net
         }
 
         [Test]
+        public void EveryCarriableHeldItem_RoundTrips_IncludingTheHealItems()
+        {
+            // Protocol 35 widened the held item to 4 bits (bandage 9, first-aid kit 10).
+            var self = MotorState.At(new Vec3d(10, 0, 10));
+            for (Item it = Item.None; it <= Items.Last; it++)
+            {
+                if (it == Item.Chest) continue;
+                var p = Snap(4, 1, 2, 3);
+                p.Held = it;
+                p.Hand = HandMode.Drawing;
+                SnapshotMsg m = Decode(new SnapshotCodec(), Encode(new SnapshotCodec(), Msg(50, self, p), null, -1, out _), null);
+                Assert.That(m.Others[0].Held, Is.EqualTo(it), it.ToString());
+                Assert.That(m.Others[0].Hand, Is.EqualTo(HandMode.Drawing));
+            }
+        }
+
+        [Test]
         public void QuantizedPoses_AreWithinHalfAStepOfTheTruth()
         {
             var p = new PlayerSnap { Id = 3, Team = 2, Position = new Vec3d(523.123456, 9.6, -12.0001), Velocity = new Vec3d(13.3, -7.77, 0.001), Yaw = -2.9f, Pitch = 71.237f, Mode = MoveMode.Slide, Crouched = true, Held = Item.Ar, Hand = HandMode.Drawing };

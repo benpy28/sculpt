@@ -126,6 +126,7 @@ namespace Sculpt.Core
 
             double target = s.Crouched ? c.CrouchSpeed : (s.Sprinting ? c.SprintSpeed : c.RunSpeed);
             if (s.Hand.HeldItem == Item.Launcher && !s.Crouched) target *= c.Items.Launcher.MoveSpeedScale; // heavy: a little slower on foot
+            if (s.Hand.Using && !s.Crouched) target *= c.Items.Heal.MoveSpeedScale; // walking while using a bandage or first-aid kit
             Vec3d vh = Horizontal(s.Velocity);
             vh = CounterBrake(c, ref s, vh, wish, events);
             vh = GroundAccelerate(c, vh, wish, target);

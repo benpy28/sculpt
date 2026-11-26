@@ -311,9 +311,9 @@ namespace Sculpt.Core.Replay
             ulong bag = 0;
             for (int k = 0; k < Items.Slots; k++)
             {
-                ulong item = (uint)((int)p.Bag[k] & 7);
+                ulong item = (uint)((int)p.Bag[k] & 15);
                 ulong count = p.Bag.Count(k);
-                bag |= (item | (count << 3)) << (11 * k);
+                bag |= (item | (count << 4)) << (12 * k);
             }
             q.Bag = bag;
             return q;
@@ -339,7 +339,7 @@ namespace Sculpt.Core.Replay
             p.Reloading = (q.Look & (1 << 6)) != 0;
             p.Bot = (q.Look & (1 << 7)) != 0;
             int held = (int)((q.Look >> 8) & 15);
-            if (held > (int)Items.Last) throw new NetFormatException("Bad item.");
+            if (held > (int)Items.Last || held == (int)Item.Chest) throw new NetFormatException("Bad item.");
             p.Held = (Item)held;
             int hand = (int)((q.Look >> 12) & 7);
             if (hand > (int)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
@@ -351,10 +351,11 @@ namespace Sculpt.Core.Replay
             p.Bar = (int)((q.Hud >> 18) & 0xFFFF);
             for (int k = 0; k < Items.Slots; k++)
             {
-                ulong s = q.Bag >> (11 * k);
-                int it = (int)(s & 7);
-                p.Bag[k] = (Item)it; // 3 bits always fit Item (None..Launcher)
-                p.Bag.SetCount(k, (int)((s >> 3) & 255));
+                ulong s = q.Bag >> (12 * k);
+                int it = (int)(s & 15);
+                if (it > (int)Items.Last || it == (int)Item.Chest) throw new NetFormatException("Bad item.");
+                p.Bag[k] = (Item)it;
+                p.Bag.SetCount(k, (int)((s >> 4) & 255));
             }
             return p;
         }

@@ -181,13 +181,22 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
-        public void DuplicateGunIsRefused()
+        public void DuplicateGun_IsAllowed_AndSharesTheMagazineAndFireTimer()
         {
+            // Ben 2026-11-26: duplicates are allowed, but two of the same gun must give no edge. Copies share one
+            // magazine and one fire timer (both are kept per gun type), so a second pump never fires sooner.
             var items = new GroundItems();
             var s = Standing(new Vec3d(8, 0, 6));
+            s.Hand.Bag.Clear(3); // room for it
+            s.Weapon.SetUsed(Weapon.Ar, 7);
             int id = items.Add(new GroundItem { Kind = Item.Ar, Count = 1, Position = new Vec3d(8, 0, 7) });
-            Assert.That(ItemRules.TryPickup(ref s, items, id, null, Eye(s), 1, 100, Mc), Is.EqualTo(PickupResult.AlreadyHave));
-            Assert.That(items.Count, Is.EqualTo(1));
+            Assert.That(ItemRules.TryPickup(ref s, items, id, null, Eye(s), 1, 100, Mc), Is.EqualTo(PickupResult.Ok));
+            // Default prefs put an AR in slot 2: the SMG there moves to the empty slot 4.
+            Assert.That(s.Hand.Bag[1], Is.EqualTo(Item.Ar), "the new copy");
+            Assert.That(s.Hand.Bag[2], Is.EqualTo(Item.Ar), "the one you had");
+            Assert.That(s.Hand.Bag[3], Is.EqualTo(Item.Smg));
+            Assert.That(s.Weapon.UsedOf(Weapon.Ar), Is.EqualTo(7), "a fresh copy does not reload the one you carry");
+            Assert.That(items.Count, Is.EqualTo(0));
         }
 
         [Test]
@@ -362,7 +371,7 @@ namespace Sculpt.Core.Tests.World
             Assert.That(into[0].Position, Is.EqualTo(new Vec3d(1.5, 0, -2.25)));
             Assert.That(into[1].Count, Is.EqualTo(2));
             Assert.That(m.Full, Is.True);
-            data[1 + 4 + 1 + 2 + 4] = 9; // first item's kind (above the last ground kind)
+            data[1 + 4 + 1 + 2 + 4] = 11; // first item's kind (above the last ground kind)
             Assert.Throws<NetFormatException>(() => { var b = new ByteReader(data, 0, data.Length); ItemsProtocol.Read(ref b, into); });
         }
 
@@ -410,8 +419,11 @@ namespace Sculpt.Core.Tests.World
             Assert.That(a.Client.Items.Count, Is.EqualTo(0));
             Assert.That(b.Client.Items.Count, Is.EqualTo(0));
             Assert.That(late.Client.Items.Count, Is.EqualTo(0));
-            Assert.That(a.Client.Predicted.Hand.Bag[2], Is.EqualTo(Item.Ar), "back in its slot");
-            Assert.That(a.ServerSide.State.Hand.Bag[2], Is.EqualTo(Item.Ar));
+            // Auto-sort on pickup (default prefs: AR in slot 2): the SMG that sat there moves to the empty slot 3.
+            Assert.That(a.Client.Predicted.Hand.Bag[1], Is.EqualTo(Item.Ar), "into its preferred slot");
+            Assert.That(a.Client.Predicted.Hand.Bag[2], Is.EqualTo(Item.Smg), "the SMG moved over");
+            Assert.That(a.ServerSide.State.Hand.Bag[1], Is.EqualTo(Item.Ar));
+            Assert.That(a.ServerSide.State.Hand.Bag[2], Is.EqualTo(Item.Smg));
         }
 
         [Test]

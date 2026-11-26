@@ -53,7 +53,7 @@ namespace Sculpt.Core.Net
                     {
                         ServerPlayer victim = FindById(v.Id);
                         if (victim == null || victim.State.Dead) continue;
-                        int dmg = Weapons.ScaleDamage(v.Damage, p.State.Hand.Bag.RarityOfGun(shot.Weapon)); // battle royale rarity (None: unchanged)
+                        int dmg = Weapons.ScaleDamage(v.Damage, p.State.Hand.Bag.RarityOfGun(shot.Weapon, p.State.Hand.Slot)); // battle royale rarity (None: unchanged)
                         if (dmg <= 0) continue;
                         NoteHit(p, victim, shot, v.HeadPellets > 0, firstVictim, lastShotBefore);
                         firstVictim = false;

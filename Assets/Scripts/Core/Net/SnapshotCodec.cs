@@ -466,7 +466,7 @@ namespace Sculpt.Core.Net
                 Vx = Q(p.Velocity.X, VelScale), Vy = Q(p.Velocity.Y, VelScale), Vz = Q(p.Velocity.Z, VelScale),
                 Yaw = (int)Math.Round(yaw * YawScale) & 0xFFFF,
                 Pitch = Pitch((long)Math.Round(Clamp(p.Pitch, -180, 180) * PitchScale)),
-                Look = ((int)p.Mode & 7) | (p.Crouched ? 8 : 0) | (p.Dead ? 16 : 0) | (((int)p.Held & 7) << 5) | (((int)p.Hand & 7) << 8),
+                Look = ((int)p.Mode & 7) | (p.Crouched ? 8 : 0) | (p.Dead ? 16 : 0) | (((int)p.Held & 15) << 5) | (((int)p.Hand & 7) << 9),
             };
         }
 
@@ -481,17 +481,18 @@ namespace Sculpt.Core.Net
             Mode = (MoveMode)(q.Look & 7),
             Crouched = (q.Look & 8) != 0,
             Dead = (q.Look & 16) != 0,
-            Held = (Item)((q.Look >> 5) & 7),
-            Hand = (HandMode)((q.Look >> 8) & 7),
+            Held = (Item)((q.Look >> 5) & 15),
+            Hand = (HandMode)((q.Look >> 9) & 7),
         };
 
         private static int LookOf(ulong v)
         {
-            if (v >= 1 << 11) throw new NetFormatException("Bad look.");
+            if (v >= 1 << 12) throw new NetFormatException("Bad look.");
             int look = (int)v;
             if ((look & 7) > (int)MoveMode.Mantle) throw new NetFormatException("Bad move mode.");
-            if (((look >> 5) & 7) > (int)Items.Last) throw new NetFormatException("Bad item.");
-            if (((look >> 8) & 7) > (int)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
+            int held = (look >> 5) & 15;
+            if (held > (int)Items.Last || held == (int)Item.Chest) throw new NetFormatException("Bad item.");
+            if (((look >> 9) & 7) > (int)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
             return look;
         }
 

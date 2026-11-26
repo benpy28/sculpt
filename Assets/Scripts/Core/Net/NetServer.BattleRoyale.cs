@@ -48,6 +48,11 @@ namespace Sculpt.Core.Net
         /// <summary>Chest utility and its odds: grenades, C4, launcher.</summary>
         public Item[] ChestUtility = { Item.Grenade, Item.C4, Item.Launcher };
         public int[] ChestUtilityWeights = { 60, 25, 15 };
+        /// <summary>Every chest also spills a heal (Ben 2026-11-26: heals in chest loot; odds and counts by Claude):
+        /// two bandages or one first-aid kit. None in the list = no heal.</summary>
+        public Item[] ChestHeals = { Item.Bandage, Item.Medkit };
+        public int[] ChestHealWeights = { 65, 35 };
+        public int[] ChestHealCounts = { 2, 1 };
         /// <summary>Chests spill their loot this far in front of them.</summary>
         public double ChestSpill = 0.9;
         /// <summary>Ground item cap in a battle royale (chests, spills and everything the dead drop).</summary>
@@ -235,16 +240,29 @@ namespace Sculpt.Core.Net
             return true;
         }
 
-        /// <summary>The start-of-match bag: a common pump and the common locker gun, nothing in the utility slot.</summary>
+        /// <summary>
+        /// The start-of-match bag: a common pump and the common locker gun, placed by the player's slot preferences like
+        /// a pickup (default: pump in 1, the AR in 2). The other three slots are for whatever they find. The pump is out.
+        /// </summary>
         private void GiveBrLoadout(ServerPlayer p)
         {
             Item locker = p.Locker != Item.None ? p.Locker : Br.LockerGun;
-            var bag = new Bag { S0 = Item.Pump, R0 = Rarity.Common };
-            if (global::Sculpt.Core.Items.IsGun(locker) && locker != Item.Pump) { bag.S1 = locker; bag.R1 = Rarity.Common; }
+            var bag = new Bag();
+            int pump = Place(ref bag, p.Prefs, Item.Pump);
+            int second = global::Sculpt.Core.Items.IsGun(locker) && locker != Item.Pump ? Place(ref bag, p.Prefs, locker) : -1;
             p.State.Hand.Bag = bag;
-            p.State.Hand.Slot = 0;
-            p.State.Hand.PrevSlot = 1;
+            p.State.Hand.Slot = (byte)pump;
+            p.State.Hand.PrevSlot = (byte)(second >= 0 ? second : (pump + 1) % global::Sculpt.Core.Items.Slots);
             p.State.Weapon = WeaponState.Initial;
+        }
+
+        private static int Place(ref Bag bag, in SlotPrefs prefs, Item gun)
+        {
+            int k = prefs.Place(bag, gun, out int from, out int to);
+            if (from >= 0) bag.SwapSlots(from, to);
+            bag[k] = gun;
+            bag.SetRarity(k, Rarity.Common);
+            return k;
         }
 
         /// <summary>Anyone who joined after the deal sits the match out (dead, watching) until the next one.</summary>
@@ -475,6 +493,14 @@ namespace Sculpt.Core.Net
             Item util = Pick(Br.ChestUtility, Br.ChestUtilityWeights, BrRoll(7, chest.Id, 0));
             if (util != Item.None)
                 Items.Add(new GroundItem { Kind = util, Count = Math.Max(1, cfg.Carry(util)), Position = ItemRules.Settle(Grid, front + side * 0.4), DroppedTick = int.MinValue / 2 }, cfg.MaxGroundItems);
+            int hi = Br.ChestHeals == null || Br.ChestHeals.Length == 0 ? -1 : Math.Min(Br.ChestHeals.Length - 1, PickIndex(Br.ChestHealWeights, BrRoll(8, chest.Id, 0)));
+            if (hi >= 0)
+            {
+                Item heal = Br.ChestHeals[hi];
+                int n = Br.ChestHealCounts != null && hi < Br.ChestHealCounts.Length ? Br.ChestHealCounts[hi] : 1;
+                n = Math.Max(1, Math.Min(n, cfg.Carry(heal)));
+                Items.Add(new GroundItem { Kind = heal, Count = n, Position = ItemRules.Settle(Grid, front), DroppedTick = int.MinValue / 2 }, cfg.MaxGroundItems);
+            }
             return PickupResult.Opened;
         }
 

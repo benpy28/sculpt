@@ -272,6 +272,7 @@ namespace Sculpt.Game.Bootstrap
             string modeLabel = brInfo != null ? "Battle royale " + NextBrMode + (NextLaunch == Launch.Host ? " hosted" : "")
                 : vsBot ? "Vs bot " + NextBotLevel : NextLaunch == Launch.Host ? "1v1 hosted" : "Practice";
             NetSession.LocalLocker = LockerPick.Load();
+            NetSession.LocalSlotPrefs = SlotPrefsStore.Load();
             _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup, mapName, modeLabel);
             _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
             if (vsBot) { _session.MatchOffline = true; _session.Server.MatchConfig.Enabled = true; }
@@ -364,6 +365,7 @@ namespace Sculpt.Game.Bootstrap
             gameObject.AddComponent<CombatHud>().Init(_player, _session, _weapons, _rig.Camera);
             gameObject.AddComponent<FeelHud>().Init(_player, client);
             gameObject.AddComponent<SettingsMenu>().Init(_player, client, _input);
+            gameObject.AddComponent<InventoryHud>().Init(_player, _input);
             gameObject.AddComponent<MatchHud>().Init(_player, _session);
             gameObject.AddComponent<BrHud>().Init(_player, _session);
             if (brInfo != null) new GameObject("Storm").AddComponent<StormView>().Init(_session);

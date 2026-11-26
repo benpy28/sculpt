@@ -44,6 +44,7 @@ namespace Sculpt.Core.Net
             if (!c.Hand.Heal || c.Hand.HealTile < 0 || c.Hand.HealTile > ushort.MaxValue) { c.Hand.Heal = false; c.Hand.HealTile = 0; c.Hand.HealCell = 0; c.Hand.HealReinforce = false; }
             else c.Hand.HealCell = Math.Max(0, Math.Min(63, c.Hand.HealCell));
             if (!c.Hand.Door || c.Hand.DoorTile < 0 || c.Hand.DoorTile > ushort.MaxValue) { c.Hand.Door = false; c.Hand.DoorTile = 0; c.Hand.DoorOpen = false; }
+            if (!c.Hand.Swap || c.Hand.SwapA >= Items.Slots || c.Hand.SwapB >= Items.Slots || c.Hand.SwapA == c.Hand.SwapB) { c.Hand.Swap = false; c.Hand.SwapA = 0; c.Hand.SwapB = 0; }
             if (c.HasSculpt && !TargetFits(c.Sculpt.Target)) c.HasSculpt = false;
             if (c.HasSculpt)
             {
@@ -91,7 +92,7 @@ namespace Sculpt.Core.Net
         private const byte FJumpPressed = 1, FJumpHeld = 2, FCrouchHeld = 4, FCrouchPressed = 8, FSprint = 16, FShoot = 32, FRespawn = 64, FExt = 128;
         private const byte XToggle = 1, XSculpt = 2, XReinforce = 4, XReload = 8, XWarp = 128;
         private const byte GFireHeld = 1, GFirePressed = 2, GAimPressed = 4;
-        private const byte YPickup = 1, YDrop = 2, YPunch = 4, YHeal = 8, YHealReinforce = 16, YDoor = 32, YDoorOpen = 64;
+        private const byte YPickup = 1, YDrop = 2, YPunch = 4, YHeal = 8, YHealReinforce = 16, YDoor = 32, YDoorOpen = 64, YSwap = 128;
 
         internal void Write(ByteWriter w)
         {
@@ -103,7 +104,7 @@ namespace Sculpt.Core.Net
             if (Move.SprintHeld) f |= FSprint;
             if (Move.WantsToShoot) f |= FShoot;
             if (Respawn) f |= FRespawn;
-            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt || Warp || Hand.Pickup || Hand.Drop || Hand.Punch || Hand.Heal || Hand.Door;
+            bool ext = Hand.SculptToggle || Hand.WeaponKey != 0 || Hand.Reload || HasSculpt || Warp || Hand.Pickup || Hand.Drop || Hand.Punch || Hand.Heal || Hand.Door || Hand.Swap;
             if (ext) f |= FExt;
             w.U8(f);
             byte g = 0;
@@ -134,10 +135,12 @@ namespace Sculpt.Core.Net
             if (Hand.Heal && Hand.HealReinforce) y |= YHealReinforce;
             if (Hand.Door) y |= YDoor;
             if (Hand.Door && Hand.DoorOpen) y |= YDoorOpen;
+            if (Hand.Swap) y |= YSwap;
             w.U8(y);
             if (Hand.Pickup) w.I32(Hand.PickId);
             if (Hand.Heal) { w.U16((ushort)Hand.HealTile); w.U8((byte)Hand.HealCell); }
             if (Hand.Door) w.U16((ushort)Hand.DoorTile);
+            if (Hand.Swap) w.U8((byte)(Hand.SwapA | (Hand.SwapB << 4)));
             if (!HasSculpt) return;
             w.U8(SculptSeq);
             w.U8((byte)((byte)Sculpt.Type | ((byte)Sculpt.Direction << 4)));
@@ -208,6 +211,14 @@ namespace Sculpt.Core.Net
                 c.Hand.DoorTile = r.U16();
             }
             else if ((y & YDoorOpen) != 0) throw new NetFormatException("Door-open bit without a door.");
+            c.Hand.Swap = (y & YSwap) != 0;
+            if (c.Hand.Swap)
+            {
+                byte ab = r.U8();
+                c.Hand.SwapA = (byte)(ab & 15);
+                c.Hand.SwapB = (byte)(ab >> 4);
+                if (c.Hand.SwapA >= Items.Slots || c.Hand.SwapB >= Items.Slots || c.Hand.SwapA == c.Hand.SwapB) throw new NetFormatException("Bad slot swap.");
+            }
             if ((x & XSculpt) == 0) return c;
             c.HasSculpt = true;
             c.SculptSeq = r.U8();
@@ -269,6 +280,8 @@ namespace Sculpt.Core.Net
                 return; // frozen where they fell
             }
             HandRules.Step(ref s.Hand, cmd.Tick, cmd.Hand, mc.Hand);
+            if (cmd.Hand.Swap) HandRules.SwapSlots(ref s.Hand, cmd.Hand.SwapA, cmd.Hand.SwapB); // inventory screen (the hand follows its item)
+            HealItemRules.Step(ref s, cmd.Tick, cmd.Move, cmd.Hand.Punch, mc); // bandages and first-aid kits
             // A quick heal press takes the gun out of action for a moment (predicted like a punch; the heal itself is
             // the server's).
             if (cmd.Hand.Heal && mc.Hand.QuickHeal && mc.Hand.CanHeal(s.Hand))
@@ -277,7 +290,9 @@ namespace Sculpt.Core.Net
             ChargeRules.Step(grid, mc, ref s, cmd.Tick, charge, events); // breaks the tile before this tick's movement reaches it
             List<MoveEvent> ev = events ?? (_scratch ??= new List<MoveEvent>());
             int before = ev.Count;
-            PlayerMovement.Step(grid, mc, ref s, cmd.Move, ev);
+            MoveInput move = cmd.Move;
+            if (s.Hand.Using) move.SprintHeld = false; // you walk while using a heal (PlayerMovement slows it too)
+            PlayerMovement.Step(grid, mc, ref s, move, ev);
             for (int i = before; i < ev.Count; i++)
             {
                 MoveEvent e = ev[i];

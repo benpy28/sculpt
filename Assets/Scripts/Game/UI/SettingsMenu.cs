@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using Sculpt.Core;
 using Sculpt.Game.Input;
+using Sculpt.Game.Net;
 using Sculpt.Game.Player;
 using Sculpt.Game.Settings;
 using UnityEngine;
@@ -297,6 +299,31 @@ namespace Sculpt.Game.UI
             _settings.SprintToggle = HoldToggle("Sprint", _settings.SprintToggle);
             _settings.CrouchToggle = HoldToggle("Crouch", _settings.CrouchToggle);
             _settings.ZoomToggle = HoldToggle("Zoom (right mouse, AR and pistol)", _settings.ZoomToggle);
+            GUILayout.Space(6);
+            GUILayout.Label("Auto-sort when you pick something up (I opens the inventory to sort by hand)", _sub);
+            SlotPrefs prefs = NetSession.LocalSlotPrefs;
+            bool changed = false;
+            GUILayout.BeginHorizontal();
+            for (int si = 0; si < Items.Slots; si++)
+            {
+                if (GUILayout.Button($"{si + 1}: {SlotPrefs.Name(prefs[si])}", _button, GUILayout.Width(130)))
+                {
+                    prefs[si] = SlotPrefsStore.Next(prefs[si]);
+                    changed = true;
+                }
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("   Click a slot to change what it is for.", _label);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Default (pump 1, AR 2, heals 5)", _button, GUILayout.Width(260))) { prefs = SlotPrefs.Default; changed = true; }
+            GUILayout.EndHorizontal();
+            if (changed)
+            {
+                SlotPrefsStore.Save(prefs);
+                if (_player.Session != null) _player.Session.SetLocalPrefs(prefs);
+                else NetSession.LocalSlotPrefs = prefs;
+            }
 
             GUILayout.Space(10);
             GUILayout.BeginHorizontal();

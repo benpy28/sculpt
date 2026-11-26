@@ -32,6 +32,8 @@ namespace Sculpt.Game.Input
         public readonly InputAction Interact;
         /// <summary>Punch (F): its own bind, not a hotbar item (Ben 2026-11-21).</summary>
         public readonly InputAction Punch;
+        /// <summary>Inventory screen (I): drag slots to sort them by hand (Ben 2026-11-26).</summary>
+        public readonly InputAction Inventory;
         public readonly InputAction SculptToggle;
         // Sculpt mode (own actions so they rebind separately from the guns).
         public readonly InputAction SculptPush;
@@ -94,6 +96,7 @@ namespace Sculpt.Game.Input
             LastWeapon.AddBinding(""); // unbound by default; the empty slot is there so it can be bound in the menu
             Interact = Player.AddAction("Interact (pick up, hold to drop)", InputActionType.Button, "<Keyboard>/e");
             Punch = Player.AddAction("Punch", InputActionType.Button, "<Keyboard>/f");
+            Inventory = Player.AddAction("Inventory (sort slots)", InputActionType.Button, "<Keyboard>/i");
             SculptToggle = Player.AddAction("Sculpt Mode", InputActionType.Button, "<Keyboard>/q");
             SculptPush = Player.AddAction("Sculpt Push", InputActionType.Button, "<Mouse>/leftButton");
             SculptPull = Player.AddAction("Sculpt Pull", InputActionType.Button, "<Mouse>/rightButton");

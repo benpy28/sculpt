@@ -68,6 +68,7 @@ namespace Sculpt.Core.Replay
             var joins = new List<Join>();
             var leaves = new List<KeyValuePair<int, int>>();
             var lockers = new List<(int Tick, int Id, Item Gun)>();
+            var prefs = new List<(int Tick, int Id, SlotPrefs Prefs)>();
             for (int i = 0; i < file.Segments.Count; i++)
             {
                 byte[] raw = file.SegmentBytes(i);
@@ -104,6 +105,14 @@ namespace Sculpt.Core.Replay
                         case ReplayRecord.Locker:
                             lockers.Add(((int)r.VarU(), (int)r.VarU(), (Item)r.U8()));
                             break;
+                        case ReplayRecord.Prefs:
+                        {
+                            int pt = (int)r.VarU(), pid = (int)r.VarU();
+                            var sp = new SlotPrefs();
+                            for (int k = 0; k < Items.Slots; k++) sp[k] = (SlotPref)r.U8();
+                            prefs.Add((pt, pid, sp));
+                            break;
+                        }
                         case ReplayRecord.Leave:
                             leaves.Add(new KeyValuePair<int, int>((int)r.VarU(), (int)r.VarU()));
                             break;
@@ -119,7 +128,7 @@ namespace Sculpt.Core.Replay
             int start = file.FirstTick - 1;
             if (s.Tick != start) { check.Problem = $"the fresh server starts at tick {s.Tick}, the recording at {start}"; return check; }
             if (s.Players.Count != 0) { check.Problem = "the fresh server already has players"; return check; }
-            int ji = 0, li = 0, ki = 0;
+            int ji = 0, li = 0, ki = 0, pi = 0;
             var byId = new Dictionary<int, ServerPlayer>();
             for (int t = file.FirstTick; t <= file.LastTick; t++)
             {
@@ -134,6 +143,8 @@ namespace Sculpt.Core.Replay
                 }
                 for (; ki < lockers.Count && lockers[ki].Tick <= s.Tick; ki++)
                     if (byId.TryGetValue(lockers[ki].Id, out ServerPlayer lp)) s.SetLocker(lp, lockers[ki].Gun);
+                for (; pi < prefs.Count && prefs[pi].Tick <= s.Tick; pi++)
+                    if (byId.TryGetValue(prefs[pi].Id, out ServerPlayer pp)) s.SetSlotPrefs(pp, prefs[pi].Prefs);
                 s.Step();
                 check.TicksRun++;
                 if (hashes.TryGetValue(t, out ulong want))

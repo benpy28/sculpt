@@ -23,6 +23,15 @@ namespace Sculpt.Core.Net
         Hello = 12,    // client -> server, reliable, first packet after connecting: version, and play or watch (Replay/SpecProtocol)
         SpecFrame = 13, // server -> spectator, reliable: one tick's spectator packets bundled (also what a replay file stores)
         SpecSnap = 14, // inside spectator frames only: every player, delta-coded (Replay/SpecProtocol)
+        Prefs = 15,    // client -> server, reliable, after the welcome and whenever they change: slot auto-sort and the battle royale locker gun
+    }
+
+    /// <summary>A player's own choices the server needs (protocol 35): where pickups go, and the locker gun.</summary>
+    public struct PrefsMsg
+    {
+        public SlotPrefs Slots;
+        /// <summary>Battle royale locker gun (None = the server's default).</summary>
+        public Item Locker;
     }
 
     public struct WelcomeMsg
@@ -87,7 +96,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 34; // 34 battle royale first playable (bag and ground item rarity, chests, the BR match and circle in the Match message, item deltas); 33 anti-cheat groundwork (interest management: snapshots only carry enemies you could see or hear soon; dev respawn refused unless allowed); 32 delta snapshots (coded against the newest snapshot the client acked; other players quantized like the spectator stream); 31 balance pass 2 (SMG head 1.5x, no crouch accuracy bonus: rules differ between builds); 30 replays and spectators (Hello, spectator frames, welcome gains the spectator delay); 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
+        public const byte Version = 35; // 35 inventory rework (any item in any slot, duplicate guns, bandages and first-aid kits, slot swaps in the command, the Prefs message, held item in 4 bits); 34 battle royale first playable (bag and ground item rarity, chests, the BR match and circle in the Match message, item deltas); 33 anti-cheat groundwork (interest management: snapshots only carry enemies you could see or hear soon; dev respawn refused unless allowed); 32 delta snapshots (coded against the newest snapshot the client acked; other players quantized like the spectator stream); 31 balance pass 2 (SMG head 1.5x, no crouch accuracy bonus: rules differ between builds); 30 replays and spectators (Hello, spectator frames, welcome gains the spectator delay); 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
@@ -111,6 +120,29 @@ namespace Sculpt.Core.Net
             w.Vec(m.Spawn);
             w.F64(m.SpawnYaw);
             w.I32(m.SpectatorDelayTicks);
+        }
+
+        public static void Write(ByteWriter w, in PrefsMsg m)
+        {
+            w.U8((byte)MsgType.Prefs);
+            for (int k = 0; k < Items.Slots; k++) w.U8((byte)m.Slots[k]);
+            w.U8((byte)m.Locker);
+        }
+
+        public static PrefsMsg ReadPrefs(ref ByteReader r)
+        {
+            Expect(ref r, MsgType.Prefs);
+            var m = new PrefsMsg();
+            for (int k = 0; k < Items.Slots; k++)
+            {
+                byte v = r.U8();
+                if (v > (byte)SlotPrefs.Last) throw new NetFormatException("Bad slot preference.");
+                m.Slots[k] = (SlotPref)v;
+            }
+            byte l = r.U8();
+            if (l != 0 && !Items.IsGun((Item)l)) throw new NetFormatException("Bad locker gun.");
+            m.Locker = (Item)l;
+            return m;
         }
 
         public static WelcomeMsg ReadWelcome(ref ByteReader r)
@@ -211,6 +243,8 @@ namespace Sculpt.Core.Net
             for (int k = 0; k < Items.Slots; k++) { w.U8((byte)((byte)bag[k] | ((byte)bag.RarityOf(k) << 4))); w.U8(bag.Count(k)); }
             w.I32(s.Hand.ReadyTick);
             w.I32(s.Hand.SculptLockUntil);
+            w.I32(s.Hand.UseUntil);
+            w.I32(s.Hand.UseStart);
             WeaponState g = s.Weapon;
             w.I64(g.NextPump); w.I64(g.NextSmg); w.I64(g.NextAr); w.I64(g.NextPistol);
             w.I32(g.LastShotTick); w.I32(g.Streak); w.I32(g.ShotCount);
@@ -313,13 +347,15 @@ namespace Sculpt.Core.Net
             for (int k = 0; k < Items.Slots; k++)
             {
                 byte it = r.U8();
-                if ((it & 0x0F) > (byte)Items.Last || (it >> 4) > (byte)Rarities.Last) throw new NetFormatException("Bad item.");
+                if ((it & 0x0F) > (byte)Items.Last || (it & 0x0F) == (byte)Item.Chest || (it >> 4) > (byte)Rarities.Last) throw new NetFormatException("Bad item.");
                 s.Hand.Bag[k] = (Item)(it & 0x0F);
                 s.Hand.Bag.SetRarity(k, (Rarity)(it >> 4));
                 s.Hand.Bag.SetCount(k, r.U8());
             }
             s.Hand.ReadyTick = r.I32();
             s.Hand.SculptLockUntil = r.I32();
+            s.Hand.UseUntil = r.I32();
+            s.Hand.UseStart = r.I32();
             var g = new WeaponState
             {
                 NextPump = r.I64(), NextSmg = r.I64(), NextAr = r.I64(), NextPistol = r.I64(),

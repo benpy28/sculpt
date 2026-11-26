@@ -321,6 +321,15 @@ namespace Sculpt.Core.Net
                 bool burstPause = held == Weapon.Ar && dTrue > 20 && ((tick - _fireOkTick) % (30 * SimTime.Per60)) >= 15 * SimTime.Per60;
                 fire = err < tol && dTrue < range && !burstPause && s.Weapon.UsedOf(held) < wc.Stats[(int)held].MagSize;
             }
+            // ---- Heals: hurt, out of a fight for 2 s and nothing seen, it bandages up like a person would (it keeps walking).
+            int healSlot = !_engaged && tick - _lastSeenTick > 120 * SimTime.Per60 ? HealSlot(s, mc) : -1;
+            if (healSlot >= 0 && !s.Hand.InSculptMode)
+            {
+                Item want = s.Hand.Bag[healSlot];
+                cmd.Hand.WeaponKey = s.Hand.HeldItem != want ? (byte)(healSlot + 1) : (byte)0; // never swapped back to a gun mid-use
+                if (s.Hand.HeldItem == want && s.Hand.Mode == HandMode.Weapon) fire = true;
+                cmd.Hand.Reload = false;
+            }
             cmd.Move.WantsToShoot = _engaged;
             cmd.Move.FireHeld = fire;
             cmd.Move.FirePressed = fire && !_firedLast;
@@ -465,15 +474,39 @@ namespace Sculpt.Core.Net
             bool lacking = s.Hand.Bag.SlotOf(Items.Of(cur)) < 0;
             if (want != cur && (lacking || tick - _switchTick >= 60 * SimTime.Per60)) { WantGun = want; _switchTick = tick; }
 
-            int slot = s.Hand.Bag.SlotOf(Items.Of(WantGun));
-            bool holding = s.Hand.HasGun && s.Hand.Held == WantGun;
-            if (!holding && slot >= 0 && tick % (20 * SimTime.Per60) == 0) cmd.Hand.WeaponKey = (byte)(slot + 1);
+            int slot = BestCopy(s.Hand.Bag, WantGun);
+            bool holding = s.Hand.HasGun && s.Hand.Held == WantGun && (slot < 0 || s.Hand.Bag.RarityOf(s.Hand.Slot) >= s.Hand.Bag.RarityOf(slot));
+            // In a fight with no gun out (a heal in hand), it gets a gun out at once.
+            if (!holding && slot >= 0 && (tick % (20 * SimTime.Per60) == 0 || (_engaged && !s.Hand.HasGun && s.Hand.Mode == HandMode.Weapon)))
+                cmd.Hand.WeaponKey = (byte)(slot + 1);
             else if (holding && !_engaged && !s.Weapon.Reloading && tick - _reloadTick > 60 * SimTime.Per60
                      && s.Weapon.UsedOf(WantGun) * 10 >= Stats(WantGun).MagSize * 4)
             {
                 cmd.Hand.Reload = true;
                 _reloadTick = tick;
             }
+        }
+
+        /// <summary>The slot of its best copy of a gun (highest rarity; -1 if it has none). Duplicate guns are allowed.</summary>
+        private static int BestCopy(in Bag bag, Weapon w)
+        {
+            Item i = Items.Of(w);
+            int best = -1;
+            for (int k = 0; k < Items.Slots; k++)
+                if (bag[k] == i && (best < 0 || bag.RarityOf(k) > bag.RarityOf(best))) best = k;
+            return best;
+        }
+
+        /// <summary>The slot of the heal it would use now (a first-aid kit when badly hurt, else a bandage), or -1.</summary>
+        private static int HealSlot(in MotorState s, MovementConfig mc)
+        {
+            if (s.Damage < 20) return -1;
+            Bag b = s.Hand.Bag;
+            int kit = b.SlotOf(Item.Medkit), band = b.SlotOf(Item.Bandage);
+            if (kit >= 0 && b.CountIn(kit) == 0) kit = -1;
+            if (band >= 0 && b.CountIn(band) == 0) band = -1;
+            if (s.Damage >= 70 && kit >= 0) return kit;
+            return band >= 0 ? band : kit;
         }
 
         /// <summary>The gun it carries nearest in use to the one it wants (a battle royale bag is not the full loadout).</summary>
@@ -677,14 +710,24 @@ namespace Sculpt.Core.Net
         private bool Wants(in GroundItem g, in Bag bag)
         {
             if (g.Kind == Item.Chest) return true;
+            bool free = bag.FirstEmpty() >= 0;
             if (Items.IsGun(g.Kind))
             {
-                int have = bag.SlotOf(g.Kind);
-                if (have >= 0) return g.Rarity > bag.RarityOf(have);
-                for (int k = 0; k < Items.Slots; k++) if (k != Items.UtilitySlot && bag[k] == Item.None) return true;
-                return false;
+                // A gun it lacks with room for it, or a better copy of one it has (a full bag swaps out the worse copy).
+                int best = BestCopy(bag, Items.GunOf(g.Kind));
+                if (best >= 0) return g.Rarity > bag.RarityOf(best);
+                return free;
             }
-            if (Items.Throws(g.Kind)) return bag[Items.UtilitySlot] == Item.None || bag.CountIn(Items.UtilitySlot) == 0;
+            if (Items.Stacks(g.Kind))
+            {
+                // More of a stack it has room in, or a heal or a first utility when a slot is free.
+                int have = bag.SlotOf(g.Kind);
+                if (have >= 0) return bag.Count(have) < _server.Movement.Items.Carry(g.Kind);
+                if (!free) return false;
+                if (Items.IsHeal(g.Kind)) return true;
+                for (int k = 0; k < Items.Slots; k++) if (Items.Throws(bag[k]) && bag.CountIn(k) > 0) return false;
+                return true;
+            }
             return false;
         }
 
@@ -731,6 +774,14 @@ namespace Sculpt.Core.Net
             if (tick - _lootNearSince > 3 * 60 * SimTime.Per60) { _lootGaveUp.Add(_lootId); _lootId = 0; return; }
             if (tick - _lootPickTick < 15 * SimTime.Per60) return;
             _lootPickTick = tick;
+            // A better copy of a gun with a full bag: hold the worse copy first, so the pickup swaps that one out.
+            if (server.Items.TryGet(_lootId, out GroundItem g) && Items.IsGun(g.Kind) && s.Hand.Bag.FirstEmpty() < 0)
+            {
+                int worst = -1;
+                for (int k = 0; k < Items.Slots; k++)
+                    if (s.Hand.Bag[k] == g.Kind && (worst < 0 || s.Hand.Bag.RarityOf(k) < s.Hand.Bag.RarityOf(worst))) worst = k;
+                if (worst >= 0 && s.Hand.Slot != worst) { cmd.Hand.WeaponKey = (byte)(worst + 1); return; }
+            }
             cmd.Hand.Pickup = true;
             cmd.Hand.PickId = _lootId;
         }

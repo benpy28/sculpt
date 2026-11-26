@@ -261,16 +261,22 @@ namespace Sculpt.Core.Tests.Net
             s.Step();
             s.Step();
             Assert.That(s.Items.TryGet(chest.Id, out _), Is.False, "the chest is gone");
-            int guns = 0, utils = 0;
+            int guns = 0, utils = 0, heals = 0;
             for (int i = 0; i < s.Items.Count; i++)
             {
                 GroundItem g = s.Items[i];
                 if ((g.Position - chest.Position).HorizontalLength > 2.5 || g.Kind == Item.Chest) continue;
                 if (Items.IsGun(g.Kind)) { guns++; Assert.That(g.Rarity, Is.InRange(Rarity.Common, Rarity.Legendary)); }
                 if (Items.Throws(g.Kind)) utils++;
+                if (Items.IsHeal(g.Kind))
+                {
+                    heals++;
+                    Assert.That(g.Count, Is.EqualTo(g.Kind == Item.Bandage ? 2 : 1), "2 bandages or 1 first-aid kit");
+                }
             }
             Assert.That(guns, Is.EqualTo(1));
             Assert.That(utils, Is.EqualTo(1));
+            Assert.That(heals, Is.EqualTo(1), "and a heal (Ben 2026-11-26)");
         }
 
         private sealed class Opener : IBotBrain
@@ -438,13 +444,15 @@ namespace Sculpt.Core.Tests.Net
                 Assert.That(smg.Locker, Is.EqualTo(Item.Smg), "a refused pick changes nothing");
             }
             StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
-            Assert.That(smg.State.Hand.Bag.S1, Is.EqualTo(Item.Smg));
-            Assert.That(pistol.State.Hand.Bag.S1, Is.EqualTo(Item.Pistol));
+            // Placed by the default slot prefs (pump 1, AR 2): an AR goes to slot 2, any other locker gun to slot 3.
+            Assert.That(smg.State.Hand.Bag.S2, Is.EqualTo(Item.Smg));
+            Assert.That(pistol.State.Hand.Bag.S2, Is.EqualTo(Item.Pistol));
             Assert.That(back.State.Hand.Bag.S1, Is.EqualTo(Item.Ar), "the default locker gun");
             foreach (ServerPlayer p in new[] { smg, pistol, back })
             {
                 Assert.That(p.State.Hand.Bag.S0, Is.EqualTo(Item.Pump), "everyone keeps the common pump");
-                Assert.That(p.State.Hand.Bag.R1, Is.EqualTo(Rarity.Common), "the locker gun is common");
+                int at = p == back ? 1 : 2;
+                Assert.That(p.State.Hand.Bag.RarityOf(at), Is.EqualTo(Rarity.Common), "the locker gun is common");
             }
         }
 
@@ -468,13 +476,43 @@ namespace Sculpt.Core.Tests.Net
             StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
             for (int i = 0; i < 3 * SimTime.TicksPerSecond; i++) s.Step();
             writer.Finish();
-            Assert.That(me.State.Hand.Bag.S1, Is.EqualTo(Item.Smg));
-            Assert.That(bot.State.Hand.Bag.S1, Is.EqualTo(Item.Pistol));
+            Assert.That(me.State.Hand.Bag.S2, Is.EqualTo(Item.Smg));
+            Assert.That(bot.State.Hand.Bag.S2, Is.EqualTo(Item.Pistol));
 
             ReplayFile f = ReplayFile.Read(ms.ToArray());
             ReplayCheck check = ReplayVerifier.Run(f, () =>
             {
                 BrConfig again = Quick(BrMode.Duos);
+                again.MakeBot = null;
+                return NewServer(again, out _, out _);
+            });
+            TestContext.WriteLine(check.ToString());
+            Assert.That(check.HashesChecked, Is.GreaterThan(10));
+            Assert.That(check.Passed, check.ToString());
+        }
+
+        [Test]
+        public void SlotPrefs_AreInTheReplay_SoTheReRunPlacesTheLoadoutTheSameWay()
+        {
+            BrConfig cfg = Quick(BrMode.Solos);
+            NetServer s = NewServer(cfg, out _, out _);
+            var ms = new MemoryStream();
+            MatchStream stream = s.StartStream();
+            var writer = new ReplayWriter(ms, new ReplayHeader { Map = "BattleRoyale", Mode = "Solos", Build = "tests", StartedUtcTicks = 1 }, stream);
+            ServerPlayer me = s.AddPlayer(1, 1, new Vec3d(150, 1, 150), 0);
+            // Pump in 4, AR in 1: the loadout lands there (default would be pump 1, AR 2).
+            s.SetSlotPrefs(me, new SlotPrefs { P0 = SlotPref.Ar, P3 = SlotPref.Pump });
+            s.Step();
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            for (int i = 0; i < 2 * SimTime.TicksPerSecond; i++) s.Step();
+            writer.Finish();
+            Assert.That(me.State.Hand.Bag.S0, Is.EqualTo(Item.Ar));
+            Assert.That(me.State.Hand.Bag.S3, Is.EqualTo(Item.Pump));
+
+            ReplayFile f = ReplayFile.Read(ms.ToArray());
+            ReplayCheck check = ReplayVerifier.Run(f, () =>
+            {
+                BrConfig again = Quick(BrMode.Solos);
                 again.MakeBot = null;
                 return NewServer(again, out _, out _);
             });

@@ -215,7 +215,7 @@ namespace Sculpt.Core
 
         /// <summary>A reload time scaled by the held gun's rarity (legendary reloads 5% faster).</summary>
         private static int Scaled(int ticks, in MotorState s, Weapon held, WeaponsConfig wc) =>
-            wc == null ? ticks : wc.ScaleReload(ticks, s.Hand.Bag.RarityOfGun(held));
+            wc == null ? ticks : wc.ScaleReload(ticks, s.Hand.Bag.RarityOfGun(held, s.Hand.Slot));
 
         /// <summary>Spread cone half-angle (degrees) for a shot fired now, from the movement state.</summary>
         public static double Spread(in MotorState s, MovementConfig mc, WeaponStats st)

@@ -50,7 +50,7 @@ namespace Sculpt.Core.Replay
     /// <summary>Record kinds inside a segment's raw bytes (each is: kind byte, varint length, body). Unknown kinds are skipped.</summary>
     public static class ReplayRecord
     {
-        public const byte Key = 1, Frame = 2, Inputs = 3, Hash = 4, Join = 5, Leave = 6, Flag = 7, Locker = 8;
+        public const byte Key = 1, Frame = 2, Inputs = 3, Hash = 4, Join = 5, Leave = 6, Flag = 7, Locker = 8, Prefs = 9;
     }
 
     /// <summary>
@@ -158,6 +158,16 @@ namespace Sculpt.Core.Replay
             _rec.VarU((ulong)playerId);
             _rec.U8((byte)gun);
             _pending.Add(Bytes(ReplayRecord.Locker, _rec));
+        }
+
+        /// <summary>A player's slot auto-sort changed between ticks (after tick `tick`): the re-run picks up into the same slots.</summary>
+        internal void OnPrefs(int tick, int playerId, in SlotPrefs prefs)
+        {
+            _rec.Clear();
+            _rec.VarU((ulong)Math.Max(0, tick));
+            _rec.VarU((ulong)playerId);
+            for (int k = 0; k < Items.Slots; k++) _rec.U8((byte)prefs[k]);
+            _pending.Add(Bytes(ReplayRecord.Prefs, _rec));
         }
 
         internal void OnLeave(int tick, int playerId)

@@ -290,7 +290,9 @@ namespace Sculpt.Core.Tests.World
         public void UtilitySlot_GrenadesC4AndLauncherShareSlotFive_NeverCostAGun()
         {
             // Ben 2026-11-25 (balance pass): C4 and the launcher share slot 5 with the grenades, so taking one swaps out
-            // the utility you had and never a gun. Guns never go into slot 5.
+            // the utility you had and never a gun. Guns never go into slot 5. Since the 2026-11-26 inventory rework
+            // (generic slots) this rule is behind ItemConfig.UtilityShareSlot, off by default.
+            var Mc = new MovementConfig(); Mc.Items.UtilityShareSlot = true;
             var items = new GroundItems();
             var s = MotorState.At(new Vec3d(0, 0, 0));      // standard bag: pump, SMG, AR, pistol, 2 grenades
             Vec3d eye = new Vec3d(0, 1.62, 0);
@@ -334,9 +336,9 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
-        public void OldSlotRule_Pickups_StackUpToTheCarryLimit_DetonatorIsReplacedNotDropped()
+        public void GenericSlots_Pickups_StackUpToTheCarryLimit_DetonatorIsReplacedNotDropped()
         {
-            // The rule before the 2026-11-25 balance pass (UtilityShareSlot off): a pickup can take any slot.
+            // Generic slots (UtilityShareSlot off, the default since 2026-11-26): a pickup can take any slot.
             var Mc = new MovementConfig(); Mc.Items.UtilityShareSlot = false;
             var items = new GroundItems();
             var s = MotorState.At(new Vec3d(0, 0, 0));
@@ -365,9 +367,10 @@ namespace Sculpt.Core.Tests.World
             Assert.That(ItemRules.TryDrop(ref s, items, null, 0, 1, 200, Mc), Is.False);
             int before = items.Count;
             int ar = items.Add(new GroundItem { Kind = Item.Ar, Count = 1, Position = new Vec3d(0, 0, 1) });
-            s.Hand.Bag.S2 = Item.None; // the AR slot is free, but the held slot is checked after empty slots
+            s.Hand.Bag.S2 = Item.None; // a slot is free, and the held slot is checked after empty slots
             Assert.That(ItemRules.TryPickup(ref s, items, ar, null, eye, 1, 200, Mc), Is.EqualTo(PickupResult.Ok));
-            Assert.That(s.Hand.Bag[2], Is.EqualTo(Item.Ar), "the empty slot is used first");
+            Assert.That(s.Hand.Bag[1], Is.EqualTo(Item.Ar), "auto-sort: the AR's slot (2) by default");
+            Assert.That(s.Hand.Bag[2], Is.EqualTo(Item.Smg), "what sat there moved to the free slot");
             s.Hand.Bag.S1 = Item.None; s.Hand.Bag.S1 = Item.Pistol; // full bag again
             int smg = items.Add(new GroundItem { Kind = Item.Smg, Count = 1, Position = new Vec3d(0, 0, 1) });
             s.Hand.Bag.S1 = Item.Pistol;

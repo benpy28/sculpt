@@ -278,6 +278,23 @@ namespace Sculpt.Core.Net
             }
         }
 
+        /// <summary>The player's slot auto-sort and battle royale locker gun. Sent to the server after the welcome and
+        /// again whenever <see cref="SetPrefs"/> changes them.</summary>
+        public PrefsMsg Prefs = new PrefsMsg { Slots = SlotPrefs.Default };
+
+        public void SetPrefs(in PrefsMsg prefs)
+        {
+            Prefs = prefs;
+            if (Joined && !IsSpectator) SendPrefs();
+        }
+
+        private void SendPrefs()
+        {
+            var w = new ByteWriter(16);
+            Protocol.Write(w, Prefs);
+            _send(w.ToArray(), true);
+        }
+
         private void OnWelcome(in WelcomeMsg m)
         {
             if (m.ProtocolVersion != Protocol.Version)
@@ -298,6 +315,7 @@ namespace Sculpt.Core.Net
             // First guess at the lead; the server's feedback corrects it within a round trip.
             Tick = m.ServerTick + Config.TargetLeadTicks + 6 * SimTime.Per60;
             _pred = MotorState.At(m.Spawn);
+            if (!IsSpectator) SendPrefs();
             _prevPred = _pred;
             _accum = 0;
             ClearHistory();

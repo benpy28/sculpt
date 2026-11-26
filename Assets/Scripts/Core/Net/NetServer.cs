@@ -24,7 +24,8 @@ namespace Sculpt.Core.Net
         internal readonly double[] ArriveMs;
         internal readonly int[] ArriveTick;
         internal int NewestReceived = int.MinValue;
-        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch, CarryHeal, CarryHealReinforce, CarryDoor, CarryDoorOpen;
+        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch, CarryHeal, CarryHealReinforce, CarryDoor, CarryDoorOpen, CarrySwap;
+        internal byte CarrySwapA, CarrySwapB;
         internal byte CarryWeapon;
         internal int CarryPickId, CarryHealTile, CarryHealCell, CarryDoorTile;
         internal InputCmd CarrySculptCmd;
@@ -61,6 +62,8 @@ namespace Sculpt.Core.Net
         internal bool BrLoadout;
         /// <summary>Battle royale: the gun picked in the locker (None: the server's default).</summary>
         public Item Locker;
+        /// <summary>Auto-sort on pickup (Ben 2026-11-26). Set from the player's Prefs message, between ticks (<see cref="NetServer.SetSlotPrefs"/>).</summary>
+        public SlotPrefs Prefs = SlotPrefs.Default;
         /// <summary>The last enemy who hurt this player, and when (kill credit for falls).</summary>
         public int LastHurtBy, LastHurtTick;
 
@@ -245,7 +248,15 @@ namespace Sculpt.Core.Net
             try
             {
                 var r = new ByteReader(data, offset, count);
-                if (Protocol.PeekType(data, offset, count) != MsgType.Inputs) { p.DroppedPackets++; return; }
+                MsgType type = Protocol.PeekType(data, offset, count);
+                if (type == MsgType.Prefs)
+                {
+                    PrefsMsg pm = Protocol.ReadPrefs(ref r);
+                    SetSlotPrefs(p, pm.Slots);
+                    if (pm.Locker != Item.None) SetLocker(p, pm.Locker); // None = no pick (keeps whatever the server set); refuses anything the locker doesn't offer
+                    return;
+                }
+                if (type != MsgType.Inputs) { p.DroppedPackets++; return; }
                 InputCmd.Sanitized = 0;
                 InputsMsg im = Protocol.ReadInputs(ref r, _cmdScratch);
                 p.ReceivedPackets++;
@@ -306,6 +317,7 @@ namespace Sculpt.Core.Net
                         if (c.Hand.Pickup) { p.CarryPickup = true; p.CarryPickId = c.Hand.PickId; }
                         if (c.Hand.Drop) p.CarryDrop = true;
                         if (c.Hand.Door) { p.CarryDoor = true; p.CarryDoorTile = c.Hand.DoorTile; p.CarryDoorOpen = c.Hand.DoorOpen; }
+                        if (c.Hand.Swap) { p.CarrySwap = true; p.CarrySwapA = c.Hand.SwapA; p.CarrySwapB = c.Hand.SwapB; }
                         if (c.Hand.Punch) p.CarryPunch = true;
                         if (c.Hand.Heal) { p.CarryHeal = true; p.CarryHealTile = c.Hand.HealTile; p.CarryHealCell = c.Hand.HealCell; p.CarryHealReinforce = c.Hand.HealReinforce; }
                         if (c.HasSculpt) { p.CarrySculpt = true; p.CarrySculptCmd = c; }
@@ -419,6 +431,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryPickup) { if (!cmd.Hand.Pickup) { cmd.Hand.Pickup = true; cmd.Hand.PickId = p.CarryPickId; } p.CarryPickup = false; }
                 if (p.CarryDrop) { cmd.Hand.Drop = true; p.CarryDrop = false; }
                 if (p.CarryDoor) { if (!cmd.Hand.Door) { cmd.Hand.Door = true; cmd.Hand.DoorTile = p.CarryDoorTile; cmd.Hand.DoorOpen = p.CarryDoorOpen; } p.CarryDoor = false; }
+                if (p.CarrySwap) { if (!cmd.Hand.Swap) { cmd.Hand.Swap = true; cmd.Hand.SwapA = p.CarrySwapA; cmd.Hand.SwapB = p.CarrySwapB; } p.CarrySwap = false; }
                 if (p.CarryPunch) { cmd.Hand.Punch = true; p.CarryPunch = false; }
                 if (p.CarryHeal) { if (!cmd.Hand.Heal) { cmd.Hand.Heal = true; cmd.Hand.HealTile = p.CarryHealTile; cmd.Hand.HealCell = p.CarryHealCell; cmd.Hand.HealReinforce = p.CarryHealReinforce; } p.CarryHeal = false; }
                 if (p.CarrySculpt)
@@ -500,6 +513,17 @@ namespace Sculpt.Core.Net
         // ================================================================ Items
 
         /// <summary>
+        /// Sets a player's auto-sort (from their Prefs message, or a bot or test). Call between ticks. Recorded in the
+        /// replay stream so a re-run picks up into the same slots.
+        /// </summary>
+        public void SetSlotPrefs(ServerPlayer p, in SlotPrefs prefs)
+        {
+            if (p == null || p.Prefs.Equals(prefs)) return;
+            p.Prefs = prefs;
+            Stream?.OnPrefs(Tick, p.Id, prefs);
+        }
+
+        /// <summary>
         /// Pickup and drop, applied right after the player's movement on the tick they were pressed. Not predicted: the
         /// client sees its new bag in the next snapshot (the draw time that follows hides most of the round trip).
         /// </summary>
@@ -513,7 +537,7 @@ namespace Sculpt.Core.Net
                     ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, OpenChest(p, chest, eye)));
                     return;
                 }
-                PickupResult r = ItemRules.TryPickup(ref p.State, Items, cmd.Hand.PickId, Grid, eye, p.Id, Tick, Movement);
+                PickupResult r = ItemRules.TryPickup(ref p.State, Items, cmd.Hand.PickId, Grid, eye, p.Id, Tick, Movement, p.Prefs);
                 ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, r));
             }
             else if (cmd.Hand.Drop && ItemRules.TryDrop(ref p.State, Items, Grid, cmd.Move.Yaw, p.Id, Tick, Movement))

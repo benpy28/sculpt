@@ -106,6 +106,38 @@ namespace Sculpt.Game.Weapons
             return root;
         }
 
+        private static readonly Color Gauze = new Color(0.92f, 0.89f, 0.80f);
+        private static readonly Color KitGreen = new Color(0.16f, 0.55f, 0.32f);
+
+        /// <summary>A bandage roll (Ben 2026-11-26: +25 health): a pale gauze roll with a loose tail. Origin at its middle.</summary>
+        public static GameObject BuildBandage(Material mat, int layer = 0)
+        {
+            var root = new GameObject("Bandage") { layer = layer };
+            var b = new BoxBuilder();
+            b.Box(Vector3.zero, new Vector3(0.07f, 0.06f, 0.07f), Gauze);                              // roll
+            b.Box(Vector3.zero, new Vector3(0.08f, 0.045f, 0.045f), Gauze);                            // rounded sides
+            b.Box(Vector3.zero, new Vector3(0.045f, 0.045f, 0.08f), Gauze);
+            b.Box(new Vector3(0.0f, -0.025f, 0.06f), new Vector3(0.05f, 0.006f, 0.06f), Gauze, 8f);    // loose tail
+            Attach(root.transform, "Body", b.ToMesh("Bandage"), mat, layer);
+            return root;
+        }
+
+        /// <summary>A first-aid kit (+100 health): a green case with a white cross (the first-aid sign) and a dark handle.
+        /// Origin at the middle of its base.</summary>
+        public static GameObject BuildMedkit(Material mat, int layer = 0)
+        {
+            var root = new GameObject("First-aid kit") { layer = layer };
+            var b = new BoxBuilder();
+            b.Box(new Vector3(0, 0.06f, 0), new Vector3(0.26f, 0.12f, 0.18f), KitGreen);               // case
+            b.Box(new Vector3(0, 0.122f, 0), new Vector3(0.1f, 0.006f, 0.032f), Color.white);           // cross on the lid
+            b.Box(new Vector3(0, 0.122f, 0), new Vector3(0.032f, 0.006f, 0.1f), Color.white);
+            b.Box(new Vector3(0, 0.06f, 0.092f), new Vector3(0.07f, 0.022f, 0.006f), Color.white);      // cross on the front
+            b.Box(new Vector3(0, 0.06f, 0.092f), new Vector3(0.022f, 0.07f, 0.006f), Color.white);
+            b.Box(new Vector3(0, 0.135f, 0), new Vector3(0.09f, 0.018f, 0.02f), DarkSteel);              // handle
+            Attach(root.transform, "Body", b.ToMesh("First-aid kit"), mat, layer);
+            return root;
+        }
+
         // (Wood is shared with the gun stocks.)
         private static readonly Color WoodDark = new Color(0.30f, 0.19f, 0.10f);
         private static readonly Color Brass = new Color(0.86f, 0.66f, 0.28f);
