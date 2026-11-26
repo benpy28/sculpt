@@ -78,6 +78,9 @@ namespace Sculpt.Core
         /// <summary>Random cone half-angle for this shot, degrees.</summary>
         public double Spread;
         public uint Seed;
+        /// <summary>The rarity of the copy that fired it (battle royale; None elsewhere). Taken at the shot, so a pickup or
+        /// a death later in the same tick never changes its damage.</summary>
+        public Rarity Rarity;
     }
 
     public static class WeaponRules
@@ -161,6 +164,7 @@ namespace Sculpt.Core
                 Aim = AimDir(input.Yaw, pitchDegrees, w.RecoilPitch, w.RecoilYaw),
                 Spread = Spread(s, mc, st),
                 Seed = Hash((uint)tick, (uint)w.ShotCount, (uint)s.Hand.Held),
+                Rarity = s.Hand.Bag.RarityOf(s.Hand.Slot),
             };
             shots?.Add(shot);
 
