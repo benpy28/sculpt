@@ -274,6 +274,9 @@ namespace Sculpt.Core.Net
                 WeaponRules.Kill(ref p.State, Tick, Weapons);
                 p.State.RespawnTick = int.MaxValue;
                 p.Body.Position = ParkedBody;
+                // On no team: teams are dealt 1..N, so the number they joined with is usually a team in the match
+                // (they would be sent its players and counted as its teammate). The next deal gives them one.
+                if (p.Team != 0) { p.Team = 0; p.Body.Team = 0; _matchDirty = true; }
             }
         }
 

@@ -130,6 +130,24 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(s.IsSentTo(x.Id, z.Id), Is.True, "x, watching y, gets the enemy y is facing");
         }
 
+        /// <summary>
+        /// Someone who joins mid-match sits it out, but kept the team number they joined with. Teams are dealt 1..N, so
+        /// that number is usually a team in the match: the late joiner counted as its teammate (always sent its players,
+        /// drawn as teammates on the minimap, "VICTORY" if it won).
+        /// </summary>
+        [Test]
+        public void ALateJoiner_IsNobodysTeammate()
+        {
+            var brains = new List<Scripted>();
+            NetServer s = NewServer(Quick(BrMode.Squads, brains), out BrMapInfo br);
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            ServerPlayer late = s.AddBot(new Scripted(), 1, br.Centre + new Vec3d(0, 1, 0), 0);
+            s.Step();
+            Assert.That(late.State.Dead, Is.True, "sits the match out");
+            foreach (ServerPlayer p in s.Players)
+                if (p != late && s.InBrMatch(p.Id)) Assert.That(p.Team, Is.Not.EqualTo(late.Team), "on no team in the match");
+        }
+
         private static Scripted BrainOf(List<Scripted> brains, NetServer s, ServerPlayer p)
         {
             Assert.That(s.Bots.TryGetValue(p.Id, out IBotBrain brain));
