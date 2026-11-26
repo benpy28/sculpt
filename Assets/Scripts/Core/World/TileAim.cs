@@ -87,6 +87,7 @@ namespace Sculpt.Core
             foreach (int t in near)
             {
                 if (walls.IsFollower(t)) continue; // frame followers are never a heal target (and block like frame, see Ray)
+                if (walls[t].State == TileState.DoorOpen) continue; // an open door leaf has slid away: you aim through the doorway
                 Brush shape = walls.ShapeOf(t);
                 double d;
                 if (shape.IsRamp) { if (!BrushWorld.Clip(shape, o, dir, dist, out d, out _)) continue; } // the slope, not its box

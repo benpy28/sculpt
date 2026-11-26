@@ -148,12 +148,16 @@ namespace Sculpt.Core
             Vec3d p = cb.Center;
             p = WithAx(p, axis, dir % 2 == 0 ? Ax(cb.Max, axis) + 0.04 : Ax(cb.Min, axis) - 0.04);
             var probe = new Aabb(p - new Vec3d(0.02, 0.02, 0.02), p + new Vec3d(0.02, 0.02, 0.02));
-            int r = World.BoxOverlapsSolid(probe) || (Outside != null && Outside.BoxOverlapsSolid(probe)) ? BeyondSolid : BeyondAir;
+            bool assumed = false;
+            foreach (Aabb s in _assumeSolid) if (s.Overlaps(probe)) { assumed = true; break; }
+            int r = assumed || World.BoxOverlapsSolid(probe) || (Outside != null && Outside.BoxOverlapsSolid(probe)) ? BeyondSolid : BeyondAir;
             _beyond[key] = r;
             return r;
         }
 
         private readonly Dictionary<long, int> _beyond = new Dictionary<long, int>();
+        /// <summary>While a heal is planned: frame pieces it will bring back, counted as solid past a grid's edge.</summary>
+        private readonly List<Aabb> _assumeSolid = new List<Aabb>();
 
         /// <summary>The rest of the world (the ground under the buildings), also solid past a tile grid's edge.</summary>
         public ITerrain Outside;

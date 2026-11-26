@@ -372,6 +372,17 @@ namespace Sculpt.Core
         }
 
         private readonly List<int> _doors = new List<int>();
+        private readonly Dictionary<int, TileState> _shutAs = new Dictionary<int, TileState>();
+
+        /// <summary>The state an open door leaf takes when it shuts: what it was when it opened (so a patched or
+        /// reinforced door stays so), or for a leaf seen only open (a late joiner) the state its health implies.</summary>
+        public TileState ShutStateOf(int leaf)
+        {
+            int h = _tiles[leaf].Health;
+            if (!_shutAs.TryGetValue(leaf, out TileState s)) return DoorRules.ShutState(Config, h);
+            if (s == TileState.Intact && h < Config.IntactHealth * Config.DamagedBelowFraction) return TileState.Damaged;
+            return s;
+        }
         private readonly Dictionary<int, int> _doorPartner = new Dictionary<int, int>();
 
         /// <summary>Every door leaf.</summary>
@@ -468,17 +479,34 @@ namespace Sculpt.Core
             t.Open = o;
             if (cause != TileCause.Built) t.Changed = true;
             _tiles[tile] = t;
+            if (state == TileState.DoorOpen && !Gone(from)) _shutAs[tile] = from; // what it is again when it shuts
+            else if (state != TileState.DoorOpen) _shutAs.Remove(tile);
             if (Gone(from) != Gone(state)) World.SetSolid(t.Brush, !Gone(state));
             if (state == TileState.Broken && cause == TileCause.Charge) _chargedAt[tile] = Tick;
             else _chargedAt.Remove(tile);
             Changes.Add(new TileChange { Tick = Tick, Tile = tile, From = from, To = state, Health = health, Cause = cause, By = by });
             Revision++;
             _beyond.Clear(); // what lies past a tile grid's edge may have changed (frame follows tiles)
-            if ((from == TileState.Broken) != (state == TileState.Broken))
+            if ((from == TileState.Broken) != (state == TileState.Broken)) Propagate(tile, cause, by);
+            if (Gone(from) != Gone(state))
             {
-                Propagate(tile, cause, by);
-                ShapeAround(tile); // a celled neighbour's corners can depend on this tile being there
+                ShapeAround(tile); // a celled neighbour's corners can depend on this tile being there (a door too)
+                // A plain tile came back (a door shut, a broken door or frame piece healed): a hole beside it that only
+                // counted as fair because it opened onto this gap is now an opening of its own, so it must be big
+                // enough or fill in, like any opening beside cells that come back.
+                if (!Gone(state) && !CopyOnly && !_filling) FillBeside(tile, cause, by);
             }
+        }
+
+        /// <summary>Runs the small-hole fill on the celled tiles touching a plain tile that just came back.</summary>
+        private void FillBeside(int tile, TileCause cause, int by)
+        {
+            var near = new List<int>();
+            Aabb b = BoundsOf(tile);
+            TilesNear(new Aabb(b.Min - new Vec3d(0.05, 0.05, 0.05), b.Max + new Vec3d(0.05, 0.05, 0.05)), near);
+            near.Sort();
+            foreach (int u in near)
+                if (u != tile && HasCells(u) && _tiles[u].State != TileState.Broken && _tiles[u].Open != 0) FillSmallHoles(u, cause, by);
         }
 
         /// <summary>Brings the followers of a tile in line with their links (Broken exactly when all links are Broken).</summary>
