@@ -457,6 +457,21 @@ namespace Sculpt.Core.Tests.Net
         }
 
         [Test]
+        public void TheLoadout_StartsWithThePumpInHand_EvenWhenTheLockerGunMovesItAside()
+        {
+            // Slot 1 is for the AR and nothing is for "anything": the pump is placed in slot 1 first, then the AR claims
+            // it and the pump moves on. The pump must still be the one in hand.
+            NetServer s = NewServer(Quick(BrMode.Solos), out _, out _);
+            ServerPlayer p = s.AddPlayer(1, 1, new Vec3d(150, 1, 150), 0);
+            s.SetSlotPrefs(p, new SlotPrefs { P0 = SlotPref.Ar, P1 = SlotPref.Heals, P2 = SlotPref.Heals, P3 = SlotPref.Heals, P4 = SlotPref.Heals });
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            HandState h = p.State.Hand;
+            Assert.That(h.Bag.S0, Is.EqualTo(Item.Ar), "the AR has its slot");
+            Assert.That(h.HeldItem, Is.EqualTo(Item.Pump), "the pump is out");
+            Assert.That(h.Bag[h.PrevSlot], Is.EqualTo(Item.Ar), "the previous slot is the locker gun");
+        }
+
+        [Test]
         public void LockerPicks_AreInTheReplay_SoTheReRunDealsTheSameLoadouts()
         {
             BrConfig cfg = Quick(BrMode.Duos);
