@@ -524,9 +524,38 @@ namespace Sculpt.Core.Net
         /// <summary>True when <paramref name="target"/> was in <paramref name="viewer"/>'s snapshot this tick (or interest management is off).</summary>
         public bool IsSentTo(int viewerId, int targetId)
         {
+            if (SentDirect(viewerId, targetId)) return true;
+            ServerPlayer v = Br != null ? FindById(viewerId) : null;
+            return v != null && WatchesTeammates(v, _watchMates) && SentToAny(_watchMates, targetId);
+        }
+
+        private bool SentDirect(int viewerId, int targetId)
+        {
             if (!AC.Interest.Enabled || viewerId == targetId) return true;
             if (!TryPair(viewerId, targetId, out InterestPair p)) return false;
             return (p.A == viewerId ? p.SentToA : p.SentToB) == Tick;
+        }
+
+        private readonly List<ServerPlayer> _watchMates = new List<ServerPlayer>(4);
+
+        /// <summary>
+        /// Battle royale: a player who is out watches their living teammates (BrDeathCamera), so they get what those
+        /// teammates get, not just what can be seen from where they went down. Fills <paramref name="mates"/>; false
+        /// when <paramref name="v"/> is alive, not in the match, or has nobody left to watch.
+        /// </summary>
+        private bool WatchesTeammates(ServerPlayer v, List<ServerPlayer> mates)
+        {
+            mates.Clear();
+            if (Br == null || !v.State.Dead || !_brIn.Contains(v.Id)) return false;
+            foreach (ServerPlayer o in _players)
+                if (o != v && o.Team == v.Team && !o.State.Dead && _brIn.Contains(o.Id)) mates.Add(o);
+            return mates.Count > 0;
+        }
+
+        private bool SentToAny(List<ServerPlayer> mates, int targetId)
+        {
+            foreach (ServerPlayer m in mates) if (m.Id == targetId || SentDirect(m.Id, targetId)) return true;
+            return false;
         }
 
         /// <summary>The snapshot mask for one receiver: by player id, who it gets this tick. Null = everyone.</summary>
@@ -537,10 +566,11 @@ namespace Sculpt.Core.Net
             foreach (ServerPlayer o in _players) if (o.Id > max) max = o.Id;
             if (_sendMask.Length <= max) _sendMask = new bool[Math.Max(max + 1, _sendMask.Length * 2)];
             Array.Clear(_sendMask, 0, _sendMask.Length);
+            bool watching = WatchesTeammates(to, _watchMates);
             foreach (ServerPlayer o in _players)
             {
                 if (o == to) continue;
-                _sendMask[o.Id] = IsSentTo(to.Id, o.Id);
+                _sendMask[o.Id] = SentDirect(to.Id, o.Id) || (watching && SentToAny(_watchMates, o.Id));
             }
             return _sendMask;
         }

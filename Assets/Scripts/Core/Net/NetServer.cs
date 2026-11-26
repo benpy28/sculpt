@@ -225,6 +225,7 @@ namespace Sculpt.Core.Net
             RemoveSpectator(connectionId);
             if (!_byConn.TryGetValue(connectionId, out var p)) return;
             Stream?.OnLeave(Tick, p.Id);
+            OnBrLeave(p);
             _byConn.Remove(connectionId);
             _players.Remove(p);
             _matchDirty = true;

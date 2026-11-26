@@ -161,8 +161,10 @@ namespace Sculpt.Game.UI
                 }
                 case MatchPhase.Ended:
                 {
-                    bool won = m.WinnerTeam != 0 && m.WinnerTeam == net.Team;
-                    string title = won ? "VICTORY" : m.WinnerTeam == 0 ? "NOBODY SURVIVED" : $"#{Mathf.Max(1, me.Place)}";
+                    // From your own place, not your team number: someone who sat the match out has no place (and
+                    // their team number may be a dealt team's), so they never see VICTORY or "#1".
+                    bool won = m.WinnerTeam != 0 && me.Place == 1;
+                    string title = won ? "VICTORY" : m.WinnerTeam == 0 ? "NOBODY SURVIVED" : me.Place > 0 ? $"#{me.Place}" : "MATCH OVER";
                     HudDraw.Label(new Rect(mid.x, mid.y + 10 * s, mid.width, 64 * s), title, Mathf.RoundToInt(54 * s), won ? HudDraw.Amber : HudDraw.Text, TextAnchor.MiddleCenter, true);
                     int key = 100000 + me.Kills * 100 + Secs(m.PhaseEndTick);
                     if (key != _placeKey) { _placeKey = key; _placeText = $"{me.Kills} kills   ·   next match in {Secs(m.PhaseEndTick)}"; }
