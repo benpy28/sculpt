@@ -496,12 +496,23 @@ namespace Sculpt.Game.UI
             return line;
         }
 
+        /// <summary>
+        /// Where the feed starts (GUI y from the top). In a battle royale the minimap fills the top right corner
+        /// (<see cref="BrHud.MinimapSize"/>), so the feed starts under it instead of on it.
+        /// </summary>
+        private static float FeedTop(NetClient net)
+        {
+            if (!net.Match.IsBr || net.IsSpectator) return 16f;
+            float s = Mathf.Max(0.75f, Screen.height / 1080f);
+            return (BrHud.MinimapMargin + BrHud.MinimapSize + 4f) * s + 12f;
+        }
+
         private float FeedWidth(string line) => 22f + line.Length * 7.4f;
 
         /// <summary>Kill feed (top right): one rounded chip per kill, yours outlined in amber. GL part.</summary>
         private void DrawFeedPanels(NetClient net, float w, float h)
         {
-            float y = 16;
+            float y = FeedTop(net);
             for (int i = _view.Feed.Count - 1; i >= 0; i--)
             {
                 var f = _view.Feed[i];
@@ -519,7 +530,7 @@ namespace Sculpt.Game.UI
 
         private void DrawFeed(NetClient net, float w)
         {
-            float y = 16;
+            float y = FeedTop(net);
             for (int i = _view.Feed.Count - 1; i >= 0; i--)
             {
                 var f = _view.Feed[i];

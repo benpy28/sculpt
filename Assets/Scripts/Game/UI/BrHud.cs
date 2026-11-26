@@ -40,6 +40,9 @@ namespace Sculpt.Game.UI
             if (_gl != null) Destroy(_gl);
         }
 
+        /// <summary>The minimap's size and its margin from the top right corner, at 1080p (the kill feed starts under it).</summary>
+        public const float MinimapSize = 230f, MinimapMargin = 24f;
+
         public static readonly Color Teammate = new Color(0.45f, 0.75f, 1f);
         private static readonly Color StormEdge = new Color(0.62f, 0.86f, 1f, 0.95f);
         private static readonly Color NextEdge = new Color(1f, 1f, 1f, 0.9f);
@@ -67,7 +70,7 @@ namespace Sculpt.Game.UI
 
             // ---- Shapes: the top panel, the minimap, the middle card.
             float pw = 420 * s, ph = 46 * s, px = w / 2 - pw / 2, py = h - 70 * s - ph;
-            float mm = 230 * s, mx = w - mm - 24 * s, my = h - mm - 24 * s;
+            float mm = MinimapSize * s, mx = w - mm - MinimapMargin * s, my = h - mm - MinimapMargin * s;
             Rect mid = new Rect(w / 2 - 330 * s, h * 0.38f - 70 * s, 660 * s, 140 * s);
             bool card = m.Phase != MatchPhase.Playing || dead;
             _gl.SetPass(0);
