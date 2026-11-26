@@ -330,7 +330,7 @@ namespace Sculpt.Core.Net
 
         private readonly Dictionary<long, InterestPair> _interest = new Dictionary<long, InterestPair>();
         private bool[] _sendMask = new bool[64];
-        private readonly Vec3d[] _ptsA = new Vec3d[6], _ptsB = new Vec3d[6];
+        private readonly Vec3d[] _ptsA = new Vec3d[7], _ptsB = new Vec3d[7];
 
         private bool TryPair(int a, int b, out InterestPair pair) => _interest.TryGetValue(PairKey(a, b), out pair);
 
@@ -450,7 +450,7 @@ namespace Sculpt.Core.Net
         }
 
         /// <summary>
-        /// Could these two see each other soon? Rays between a few points on each: eyes and body now, where each will be
+        /// Could these two see each other soon? Rays between a few points on each: eyes, body and knees now, where each will be
         /// after the look-ahead, a peek reach either side of that, and a jump above. Symmetric (a ray is a ray).
         /// </summary>
         private bool InSight(ServerPlayer a, ServerPlayer b)
@@ -488,6 +488,9 @@ namespace Sculpt.Core.Net
             into[n++] = eye + ahead + side;
             into[n++] = eye + ahead - side;
             into[n++] = eye + new Vec3d(0, ic.JumpReach, 0);
+            // Knees: legs seen (and shot) through a hole near the floor or under a beam must count, or the server would
+            // hide a player a bullet can still hit there.
+            into[n++] = feet + new Vec3d(0, Math.Min(ic.KneeHeight, h * 0.5), 0);
             return n;
         }
 
