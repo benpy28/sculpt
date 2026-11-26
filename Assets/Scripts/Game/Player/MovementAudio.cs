@@ -1,4 +1,5 @@
 using Sculpt.Core;
+using Sculpt.Core.Audio;
 using Sculpt.Game.Audio;
 using UnityEngine;
 
@@ -15,8 +16,11 @@ namespace Sculpt.Game.Player
         private LocalPlayer _player;
         private AudioSource _slide;
         private Vector3 _lastFeet;
-        private float _stride;
+        private readonly FootstepClock _clock = new FootstepClock();
         private int _stepIndex;
+
+        /// <summary>Step, jump, landing and slide loudness and range for everyone (you and the players you hear).</summary>
+        public static readonly MoveSoundConfig Sounds = new MoveSoundConfig();
         private static AudioClip[] _steps;
         private static AudioClip _jump, _land, _slideLoop, _slideLand, _grab, _crash;
 
@@ -70,7 +74,7 @@ namespace Sculpt.Game.Player
                         float levels = (float)e.Amount;
                         float vol = Mathf.Clamp(0.3f + 0.22f * levels, 0.3f, 1f);
                         Synth.Play(Land, feet, vol, Mathf.Clamp(1.1f - 0.05f * levels, 0.8f, 1.1f), false);
-                        _stride = 0;
+                        _clock.Landed();
                         break;
                     }
                     case MoveEventType.SlideLandSuccess:
@@ -86,22 +90,15 @@ namespace Sculpt.Game.Player
                 }
             }
 
-            // Footsteps: one per stride on the ground. Crouch-walking is quiet but not silent.
+            // Footsteps: one per stride on the ground. Crouch-walking is quiet but not silent. The same clock and numbers
+            // as everyone else's steps (RemoteMovementAudio), so what you hear of yourself is what others hear of you.
             bool walking = s.Mode == MoveMode.Ground && s.Grounded;
             float speed = _player.RenderSpeed;
-            if (walking && speed > 0.8f)
+            if (_clock.Advance(Sounds, walking, s.Crouched, moved, speed, out double stepVol, out _))
             {
-                _stride += moved;
-                float strideLen = s.Crouched ? 0.9f : Mathf.Lerp(1.5f, 2.3f, Mathf.InverseLerp(3f, 10f, speed));
-                if (_stride >= strideLen)
-                {
-                    _stride -= strideLen;
-                    float vol = s.Crouched ? 0.18f : Mathf.Lerp(0.35f, 0.6f, Mathf.InverseLerp(3f, 10f, speed));
-                    _stepIndex = (_stepIndex + 1 + Random.Range(0, 3)) % Steps.Length;
-                    Synth.Play(Steps[_stepIndex], feet, vol, Random.Range(0.93f, 1.07f), false);
-                }
+                _stepIndex = (_stepIndex + 1 + Random.Range(0, 3)) % Steps.Length;
+                Synth.Play(Steps[_stepIndex], feet, (float)stepVol, Random.Range(0.93f, 1.07f), false);
             }
-            else if (!walking) _stride = 0.6f; // first step comes soon after landing
 
             // Slide scrape.
             bool sliding = s.Mode == MoveMode.Slide;
@@ -115,7 +112,7 @@ namespace Sculpt.Game.Player
 
         // ---------------------------------------------------------------- Clips
 
-        private static AudioClip[] Steps
+        internal static AudioClip[] Steps
         {
             get
             {
@@ -138,7 +135,7 @@ namespace Sculpt.Game.Player
             }
         }
 
-        private static AudioClip Jump => _jump ? _jump : _jump = MakeJump();
+        internal static AudioClip Jump => _jump ? _jump : _jump = MakeJump();
 
         private static AudioClip MakeJump()
         {
@@ -147,7 +144,7 @@ namespace Sculpt.Game.Player
                 0.45f * grit.Step(Synth.Noise(i, 0x777u)) * Mathf.Exp(-t * 35f) + 0.3f * Mathf.Sin(2 * Mathf.PI * 110 * t) * Mathf.Exp(-t * 40f));
         }
 
-        private static AudioClip Land => _land ? _land : _land = MakeLand();
+        internal static AudioClip Land => _land ? _land : _land = MakeLand();
 
         private static AudioClip MakeLand()
         {
@@ -163,7 +160,7 @@ namespace Sculpt.Game.Player
             });
         }
 
-        private static AudioClip SlideLoop => _slideLoop ? _slideLoop : _slideLoop = MakeSlideLoop();
+        internal static AudioClip SlideLoop => _slideLoop ? _slideLoop : _slideLoop = MakeSlideLoop();
 
         private static AudioClip MakeSlideLoop()
         {
@@ -194,7 +191,7 @@ namespace Sculpt.Game.Player
         }
 
         /// <summary>Hands on stone: a slap and a short scrape (vault and mantle).</summary>
-        private static AudioClip Grab => _grab ? _grab : _grab = MakeGrab();
+        internal static AudioClip Grab => _grab ? _grab : _grab = MakeGrab();
 
         private static AudioClip MakeGrab()
         {

@@ -32,7 +32,7 @@ namespace Sculpt.Game.World
         private Material _lineMat, _ghostMat;
         private LineBatch _lines;
         private MaterialPropertyBlock _mpb;
-        private readonly Dictionary<int, AudioSource> _hums = new Dictionary<int, AudioSource>();
+        private readonly Dictionary<int, RoutedLoop> _hums = new Dictionary<int, RoutedLoop>();
         private readonly HashSet<int> _alive = new HashSet<int>();
         private readonly List<int> _dead = new List<int>();
         private NetClient _bound;
@@ -143,15 +143,16 @@ namespace Sculpt.Game.World
 
         private void Hum(int player, Vector3 at, float progress, float volume, bool reinforce)
         {
-            if (!_hums.TryGetValue(player, out AudioSource s) || s == null)
+            if (!_hums.TryGetValue(player, out RoutedLoop s) || s == null)
             {
-                s = Synth.Loop("Heal Hum", transform, SculptAudio.HumRaise, 3f, 40f);
-                s.time = Random.Range(0f, s.clip.length * 0.9f);
+                s = RoutedLoop.Create("Heal Hum", transform, SculptAudio.HumRaise, 3f, 40f);
+                s.Source.time = Random.Range(0f, s.Source.clip.length * 0.9f);
                 _hums[player] = s;
             }
-            s.transform.position = at;
-            s.volume = volume * (0.45f + 0.55f * progress);
-            s.pitch = (reinforce ? 0.8f : 1f) * (0.9f + 0.25f * progress);
+            // Routed: heard through the doorway or hole it comes from, or muffled through the wall.
+            s.At = at;
+            s.Volume = volume * (0.45f + 0.55f * progress);
+            s.Pitch = (reinforce ? 0.8f : 1f) * (0.9f + 0.25f * progress);
         }
 
         private void ReapHums()

@@ -138,7 +138,14 @@ namespace Sculpt.Game.World
                     _marks?.ClearTile(c.Tile);
                 // Cells drawn round this tile changed (cracks spread by area, so its neighbours redraw too).
                 if (_tiles.HasCells(c.Tile)) { _dirty.Add(BlockOf(_tiles.World[_tiles[c.Tile].Brush])); DirtyNeighbours(c.Tile); }
+                // Sound finds its way through what is open now (a new hole, a healed wall, a door).
+                Audio.SoundRouter.Invalidate(_tiles.BoundsOf(c.Tile));
                 if (c.Cause == TileCause.Server || c.Cause == TileCause.Built) continue;
+                // A wall giving way is heard (where, by the way it reaches you): whole tiles, or cells blown out.
+                {
+                    int lost = c.To == TileState.Broken && c.From != TileState.Broken ? Brush.CellCount : PopCount(after & ~before);
+                    if (lost > 0 && c.Cause != TileCause.Door) PlayBreak(_tiles.BoundsOf(c.Tile), lost, _tiles[c.Tile].Kind == TileKind.Door);
+                }
                 WallTile ct = _tiles[c.Tile];
                 if (c.Cause == TileCause.Door)
                 {
@@ -230,6 +237,52 @@ namespace Sculpt.Game.World
             AddBox(m, lo.ToUnity(), hi.ToUnity(), Wood);
         }
 
+        private static AudioClip _break;
+        private static readonly List<Vector4> _recentBreaks = new List<Vector4>();
+
+        private static int PopCount(ulong v)
+        {
+            int n = 0;
+            while (v != 0) { v &= v - 1; n++; }
+            return n;
+        }
+
+        /// <summary>
+        /// A wall giving way: a hard crack, then brick breaking up and rubble spilling (doors: higher, a splintering
+        /// crack). Generated, nothing licensed. A blast that breaks a dozen tiles plays one or two, not a dozen: breaks
+        /// within 2.5 m and 0.1 s of one already playing are folded into it. Heard up to 60 m, routed like every sound.
+        /// </summary>
+        private static void PlayBreak(Aabb b, int cellsLost, bool door)
+        {
+            if (_break == null)
+            {
+                float phase = 0, lp = 0;
+                _break = Audio.Synth.Make("Wall Break", 0.8f, false, (t, n) =>
+                {
+                    float f = 70f + 90f * Mathf.Exp(-t * 20f);
+                    phase += 2 * Mathf.PI * f / Audio.Synth.Rate;
+                    float body = Mathf.Sin(phase) * Mathf.Exp(-t * 14f) * 0.6f;
+                    float crack = Audio.Synth.Noise(n, 0x6b1u) * Mathf.Exp(-t * 45f) * 0.8f;
+                    lp += (Audio.Synth.Noise(n, 0x6b3u) - lp) * 0.14f;
+                    float gate = Audio.Synth.Noise(n / 700, 0x6b5u) > 0.15f ? 1f : 0.2f;
+                    float rubble = lp * 2.4f * gate * Mathf.Exp(-t * 4.5f) * Mathf.Min(1f, t * 30f);
+                    return Audio.Synth.Soft(body + crack + rubble);
+                });
+            }
+            Vector3 at = ((b.Min + b.Max) * 0.5).ToUnity();
+            float now = Time.unscaledTime;
+            for (int i = _recentBreaks.Count - 1; i >= 0; i--)
+            {
+                Vector4 r = _recentBreaks[i];
+                if (now - r.w > 0.1f) { _recentBreaks.RemoveAt(i); continue; }
+                if ((new Vector3(r.x, r.y, r.z) - at).sqrMagnitude < 2.5f * 2.5f) return;
+            }
+            _recentBreaks.Add(new Vector4(at.x, at.y, at.z, now));
+            float vol = 0.45f + 0.5f * Mathf.Clamp01(cellsLost / 24f);
+            float pitch = (door ? 1.35f : 1f) * Random.Range(0.92f, 1.06f);
+            Audio.Synth.Play(_break, at, vol, pitch, true, 3f, 60f, sourceRadius: 0.8f);
+        }
+
         private static AudioClip _doorOpen, _doorShut;
 
         /// <summary>A wooden slide and a clack (open), or a slide and a heavier knock (shut). Generated, nothing licensed.</summary>
@@ -248,7 +301,8 @@ namespace Sculpt.Game.World
                 _doorShut = Make("Door Shut", 0.13f, 0.9f, 0.9f);
             }
             Vec3d c = (b.Min + b.Max) * 0.5;
-            Audio.Synth.Play(open ? _doorOpen : _doorShut, c.ToUnity(), 0.8f, 1f, true, 2f, 35f);
+            // The door's middle is inside the door: heard straight from both sides (routed, like every sound).
+            Audio.Synth.Play(open ? _doorOpen : _doorShut, c.ToUnity(), 0.8f, 1f, true, 2f, 35f, sourceRadius: 0.4f);
         }
 
         private void AddTile(MeshBits m, int id, in WallTile t)

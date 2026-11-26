@@ -143,6 +143,7 @@ namespace Sculpt.Game.UI
                 $"Height {s.Position.Y / SubGrid.TileSize:0.00} levels   FPS {_fps:0}\n" +
                 (Time.time - _lastEventTime < 1.5f ? $">> {_lastEvent}\n" : "\n") +
                 (_lastDamage > 0 ? $"Last fall damage {_lastDamage}\n" : "") +
+                SoundText() +
                 ShowcaseText() +
                 "\nF1 respawn   F2 hide this   F6 race the TAS   F7 watch the TAS   Esc settings (FOV, sensitivity, binds, volume)\n\n" + NetText();
             var r = new Rect(12, 10, 640, 480);
@@ -154,6 +155,16 @@ namespace Sculpt.Game.UI
             if (!_player.CursorLocked && !_player.InputBlocked)
                 GUI.Label(new Rect(Screen.width / 2f - 120, Screen.height / 2f + 30, 300, 30), "Click to capture the mouse", _style);
             if (_joinBox) DrawJoinBox();
+        }
+
+        /// <summary>The last routed sound: which way it reached you, how far, how much quieter and duller (dev only).</summary>
+        private static string SoundText()
+        {
+            if (!Audio.SoundRouter.Active) return "";
+            Core.Audio.SoundRoute r = Audio.SoundRouter.LastRoute;
+            string how = r.Way == Core.Audio.SoundWay.Around ? $"round {r.Bends} corner{(r.Bends == 1 ? "" : "s")}"
+                : r.Way == Core.Audio.SoundWay.Through ? (r.Obstructed ? "obstructed" : $"through {r.Walls} wall{(r.Walls == 1 ? "" : "s")}") : r.Way.ToString().ToLowerInvariant();
+            return $"Last sound: {how}, {r.Distance:0.0} m (straight {r.DirectDistance:0.0}), {r.GainDb:0.0} dB, {r.CutoffHz:0} Hz   air grid {Audio.SoundRouter.LastBuildMs:0} ms\n";
         }
 
         private string ShowcaseText()

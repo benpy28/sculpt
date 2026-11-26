@@ -78,18 +78,31 @@ namespace Sculpt.Game.Audio
         // ---------------------------------------------------------------- Pooled one-shots
 
         private static AudioSource[] _pool;
-        private static int _next;
+        private static AudioLowPassFilter[] _filters;
+        private static int _next, _voice;
         private static Transform _root;
 
         /// <summary>
         /// Plays a one-shot at a point (3D) or on the listener (2D). Linear rolloff by default (sculpt and movement sounds
         /// are local information: they fade out by maxDistance). Steals the oldest voice when the pool is full.
+        /// A positional sound is routed (<see cref="SoundRouter"/>): played from the way it really reaches you (a doorway,
+        /// a hole, through a wall) with maxDistance as how far it carries, and not at all if it can't be heard.
         /// </summary>
+        /// <param name="route">False for sounds that don't carry information (ambience) or are already placed.</param>
+        /// <param name="sourceRadius">How deep in a solid the sound sits (doors and wall tiles sound from their middle).</param>
         public static void Play(AudioClip clip, Vector3 at, float volume = 1f, float pitch = 1f, bool spatial = true,
-                                float minDistance = 2f, float maxDistance = 45f, bool logarithmic = false, int priority = 128, float delay = 0f)
+                                float minDistance = 2f, float maxDistance = 45f, bool logarithmic = false, int priority = 128, float delay = 0f,
+                                bool route = true, float sourceRadius = 0.05f)
         {
             if (clip == null) return;
+            float cutoff = 22000f;
+            if (spatial && route)
+            {
+                if (!SoundRouter.Place(ref at, maxDistance, sourceRadius, out float gain, out cutoff)) return;
+                volume *= gain;
+            }
             AudioSource s = Voice();
+            SoundRouter.ApplyCutoff(_filters[_voice], spatial ? cutoff : 22000f);
             s.transform.position = at;
             s.clip = clip;
             s.volume = volume;
@@ -109,6 +122,7 @@ namespace Sculpt.Game.Audio
                 _root = new GameObject("Sfx Pool").transform;
                 UnityEngine.Object.DontDestroyOnLoad(_root.gameObject);
                 _pool = new AudioSource[64]; // guns play a dry layer plus one or two reflection layers per shot
+                _filters = new AudioLowPassFilter[_pool.Length];
                 for (int i = 0; i < _pool.Length; i++)
                 {
                     var go = new GameObject("Sfx " + i);
@@ -117,14 +131,20 @@ namespace Sculpt.Game.Audio
                     a.playOnAwake = false;
                     a.dopplerLevel = 0f;
                     _pool[i] = a;
+                    // Muffling for sounds that come through walls or round corners (off unless a route asks for it).
+                    var f = go.AddComponent<AudioLowPassFilter>();
+                    f.lowpassResonanceQ = 1f;
+                    f.enabled = false;
+                    _filters[i] = f;
                 }
             }
             // Prefer a free voice; otherwise steal round-robin.
             for (int k = 0; k < _pool.Length; k++)
             {
                 int i = (_next + k) % _pool.Length;
-                if (!_pool[i].isPlaying) { _next = (i + 1) % _pool.Length; return _pool[i]; }
+                if (!_pool[i].isPlaying) { _next = (i + 1) % _pool.Length; _voice = i; return _pool[i]; }
             }
+            _voice = _next;
             AudioSource v = _pool[_next];
             _next = (_next + 1) % _pool.Length;
             v.Stop();

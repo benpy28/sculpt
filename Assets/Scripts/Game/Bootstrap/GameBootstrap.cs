@@ -261,6 +261,12 @@ namespace Sculpt.Game.Bootstrap
             gameObject.AddComponent<DevHud>().Init(_player, client, _session);
             _player.gameObject.AddComponent<MovementAudio>().Init(_player);
             gameObject.AddComponent<AmbientAudio>().Init(client, Perches(mapInfo));
+            // Directional sound: every positional sound is heard the way it really reaches the camera's ears (round
+            // through doorways and holes, or muffled through walls). One air grid per client world.
+            SoundRouter.Bind(_session.Client.Grid, _rig.Camera.transform);
+            _session.ClientChanged += () => SoundRouter.Bind(_session.Client.Grid, _rig.Camera.transform);
+            Mark("sound routes");
+            new GameObject("Remote Movement Audio").AddComponent<RemoteMovementAudio>().Init(_session);
 
             Mark("audio");
             var sculptView = new GameObject("Sculpt View").AddComponent<SculptView>();
