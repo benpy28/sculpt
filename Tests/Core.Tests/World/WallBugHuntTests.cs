@@ -133,6 +133,18 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
+        public void HealAim_LooksThroughAnOpenDoor_AtTheBrokenWallBehindIt()
+        {
+            CompositeTerrain t = DoorArena(out TileWalls w, out int left, out _);
+            int behind = w.AddWall(new Vec3d(7.5, 0, 14), Dir.East, 2, 2)[2]; // x 7.5..9, y 1.5..3, z 14
+            w.Set(behind, TileState.Broken, 0, TileCause.Grenade);
+            DoorRules.Set(w, left, true, TileCause.Door, 1, new List<int>());
+            var eye = new Vec3d(8.25, 2.25, 11);
+            TileTarget aim = TileAim.Find(t, w, eye, new Vec3d(0, 0, 1), w.Config.HealRange, HealKind.Heal);
+            Assert.That(aim.Tile, Is.EqualTo(behind), "the open door is not in the way");
+        }
+
+        [Test]
         public void APatchedOrReinforcedDoor_StaysPatchedOrReinforced_AfterOpeningAndShutting()
         {
             DoorArena(out TileWalls w, out int left, out int right);
