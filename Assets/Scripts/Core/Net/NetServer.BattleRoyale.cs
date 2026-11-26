@@ -363,7 +363,16 @@ namespace Sculpt.Core.Net
         /// <summary>A death in a running battle royale: out for the match, and everything you carried falls where you died.</summary>
         private void OnBrDeath(ServerPlayer victim)
         {
-            if (Br == null || Match.Phase != MatchPhase.Playing || !_brIn.Contains(victim.Id)) return;
+            if (Br == null || !_brIn.Contains(victim.Id)) return;
+            if (Match.Phase == MatchPhase.Countdown)
+            {
+                // Nobody can be hurt in the countdown, but a fall is movement: put them straight back on their pad with
+                // the match loadout (the normal respawn would bring them back mid-match with the 1v1 loadout).
+                victim.ForceRespawn = true;
+                victim.BrLoadout = true;
+                return;
+            }
+            if (Match.Phase != MatchPhase.Playing) return;
             victim.State.RespawnTick = int.MaxValue;
             DropBag(victim);
         }

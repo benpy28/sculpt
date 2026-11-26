@@ -148,6 +148,36 @@ namespace Sculpt.Core.Tests.Net
                 if (p != late && s.InBrMatch(p.Id)) Assert.That(p.Team, Is.Not.EqualTo(late.Team), "on no team in the match");
         }
 
+        /// <summary>
+        /// "Nobody can be hurt" in the countdown, but fall damage is part of movement, so a long drop during the
+        /// countdown still killed you. That death was not a battle royale death (the match wasn't playing yet), so the
+        /// normal 3 s respawn brought you back mid-match with the 1v1 loadout: pump, SMG, AR, pistol and grenades.
+        /// </summary>
+        [Test]
+        public void DyingInTheCountdown_PutsYouBackOnYourPadWithTheBrLoadout()
+        {
+            var brains = new List<Scripted>();
+            BrConfig cfg = Quick(BrMode.Solos, brains);
+            cfg.CountdownTicks = 5 * SimTime.TicksPerSecond;
+            NetServer s = NewServer(cfg, out _);
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Countdown, 20 * SimTime.TicksPerSecond);
+            for (int i = 0; i < 10; i++) s.Step();
+            ServerPlayer p = s.Players[5];
+            Place(p, p.Spawn + new Vec3d(0, 40, 0));
+            StepUntil(s, () => p.State.Dead || s.Match.Phase != MatchPhase.Countdown, 5 * SimTime.TicksPerSecond);
+            Assert.That(p.State.Dead, Is.True, "the drop kills (fall damage is movement, not Hurt)");
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 10 * SimTime.TicksPerSecond);
+            for (int i = 0; i < 5 * SimTime.TicksPerSecond; i++) s.Step();
+            Assert.That(p.State.Dead, Is.False, "the countdown can't knock you out of the match");
+            Bag b = p.State.Hand.Bag;
+            Assert.That(b.S0, Is.EqualTo(Item.Pump));
+            Assert.That(b.S1, Is.EqualTo(Item.Ar));
+            Assert.That(b.S2, Is.EqualTo(Item.None), "the battle royale loadout, not the 1v1 one");
+            Assert.That(b.S3, Is.EqualTo(Item.None));
+            Assert.That(b.S4, Is.EqualTo(Item.None));
+            Assert.That(s.Match.AliveTeams, Is.EqualTo(32));
+        }
+
         private static Scripted BrainOf(List<Scripted> brains, NetServer s, ServerPlayer p)
         {
             Assert.That(s.Bots.TryGetValue(p.Id, out IBotBrain brain));
