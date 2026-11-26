@@ -377,6 +377,13 @@ namespace Sculpt.Core.Net
             DropBag(victim);
         }
 
+        /// <summary>Leaving a running battle royale is going out of it: whatever you carried stays in the match.</summary>
+        private void OnBrLeave(ServerPlayer p)
+        {
+            if (Br == null || Match.Phase != MatchPhase.Playing || !_brIn.Contains(p.Id) || p.State.Dead) return;
+            DropBag(p);
+        }
+
         private void DropBag(ServerPlayer p)
         {
             Bag b = p.State.Hand.Bag;

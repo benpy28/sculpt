@@ -178,6 +178,28 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(s.Match.AliveTeams, Is.EqualTo(32));
         }
 
+        /// <summary>Leaving mid-match is going out of it: what you carried falls where you stood, like a death.</summary>
+        [Test]
+        public void LeavingMidMatch_DropsYourBag()
+        {
+            var brains = new List<Scripted>();
+            NetServer s = NewServer(Quick(BrMode.Duos, brains), out _);
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            ServerPlayer p = s.Players[7];
+            Vec3d at = p.State.Position;
+            int Guns()
+            {
+                int n = 0;
+                for (int i = 0; i < s.Items.Count; i++)
+                    if (Items.IsGun(s.Items[i].Kind) && (s.Items[i].Position - at).HorizontalLength < 2) n++;
+                return n;
+            }
+            Assert.That(Guns(), Is.Zero);
+            s.RemovePlayer(p.ConnectionId);
+            s.Step();
+            Assert.That(Guns(), Is.EqualTo(2), "the pump and the locker gun stay in the match for the others");
+        }
+
         private static Scripted BrainOf(List<Scripted> brains, NetServer s, ServerPlayer p)
         {
             Assert.That(s.Bots.TryGetValue(p.Id, out IBotBrain brain));
