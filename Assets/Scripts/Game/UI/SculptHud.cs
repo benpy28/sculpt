@@ -68,8 +68,8 @@ namespace Sculpt.Game.UI
             bool red = false;
             bool refusedRecently = Time.time - _view.RejectTime < 0.9f;
             if (hand.Mode == HandMode.Disarmed) { label = "DISARMED"; red = true; }
-            else if (refusedRecently) { label = Reason(_view.LastReject).ToUpperInvariant(); red = true; }
-            else if (_player.Heals && Time.time - _player.HealRejectTime < 0.9f) { label = HealReason(_player.LastHealReject).ToUpperInvariant(); red = true; }
+            else if (refusedRecently) { label = Upper(Reason(_view.LastReject)); red = true; }
+            else if (_player.Heals && Time.time - _player.HealRejectTime < 0.9f) { label = Upper(HealReason(_player.LastHealReject)); red = true; }
             else if (_player.Heals && (hand.InSculptMode || _player.QuickHeal)) HealChip(net, hand, out label, out cost, out col);
             else if (hand.Mode == HandMode.SculptEnter) label = "SCULPT";
             else if (hand.Mode == HandMode.Sculpt)
@@ -78,17 +78,17 @@ namespace Sculpt.Game.UI
                 else if (_player.HasHover)
                 {
                     SculptCheck c = _player.HoverCheck;
-                    string what = "PUSH " + DirName(_player.HoverAction.Direction).ToUpperInvariant() + (_player.ReinforceHeld ? "  +  REINFORCE" : "");
-                    if (c.IsValid) { label = what; cost = Mathf.RoundToInt(c.Cost * 100f / SculptConfig.BarMax) + "%"; }
+                    string what = Join("PUSH ", Upper(DirName(_player.HoverAction.Direction)), _player.ReinforceHeld ? "  +  REINFORCE" : "");
+                    if (c.IsValid) { label = what; cost = Pct(Mathf.RoundToInt(c.Cost * 100f / SculptConfig.BarMax)); }
                     // Only hovering: say why, quietly. Red is for a click that was actually refused.
                     else if (c.Result == SculptResult.DestinationBlocked) { label = "CAN'T PUSH HERE  ·  WHEEL TO RAISE OR SINK"; col = HudDraw.Dim; }
-                    else { label = what + "  ·  " + Reason(c.Result).ToUpperInvariant(); col = HudDraw.Dim; }
+                    else { label = Join(what, "  ·  ", Upper(Reason(c.Result))); col = HudDraw.Dim; }
                 }
             }
-            else if (hand.Mode == HandMode.SculptExit || hand.Mode == HandMode.Drawing) { label = hand.HeldItem == Item.None ? null : Items.Name(hand.HeldItem).ToUpperInvariant(); col = HudDraw.Dim; }
-            if (hand.InSculptMode && hand.SculptLockUntil > net.Tick) label = (label ?? "SCULPT") + "  ·  GUN LOCKED";
+            else if (hand.Mode == HandMode.SculptExit || hand.Mode == HandMode.Drawing) { label = hand.HeldItem == Item.None ? null : Upper(Items.Name(hand.HeldItem)); col = HudDraw.Dim; }
+            if (hand.InSculptMode && hand.SculptLockUntil > net.Tick) label = Join(label ?? "SCULPT", "  ·  GUN LOCKED", "");
             if (red) col = HudDraw.Red;
-            string chip = label == null ? null : cost != null ? label + "     " + cost : label;
+            string chip = label == null ? null : cost != null ? Join(label, "     ", cost) : label;
             float chipW = chip == null ? 0 : 28f + chip.Length * 7.6f;
             string[] caps = hand.InSculptMode ? Caps() : null;
 
@@ -129,10 +129,10 @@ namespace Sculpt.Game.UI
             {
                 // Bar percentage beside the arc.
                 int pct = Mathf.RoundToInt(net.DisplayBar * 100f / SculptConfig.BarMax);
-                HudDraw.Label(new Rect(cx + 34, cy + 14, 60, 18), pct + "%", 11, HudDraw.Dim, TextAnchor.MiddleLeft, true);
+                HudDraw.Label(new Rect(cx + 34, cy + 14, 60, 18), Pct(pct), 11, HudDraw.Dim, TextAnchor.MiddleLeft, true);
             }
             if (Time.time - _view.HurtTime < 0.6f)
-                HudDraw.Label(new Rect(cx - 60, cy + 70, 120, 20), $"-{_view.LastHurt}", 14, HudDraw.Red, TextAnchor.MiddleCenter, true);
+                HudDraw.Label(new Rect(cx - 60, cy + 70, 120, 20), Join("-", HudDraw.Num(_view.LastHurt), ""), 14, HudDraw.Red, TextAnchor.MiddleCenter, true);
         }
 
         // ---------------------------------------------------------------- Key caps
@@ -156,6 +156,40 @@ namespace Sculpt.Game.UI
             };
             return _caps;
         }
+
+        // Text that would otherwise be built every frame (the heal chip runs on every frame of normal play), cached by
+        // what it is made of. Bind names are re-read at most twice a second (reading one builds strings; a rebind
+        // shows within 0.5 s). HUD rule: no string per frame.
+        private readonly System.Collections.Generic.Dictionary<string, string> _upper = new System.Collections.Generic.Dictionary<string, string>();
+        private readonly System.Collections.Generic.Dictionary<(string, string, string), string> _joined = new System.Collections.Generic.Dictionary<(string, string, string), string>();
+        private readonly System.Collections.Generic.Dictionary<InputAction, string> _keyNames = new System.Collections.Generic.Dictionary<InputAction, string>();
+        private float _keyNamesAt = -1f;
+        private static readonly string[] PctCache = new string[1001];
+
+        private string Upper(string text)
+        {
+            if (text == null) return null;
+            if (_upper.TryGetValue(text, out string u)) return u;
+            if (_upper.Count > 256) _upper.Clear();
+            return _upper[text] = text.ToUpperInvariant();
+        }
+
+        private string Join(string a, string b, string c)
+        {
+            var k = (a ?? "", b ?? "", c ?? "");
+            if (_joined.TryGetValue(k, out string j)) return j;
+            if (_joined.Count > 512) _joined.Clear();
+            return _joined[k] = k.Item1 + k.Item2 + k.Item3;
+        }
+
+        private string KeyName(InputAction a)
+        {
+            if (Time.unscaledTime - _keyNamesAt >= 0.5f || _keyNamesAt < 0) { _keyNames.Clear(); _keyNamesAt = Time.unscaledTime; }
+            if (_keyNames.TryGetValue(a, out string n)) return n;
+            return _keyNames[a] = Key(a);
+        }
+
+        private static string Pct(int p) => p < 0 || p >= PctCache.Length ? p + "%" : PctCache[p] ??= p + "%";
 
         public static string Key(UnityEngine.InputSystem.InputAction a)
         {
@@ -298,7 +332,7 @@ namespace Sculpt.Game.UI
             col = HudDraw.Text;
             bool reinforce = _player.HealKindNow == HealKind.Reinforce;
             string what = reinforce ? "REINFORCE" : "HEAL";
-            if (_player.QuickHeal) what = Key(_player.Input.SculptToggle) + "  " + what;
+            if (_player.QuickHeal) what = Join(KeyName(_player.Input.SculptToggle), "  ", what);
             if (net.TryGetOwnHeal(out HealJob mine, out _) && (!_player.HealTarget.Valid || _player.HealTarget.Tile == mine.Tile))
             {
                 label = mine.Kind == HealKind.Reinforce ? "REINFORCING" : "HEALING";
@@ -312,15 +346,15 @@ namespace Sculpt.Game.UI
                 HealResult q = _player.HealCheck;
                 if (q == HealResult.NothingToHeal || q == HealResult.AlreadyReinforced || q == HealResult.NoTile || q == HealResult.OutOfRange) return;
             }
-            if (!_player.HealTarget.Valid) { label = "AIM AT A CRACKED OR BROKEN WALL WITHIN " + Mathf.RoundToInt((float)net.Walls.Config.HealRange) + " M"; col = HudDraw.Dim; return; }
+            if (!_player.HealTarget.Valid) { label = Join("AIM AT A CRACKED OR BROKEN WALL WITHIN ", HudDraw.Num(Mathf.RoundToInt((float)net.Walls.Config.HealRange)), " M"); col = HudDraw.Dim; return; }
             HealResult r = _player.HealCheck;
             if (r == HealResult.Ok)
             {
                 label = what;
-                cost = Mathf.RoundToInt(TileHealing.CostOf(_player.HealKindNow, net.Heals.Config) * 100f / SculptConfig.BarMax) + "%";
+                cost = Pct(Mathf.RoundToInt(TileHealing.CostOf(_player.HealKindNow, net.Heals.Config) * 100f / SculptConfig.BarMax));
                 return;
             }
-            label = (r == HealResult.NothingToHeal ? "NOTHING TO HEAL  ·  HOLD " + Key(_player.Input.SculptReinforce) + " TO REINFORCE" : what + "  ·  " + HealReason(r).ToUpperInvariant());
+            label = r == HealResult.NothingToHeal ? Join("NOTHING TO HEAL  ·  HOLD ", KeyName(_player.Input.SculptReinforce), " TO REINFORCE") : Join(what, "  ·  ", Upper(HealReason(r)));
             col = HudDraw.Dim;
         }
 
