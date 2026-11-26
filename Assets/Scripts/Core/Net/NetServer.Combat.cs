@@ -53,7 +53,7 @@ namespace Sculpt.Core.Net
                     {
                         ServerPlayer victim = FindById(v.Id);
                         if (victim == null || victim.State.Dead) continue;
-                        int dmg = v.Damage;
+                        int dmg = Weapons.ScaleDamage(v.Damage, p.State.Hand.Bag.RarityOfGun(shot.Weapon)); // battle royale rarity (None: unchanged)
                         if (dmg <= 0) continue;
                         NoteHit(p, victim, shot, v.HeadPellets > 0, firstVictim, lastShotBefore);
                         firstVictim = false;
@@ -227,11 +227,12 @@ namespace Sculpt.Core.Net
                 killer = victim.LastHurtBy;
             // In a 1v1 match every death is the other player's kill, however it happened and however long ago they last
             // hurt you (Ben 2026-11-25: "its a 1v1 so credit the other player"). Other modes keep the 8 s rule above.
-            if ((killer == 0 || killer == victim.Id) && Match.CountsKills) killer = TheOpponent(victim);
+            if ((killer == 0 || killer == victim.Id) && Match.CountsKills && !Match.IsBr) killer = TheOpponent(victim);
             victim.LastHurtBy = 0;
             ServerPlayer k = killer != 0 && killer != victim.Id ? FindById(killer) : null;
             if (k != null) k.Kills++;
             OnMatchKill(victim, k);
+            OnBrDeath(victim);
             victim.Body.Position = ParkedBody;
             victim.Body.Kick = Vec3d.Zero;
             _combat.Add(new CombatEvent { Type = CombatEventType.Kill, Attacker = killer, Victim = victim.Id, Source = source, HeadPellets = (byte)(headshot ? 1 : 0) });

@@ -43,7 +43,9 @@ namespace Sculpt.Game.UI
 
         // ---------------------------------------------------------------- Menu state
 
-        private enum Mode { Duel, Bot, Practice, Replays }
+        private enum Mode { Duel, Bot, Practice, Replays, Br }
+        private enum BrNet { Offline, Host, Join }
+        private BrNet _brNet = BrNet.Offline;
         private enum WatchPick { Saved, Live }
         private WatchPick _watch = WatchPick.Saved;
         private List<ReplayLibrary.Entry> _replays;
@@ -70,7 +72,7 @@ namespace Sculpt.Game.UI
             _session = session;
             _settings = GetComponent<SettingsMenu>();
             _address = PlayerPrefs.GetString(JoinKey, "");
-            _mode = (Mode)Mathf.Clamp(PlayerPrefs.GetInt(ModeKey, 0), 0, 3);
+            _mode = (Mode)Mathf.Clamp(PlayerPrefs.GetInt(ModeKey, 0), 0, 4);
             if (GameBootstrap.ReplayError.Length > 0) { _mode = Mode.Replays; _error = GameBootstrap.ReplayError; }
             _gl = new Material(Shader.Find("Hidden/Internal-Colored")) { hideFlags = HideFlags.HideAndDontSave };
             _gl.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
@@ -190,6 +192,16 @@ namespace Sculpt.Game.UI
                     break;
                 case Mode.Bot:
                     Launch(GameBootstrap.Launch.VsBot, GameBootstrap.MapChoice.Duel);
+                    break;
+                case Mode.Br when _brNet == BrNet.Join:
+                {
+                    string ba = _address.Trim();
+                    if (ba.Length == 0) { _error = "Type the host's address in 1v1 Duel > Join by IP first."; return; }
+                    Launch(GameBootstrap.Launch.Join, GameBootstrap.MapChoice.BattleRoyale, ba);
+                    break;
+                }
+                case Mode.Br:
+                    Launch(_brNet == BrNet.Host ? GameBootstrap.Launch.Host : GameBootstrap.Launch.Offline, GameBootstrap.MapChoice.BattleRoyale);
                     break;
                 case Mode.Replays when _watch == WatchPick.Saved:
                 {
@@ -532,6 +544,10 @@ namespace Sculpt.Game.UI
                     for (int i = 0; i < 3; i++)
                         if (Segment(ix, sy, iw, 3, i, LevelNames[i], GameBootstrap.NextBotLevel == Levels[i])) GameBootstrap.NextBotLevel = Levels[i];
                     break;
+                case Mode.Br:
+                    for (int i = 0; i < 3; i++)
+                        if (Segment(ix, sy, iw, 3, i, BrNames[i], GameBootstrap.NextBrMode == BrModes[i])) GameBootstrap.NextBrMode = BrModes[i];
+                    break;
                 case Mode.Replays:
                     if (Segment(ix, sy, iw, 2, 0, "Saved replays", _watch == WatchPick.Saved)) _watch = WatchPick.Saved;
                     if (Segment(ix, sy, iw, 2, 1, "Watch by IP", _watch == WatchPick.Live)) { _watch = WatchPick.Live; _focusJoin = true; }
@@ -559,29 +575,31 @@ namespace Sculpt.Game.UI
 
             // Status line: a join error in red, else a one-line hint for the choice.
             float ly = by + bh + 10;
-            if (_error.Length > 0 && (_mode == Mode.Duel || _mode == Mode.Replays)) Text(ix, ly, iw, 24, _error, 15, HudDraw.Red, TextAnchor.MiddleLeft, true);
+            if (_error.Length > 0 && (_mode == Mode.Duel || _mode == Mode.Replays || _mode == Mode.Br)) Text(ix, ly, iw, 24, _error, 15, HudDraw.Red, TextAnchor.MiddleLeft, true);
             else Text(ix, ly, iw, 24, Hint, 15, Faint);
 
             // Mode tiles.
-            float ty = py + ph + 16, th = 74, tgap = 12, tw = (PanelW - 3 * tgap) / 4;
-            ModeTile(LX, ty, tw, th, Mode.Duel, "1v1 Duel", "Host · Join by IP");
-            ModeTile(LX + (tw + tgap), ty, tw, th, Mode.Bot, "vs Bot", "Same match · 3 levels");
-            ModeTile(LX + 2 * (tw + tgap), ty, tw, th, Mode.Practice, "Practice", "Free roam · Test map");
-            ModeTile(LX + 3 * (tw + tgap), ty, tw, th, Mode.Replays, "Replays", "Saved · Watch live");
+            float ty = py + ph + 16, th = 74, tgap = 10, tw = (PanelW - 4 * tgap) / 5;
+            ModeTile(LX, ty, tw, th, Mode.Br, "Royale", "32 · bots fill");
+            ModeTile(LX + (tw + tgap), ty, tw, th, Mode.Duel, "1v1 Duel", "Host · Join");
+            ModeTile(LX + 2 * (tw + tgap), ty, tw, th, Mode.Bot, "vs Bot", "3 levels");
+            ModeTile(LX + 3 * (tw + tgap), ty, tw, th, Mode.Practice, "Practice", "Free · Test map");
+            ModeTile(LX + 4 * (tw + tgap), ty, tw, th, Mode.Replays, "Replays", "Saved · Live");
         }
 
         private string ModeName => _mode switch
         {
             Mode.Duel => "1v1 Duel",
             Mode.Bot => "1v1 vs Bot",
+            Mode.Br => "Battle royale",
             Mode.Replays => _watch == WatchPick.Saved ? "Replays" : "Watch live",
             _ => "Practice",
         };
 
-        private string MapName => _mode == Mode.Replays ? (_watch == WatchPick.Live ? "Host's map" : SelectedReplay?.Map == "Breach" ? "Breach test map" : "1v1 map")
+        private string MapName => _mode == Mode.Br ? "Royale map" : _mode == Mode.Replays ? (_watch == WatchPick.Live ? "Host's map" : SelectedReplay?.Map == "Breach" ? "Breach test map" : SelectedReplay?.Map == "BattleRoyale" ? "Royale map" : "1v1 map")
             : _mode == Mode.Practice && _practice == PracticePick.Breach ? "Breach test map" : "1v1 map";
 
-        private string PlayLabel => _mode == Mode.Duel ? (_duel == DuelPick.Host ? "HOST" : "JOIN") : _mode == Mode.Replays ? "WATCH" : "PLAY";
+        private string PlayLabel => _mode == Mode.Br ? (_brNet == BrNet.Host ? "HOST" : _brNet == BrNet.Join ? "JOIN" : "PLAY") : _mode == Mode.Duel ? (_duel == DuelPick.Host ? "HOST" : "JOIN") : _mode == Mode.Replays ? "WATCH" : "PLAY";
 
         /// <summary>The replay picked in the list (newest first), or null when there are none.</summary>
         private ReplayLibrary.Entry? SelectedReplay
@@ -605,6 +623,8 @@ namespace Sculpt.Game.UI
         {
             Mode.Duel => _duel == DuelPick.Host ? _ipHint : "Same network as the host. Their address shows on their screen while they wait.",
             Mode.Bot => "The same 1v1 match against a bot, offline: most kills in 5 minutes.",
+            Mode.Br => _brNet == BrNet.Offline ? "32 players, bots take the empty places. Loot chests, stay in the circle, last team standing wins."
+                : _brNet == BrNet.Host ? "Friends on your network join with Royale > Join; bots fill the rest of the 32." : "Joins the address typed in 1v1 Duel > Join by IP.",
             Mode.Replays => _watch == WatchPick.Saved
                 ? (SelectedReplay == null ? "No replays yet: every match you play or host is saved (newest 20, star one to keep it)." : "Your last 20 matches are kept; star one to keep it for good.")
                 : "Watch a match someone hosts on your network, a little behind (the host sets the delay).",
@@ -631,6 +651,9 @@ namespace Sculpt.Game.UI
         }
 
         private static readonly BotLevel[] Levels = { BotLevel.Easy, BotLevel.Normal, BotLevel.Hard };
+        private static readonly BrMode[] BrModes = { BrMode.Solos, BrMode.Duos, BrMode.Squads };
+        private static readonly string[] BrNames = { "Solos", "Duos", "Squads" };
+        private static readonly string[] BrTeams = { "32 solo", "16 duos", "8 squads of 4" };
         private static readonly string[] LevelNames = { "Easy", "Normal", "Hard" };
 
         private void DrawOptions(float x, float y, float w, float h, float gap)
@@ -653,6 +676,18 @@ namespace Sculpt.Game.UI
                     if (_address.Length == 0 && !focused) Text(x + 16, y + 30, fw - 24, 28, "Click and type it, e.g. 192.168.1.20", 19, Faint);
                     if (_phase == Phase.Text) JoinField(x + 12, y + 28, fw - 24, 32);
                     Card(x3, y, w, h, "Port (UDP)", PortText);
+                    break;
+                }
+                case Mode.Br:
+                {
+                    int bi = GameBootstrap.NextBrMode == BrMode.Squads ? 2 : GameBootstrap.NextBrMode == BrMode.Duos ? 1 : 0;
+                    Card(x, y, w, h, "Teams", BrTeams[bi]);
+                    Card(x2, y, w, h, "Loot", "Chests · 5 rarities");
+                    bool hn = Hot(x3, y, w, h);
+                    Fill(x3, y, w, h, 10, hn ? CardHover : CardBg);
+                    Text(x3 + 16, y + 10, w - 24, 20, "Network (click)", 14, Soft);
+                    Text(x3 + 16, y + 30, w - 24, 28, _brNet == BrNet.Offline ? "Offline" : _brNet == BrNet.Host ? "Host on LAN" : "Join by IP", 19, HudDraw.Text, TextAnchor.MiddleLeft, true);
+                    if (Click(x3, y, w, h)) { _brNet = (BrNet)(((int)_brNet + 1) % 3); _error = ""; }
                     break;
                 }
                 case Mode.Bot:

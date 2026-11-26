@@ -87,7 +87,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 33; // 33 anti-cheat groundwork (interest management: snapshots only carry enemies you could see or hear soon; dev respawn refused unless allowed); 32 delta snapshots (coded against the newest snapshot the client acked; other players quantized like the spectator stream); 31 balance pass 2 (SMG head 1.5x, no crouch accuracy bonus: rules differ between builds); 30 replays and spectators (Hello, spectator frames, welcome gains the spectator delay); 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
+        public const byte Version = 34; // 34 battle royale first playable (bag and ground item rarity, chests, the BR match and circle in the Match message, item deltas); 33 anti-cheat groundwork (interest management: snapshots only carry enemies you could see or hear soon; dev respawn refused unless allowed); 32 delta snapshots (coded against the newest snapshot the client acked; other players quantized like the spectator stream); 31 balance pass 2 (SMG head 1.5x, no crouch accuracy bonus: rules differ between builds); 30 replays and spectators (Hello, spectator frames, welcome gains the spectator delay); 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
@@ -208,7 +208,7 @@ namespace Sculpt.Core.Net
             w.U8((byte)s.Hand.Mode);
             w.U8((byte)((s.Hand.Slot & 7) | ((s.Hand.PrevSlot & 7) << 3) | (s.Hand.HeldReady ? 0x40 : 0) | (s.Hand.ExitQueued ? 0x80 : 0)));
             Bag bag = s.Hand.Bag;
-            for (int k = 0; k < Items.Slots; k++) { w.U8((byte)bag[k]); w.U8(bag.Count(k)); }
+            for (int k = 0; k < Items.Slots; k++) { w.U8((byte)((byte)bag[k] | ((byte)bag.RarityOf(k) << 4))); w.U8(bag.Count(k)); }
             w.I32(s.Hand.ReadyTick);
             w.I32(s.Hand.SculptLockUntil);
             WeaponState g = s.Weapon;
@@ -313,8 +313,9 @@ namespace Sculpt.Core.Net
             for (int k = 0; k < Items.Slots; k++)
             {
                 byte it = r.U8();
-                if (it > (byte)Items.Last) throw new NetFormatException("Bad item.");
-                s.Hand.Bag[k] = (Item)it;
+                if ((it & 0x0F) > (byte)Items.Last || (it >> 4) > (byte)Rarities.Last) throw new NetFormatException("Bad item.");
+                s.Hand.Bag[k] = (Item)(it & 0x0F);
+                s.Hand.Bag.SetRarity(k, (Rarity)(it >> 4));
                 s.Hand.Bag.SetCount(k, r.U8());
             }
             s.Hand.ReadyTick = r.I32();

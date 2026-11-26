@@ -19,6 +19,42 @@ namespace Sculpt.Core
         C4 = 6,
         /// <summary>Grenade launcher: few rounds, slow and clunky, rounds only arm after a few metres.</summary>
         Launcher = 7,
+        /// <summary>Battle royale loot chest. Only ever on the ground (never in a bag): interact opens it and it spills a
+        /// random-rarity gun and an item (server side, <see cref="ChestRules"/>).</summary>
+        Chest = 8,
+    }
+
+    /// <summary>
+    /// Battle royale gun rarity (Ben 2026-11-26): five tiers, common to legendary. Rarity changes damage only (legendary is
+    /// about +20% over uncommon), and legendary also reloads 5% faster. None = no rarity at all (the 1v1 and every
+    /// mode without loot): exactly the normal numbers, which are uncommon's.
+    /// </summary>
+    public enum Rarity : byte
+    {
+        None = 0,
+        Common = 1,
+        Uncommon = 2,
+        Rare = 3,
+        Epic = 4,
+        Legendary = 5,
+    }
+
+    public static class Rarities
+    {
+        public const Rarity Last = Rarity.Legendary;
+
+        public static string Name(Rarity r)
+        {
+            switch (r)
+            {
+                case Rarity.Common: return "Common";
+                case Rarity.Uncommon: return "Uncommon";
+                case Rarity.Rare: return "Rare";
+                case Rarity.Epic: return "Epic";
+                case Rarity.Legendary: return "Legendary";
+                default: return "";
+            }
+        }
     }
 
     public static class Items
@@ -26,8 +62,10 @@ namespace Sculpt.Core
         public const int Slots = 5;
         /// <summary>The utility slot (slot 5 on the keys): grenades, C4 or the launcher, one kind at a time.</summary>
         public const int UtilitySlot = 4;
-        /// <summary>The snapshot carries the held item in 3 bits, so this stays at most 7.</summary>
+        /// <summary>The snapshot carries the held item in 3 bits, so this stays at most 7 (the last item a bag can hold).</summary>
         public const Item Last = Item.Launcher;
+        /// <summary>The last item that can lie on the ground (chests never go in a bag).</summary>
+        public const Item LastGround = Item.Chest;
 
         public static bool IsGun(Item i) => i >= Item.Pump && i <= Item.Pistol;
         /// <summary>The gun of a gun item. Only call with <see cref="IsGun"/> true.</summary>
@@ -43,6 +81,9 @@ namespace Sculpt.Core
         public static ThrowKind KindOf(Item i) => i == Item.C4 ? ThrowKind.C4 : i == Item.Launcher ? ThrowKind.Launcher : ThrowKind.Grenade;
         public static Item ItemOf(ThrowKind k) => k == ThrowKind.C4 ? Item.C4 : k == ThrowKind.Launcher ? Item.Launcher : Item.Grenade;
 
+        /// <summary>The name with its rarity in front ("Epic AR"), or just the name when it has none.</summary>
+        public static string Name(Item i, Rarity r) => r == Rarity.None ? Name(i) : Rarities.Name(r) + " " + Name(i);
+
         public static string Name(Item i)
         {
             switch (i)
@@ -54,6 +95,7 @@ namespace Sculpt.Core
                 case Item.Grenade: return "Grenade";
                 case Item.C4: return "C4";
                 case Item.Launcher: return "Launcher";
+                case Item.Chest: return "Chest";
                 default: return "";
             }
         }
@@ -69,6 +111,8 @@ namespace Sculpt.Core
     {
         public Item S0, S1, S2, S3, S4;
         public byte N0, N1, N2, N3, N4;
+        /// <summary>Each slot's rarity (guns in battle royale; <see cref="Rarity.None"/> everywhere else).</summary>
+        public Rarity R0, R1, R2, R3, R4;
 
         /// <summary>The fixed starting loadout: pump, SMG, AR, pistol, two grenades in slot 5.</summary>
         public const int StartGrenades = 2;
@@ -100,6 +144,39 @@ namespace Sculpt.Core
                 case 4: N4 = v; break;
                 default: throw new ArgumentOutOfRangeException(nameof(slot));
             }
+        }
+
+        public Rarity RarityOf(int slot)
+        {
+            switch (slot)
+            {
+                case 0: return R0;
+                case 1: return R1;
+                case 2: return R2;
+                case 3: return R3;
+                case 4: return R4;
+                default: return Rarity.None;
+            }
+        }
+
+        public void SetRarity(int slot, Rarity r)
+        {
+            switch (slot)
+            {
+                case 0: R0 = r; break;
+                case 1: R1 = r; break;
+                case 2: R2 = r; break;
+                case 3: R3 = r; break;
+                case 4: R4 = r; break;
+                default: throw new ArgumentOutOfRangeException(nameof(slot));
+            }
+        }
+
+        /// <summary>The rarity of the gun you carry of this kind (None if you don't have it, or it has none).</summary>
+        public Rarity RarityOfGun(Weapon w)
+        {
+            int k = SlotOf(Items.Of(w));
+            return k < 0 ? Rarity.None : RarityOf(k);
         }
 
         /// <summary>Grenades in the grenade slot (0 when there is none). Setting it with no grenade slot does nothing.</summary>
@@ -171,10 +248,12 @@ namespace Sculpt.Core
         {
             this[slot] = Item.None;
             SetCount(slot, 0);
+            SetRarity(slot, Rarity.None);
         }
 
         public bool Equals(in Bag o) => S0 == o.S0 && S1 == o.S1 && S2 == o.S2 && S3 == o.S3 && S4 == o.S4 &&
-                                        N0 == o.N0 && N1 == o.N1 && N2 == o.N2 && N3 == o.N3 && N4 == o.N4;
+                                        N0 == o.N0 && N1 == o.N1 && N2 == o.N2 && N3 == o.N3 && N4 == o.N4 &&
+                                        R0 == o.R0 && R1 == o.R1 && R2 == o.R2 && R3 == o.R3 && R4 == o.R4;
     }
 
     /// <summary>Item numbers (Breach Settings writes these). Ticks at 60 Hz, distances in metres.</summary>
@@ -224,6 +303,8 @@ namespace Sculpt.Core
         public int Count;
         /// <summary>Guns: rounds fired from the magazine since it was full, so a dropped gun keeps its ammo.</summary>
         public int AmmoUsed;
+        /// <summary>Guns in battle royale: the rarity (None everywhere else).</summary>
+        public Rarity Rarity;
         /// <summary>The point it rests on (bottom centre).</summary>
         public Vec3d Position;
         public int DroppedBy;
@@ -294,6 +375,15 @@ namespace Sculpt.Core
             Version++;
         }
 
+        /// <summary>Replaces the item with this id, or adds it (a client applying the server's delta).</summary>
+        public void Upsert(GroundItem item)
+        {
+            int i = IndexOf(item.Id);
+            if (i < 0) { Add(item); return; }
+            _items[i] = item;
+            Version++;
+        }
+
         /// <summary>Replaces everything (a client copying the server's full list).</summary>
         public void ReplaceAll(IReadOnlyList<GroundItem> items)
         {
@@ -320,6 +410,8 @@ namespace Sculpt.Core
         AlreadyHave = 5,
         /// <summary>Dead, disarmed, or you just dropped it.</summary>
         NotNow = 6,
+        /// <summary>A chest: opened (it spills its loot on the ground).</summary>
+        Opened = 7,
     }
 
     /// <summary>What a pickup would do (shown in the prompt, applied by the server).</summary>
@@ -334,6 +426,8 @@ namespace Sculpt.Core
         public Item SwapOut;
 
         public bool Allowed => Result == PickupResult.Ok || Result == PickupResult.Swapped;
+        /// <summary>The item is a chest: the press opens it (nothing goes in the bag).</summary>
+        public bool Opens;
     }
 
     /// <summary>
@@ -391,6 +485,7 @@ namespace Sculpt.Core
             if (s.Dead || s.Hand.Mode == HandMode.Disarmed) { p.Result = PickupResult.NotNow; return p; }
             if (g.DroppedBy == playerId && tick - g.DroppedTick < cfg.DropperLockTicks) { p.Result = PickupResult.NotNow; return p; }
             if (g.Kind == Item.None || g.Count <= 0) { p.Result = PickupResult.NoItem; return p; }
+            if (g.Kind == Item.Chest) { p.Opens = true; return p; } // opened where it stands; nothing goes in the bag
             Bag b = s.Hand.Bag;
             if (Items.Stacks(g.Kind))
             {
@@ -408,7 +503,17 @@ namespace Sculpt.Core
             }
             else
             {
-                if (b.SlotOf(g.Kind) >= 0) { p.Result = PickupResult.AlreadyHave; return p; }
+                int have = b.SlotOf(g.Kind);
+                if (have >= 0)
+                {
+                    // One of each gun: the same gun in another rarity swaps with yours (battle royale upgrades).
+                    if (b.RarityOf(have) == g.Rarity) { p.Result = PickupResult.AlreadyHave; return p; }
+                    p.Slot = have;
+                    p.Take = 1;
+                    p.SwapOut = g.Kind;
+                    p.Result = PickupResult.Swapped;
+                    return p;
+                }
                 p.Take = 1;
             }
             int held = s.Hand.Slot;
@@ -457,6 +562,7 @@ namespace Sculpt.Core
             if (!Visible(terrain, eye, g.Centre)) return PickupResult.Blocked;
             PickupPlan p = Plan(s, g, playerId, tick, cfg);
             if (!p.Allowed) return p.Result;
+            if (p.Opens) return PickupResult.NoItem; // chests are opened by the server (ChestRules), never picked up
 
             ref HandState h = ref s.Hand;
             if (p.SwapOut != Item.None)
@@ -475,6 +581,7 @@ namespace Sculpt.Core
             else
             {
                 h.Bag[p.Slot] = g.Kind;
+                h.Bag.SetRarity(p.Slot, g.Rarity);
                 if (Items.IsGun(g.Kind)) s.Weapon.SetUsed(Items.GunOf(g.Kind), g.AmmoUsed);
             }
             if (g.Count - p.Take > 0) items.SetCount(g.Id, g.Count - p.Take);
@@ -508,7 +615,7 @@ namespace Sculpt.Core
         {
             Bag b = s.Hand.Bag;
             Item kind = b[slot];
-            var g = new GroundItem { Kind = kind, Count = b.CountIn(slot), Position = at, DroppedBy = playerId, DroppedTick = tick };
+            var g = new GroundItem { Kind = kind, Count = b.CountIn(slot), Position = at, DroppedBy = playerId, DroppedTick = tick, Rarity = b.RarityOf(slot) };
             if (Items.IsGun(kind))
             {
                 Weapon w = Items.GunOf(kind);

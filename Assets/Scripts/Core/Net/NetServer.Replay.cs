@@ -104,7 +104,7 @@ namespace Sculpt.Core.Net
             byte[] tiles = TileJoinBytes();
             if (tiles != null) into.Add(tiles);
             var w = new ByteWriter(16 + Items.Count * 24);
-            ItemsProtocol.Write(w, new ItemsMsg { Tick = Tick, Items = new List<GroundItem>(Items.All) });
+            ItemsProtocol.Write(w, new ItemsMsg { Tick = Tick, Full = true, Items = new List<GroundItem>(Items.All) });
             into.Add(w.ToArray());
         }
 

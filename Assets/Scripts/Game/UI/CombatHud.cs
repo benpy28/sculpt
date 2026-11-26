@@ -150,7 +150,8 @@ namespace Sculpt.Game.UI
                 float px = w - Margin - PanelW;
                 bool reloading = s.Weapon.Reloading && s.Weapon.ReloadGun == held;
                 Color ammoCol = ammo == 0 ? HudDraw.Red : ammo <= st.MagSize / 4 ? HudDraw.Amber : HudDraw.Text;
-                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), NamesUpper[(int)held], 13, HudDraw.Dim, TextAnchor.MiddleLeft, true);
+                Rarity heldRar = s.Hand.Bag.RarityOf(s.Hand.Slot);
+                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), NamesUpper[(int)held], 13, heldRar != Rarity.None ? RarityColours.Of(heldRar) : HudDraw.Dim, TextAnchor.MiddleLeft, true);
                 HudDraw.Label(HudDraw.ToGui(px + PanelW - 96, Margin + 16, 50, 40), HudDraw.Num(ammo), 30, ammoCol, TextAnchor.MiddleRight, true);
                 HudDraw.Label(HudDraw.ToGui(px + PanelW - 44, Margin + 18, 40, 30), Slash(st.MagSize), 13, HudDraw.Dim, TextAnchor.MiddleLeft);
                 string hint = reloading ? "RELOADING" : ammo == 0 ? "EMPTY" : ammo <= st.MagSize / 4 ? "R  RELOAD" : null;
@@ -165,6 +166,8 @@ namespace Sculpt.Game.UI
                 Item it = s.Hand.Bag[i];
                 bool held = i == s.Hand.Slot && it != Item.None;
                 Color tc = it == Item.None ? HudDraw.A(HudDraw.Dim, 0.5f) : held ? HudDraw.Text : HudDraw.Dim;
+                Rarity rar = s.Hand.Bag.RarityOf(i);
+                if (it != Item.None && rar != Rarity.None) tc = HudDraw.A(RarityColours.Of(rar), held ? 1f : 0.7f); // battle royale: the slot reads its rarity
                 HudDraw.Label(HudDraw.ToGui(r.x + 7, r.y + r.height - 15, 20, 12), HudDraw.Num(i + 1), 10, HudDraw.A(tc, 0.8f), TextAnchor.MiddleLeft, true);
                 int n = s.Hand.Bag.Count(i);
                 string name = it == Item.None ? "—" : it == Item.Grenade ? Counted(NadeCache, "Nade x", n)
@@ -179,10 +182,12 @@ namespace Sculpt.Game.UI
                 GroundItem g = net.Items[_player.PickTarget];
                 PickupPlan plan = _player.PickPlan;
                 string key = _player.InteractKeyName;
-                string what = Items.Name(g.Kind) + (g.Count > 1 ? " x" + g.Count : "");
+                string what = Items.Name(g.Kind, g.Rarity) + (g.Count > 1 ? " x" + g.Count : "");
                 string line;
-                Color col = HudDraw.Text;
-                if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
+                Color col = g.Rarity != Rarity.None ? RarityColours.Of(g.Rarity) : HudDraw.Text;
+                if (plan.Opens) line = $"{key}  Open chest";
+                else if (plan.Result == PickupResult.Swapped && plan.SwapOut == g.Kind) line = $"{key}  Swap your {Items.Name(g.Kind, s.Hand.Bag.RarityOf(plan.Slot))} for {what}";
+                else if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
                 else if (plan.Allowed) line = $"{key}  Pick up {what}";
                 else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
                 else { line = what; col = HudDraw.Dim; }

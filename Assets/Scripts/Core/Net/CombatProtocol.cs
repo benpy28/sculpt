@@ -25,6 +25,8 @@ namespace Sculpt.Core.Net
         Punch = 7,
         C4 = 8,
         Launcher = 9,
+        /// <summary>Battle royale: standing outside the circle.</summary>
+        Storm = 10,
     }
 
     public struct CombatEvent
@@ -130,7 +132,7 @@ namespace Sculpt.Core.Net
                 if (t > (byte)CombatEventType.Grenade) throw new NetFormatException("Bad combat event.");
                 var e = new CombatEvent { Type = (CombatEventType)t, Attacker = r.U16() };
                 byte src = r.U8();
-                if (src > (byte)DamageSource.Launcher) throw new NetFormatException("Bad damage source.");
+                if (src > (byte)DamageSource.Storm) throw new NetFormatException("Bad damage source.");
                 e.Source = (DamageSource)src;
                 switch (e.Type)
                 {

@@ -112,6 +112,30 @@ namespace Sculpt.Core
         /// <summary>Lag compensation: targets are rewound to what the shooter saw, at most this many ticks back.</summary>
         public int MaxRewindTicks = 18 * SimTime.Per60;
 
+        /// <summary>
+        /// Battle royale rarity (Ben 2026-11-26), indexed by <see cref="Rarity"/>: None, Common, Uncommon, Rare, Epic,
+        /// Legendary. Damage to players is scaled (uncommon = the normal numbers, legendary about +20% over it); wall
+        /// damage, spread, recoil and fire rate never change. Legendary also reloads 5% faster.
+        /// </summary>
+        public double[] RarityDamage = { 1.0, 0.95, 1.0, 1.065, 1.13, 1.2 };
+        public double[] RarityReload = { 1.0, 1.0, 1.0, 1.0, 1.0, 0.95 };
+
+        /// <summary>Player damage of a hit from a gun of this rarity (rounded once, like every hit).</summary>
+        public int ScaleDamage(int damage, Rarity r)
+        {
+            int i = (int)r;
+            if (i <= 0 || RarityDamage == null || i >= RarityDamage.Length) return damage;
+            return (int)Math.Round(damage * RarityDamage[i]);
+        }
+
+        /// <summary>A reload time (ticks) for a gun of this rarity.</summary>
+        public int ScaleReload(int ticks, Rarity r)
+        {
+            int i = (int)r;
+            if (i <= 0 || RarityReload == null || i >= RarityReload.Length) return ticks;
+            return Math.Max(1, (int)Math.Round(ticks * RarityReload[i]));
+        }
+
         public WeaponStats[] Stats =
         {
             // Pump: 9 x 9.4, head pellets 1.5x (Ben 2026-11-25: gun damage ~15% lower; was 11), 0.75 s cycle (balance pass 2026-11-25, was 0.9: it lost to the SMG even at 3 m), falloff from 5 m, heavy past 12 m; wider in the air and sliding.

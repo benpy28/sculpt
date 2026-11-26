@@ -46,6 +46,7 @@ namespace Sculpt.Core.Net
         /// <summary>Start of each tick: move the match along.</summary>
         private void StepMatch()
         {
+            if (Br != null) { StepBr(); return; }
             if (!MatchConfig.Enabled)
             {
                 if (Match.Phase != MatchPhase.Off) SetPhase(MatchPhase.Off, 0);
@@ -135,7 +136,7 @@ namespace Sculpt.Core.Net
             Match.Scores.Clear();
             foreach (ServerPlayer p in _players)
                 if (CountsForMatch(p))
-                    Match.Scores.Add(new MatchScore { PlayerId = p.Id, Team = p.Team, Kills = p.MatchKills, Deaths = p.MatchDeaths });
+                    Match.Scores.Add(new MatchScore { PlayerId = p.Id, Team = p.Team, Kills = p.MatchKills, Deaths = p.MatchDeaths, Place = Br != null && _brIn.Contains(p.Id) ? PlaceOf(p.Team) : 0 });
             Match.Version++;
         }
 

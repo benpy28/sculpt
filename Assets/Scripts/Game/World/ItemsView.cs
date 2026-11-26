@@ -53,6 +53,7 @@ namespace Sculpt.Game.World
                 bool hot = g.Id == targetId;
                 Vector3 basePos = g.Position.ToUnity();
                 float yaw = (g.Id * 47) % 360;
+                if (g.Kind == Item.Chest) { yaw = (float)(NetServer.ChestYaw(g) * Mathf.Rad2Deg); hot = false; } // chests sit square and face their way
                 if (hot) yaw += Time.time * 60f;
                 t.position = basePos + new Vector3(0, hot ? 0.08f + Mathf.Sin(Time.time * 4f) * 0.015f : 0f, 0);
                 t.rotation = Quaternion.Euler(0, yaw, 0);
@@ -83,12 +84,23 @@ namespace Sculpt.Game.World
             }
         }
 
-        private static int Visuals(in GroundItem g) => g.Kind == Item.Grenade || g.Kind == Item.C4 ? Mathf.Clamp(g.Count, 1, 4) : 1;
+        private static int Visuals(in GroundItem g) => (g.Kind == Item.Grenade || g.Kind == Item.C4 ? Mathf.Clamp(g.Count, 1, 4) : 1) + (g.Rarity != Rarity.None ? 1 : 0);
 
         private Transform Build(in GroundItem g)
         {
             var root = new GameObject($"Item {g.Id} {Items.Name(g.Kind)}").transform;
             root.SetParent(transform, false);
+            if (g.Kind == Item.Chest)
+            {
+                GameObject chest = GunModels.BuildChest(_mat);
+                chest.transform.SetParent(root, false);
+                return root;
+            }
+            if (g.Rarity != Rarity.None)
+            {
+                GameObject plate = GunModels.BuildRarityPlate(_mat, Sculpt.Game.UI.RarityColours.Of(g.Rarity));
+                plate.transform.SetParent(root, false);
+            }
             if (Items.IsGun(g.Kind))
             {
                 GunModel m = GunModels.Build(Items.GunOf(g.Kind), _mat);
@@ -110,7 +122,7 @@ namespace Sculpt.Game.World
             }
             else if (g.Kind == Item.C4)
             {
-                int n = Visuals(g);
+                int n = Mathf.Clamp(g.Count, 1, 4);
                 for (int k = 0; k < n; k++)
                 {
                     GameObject c4 = GunModels.BuildC4(_mat);
@@ -122,7 +134,7 @@ namespace Sculpt.Game.World
             }
             else
             {
-                int n = Visuals(g);
+                int n = Mathf.Clamp(g.Count, 1, 4);
                 for (int k = 0; k < n; k++)
                 {
                     GameObject nade = GunModels.BuildGrenade(_mat);

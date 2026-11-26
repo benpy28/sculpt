@@ -137,6 +137,7 @@ namespace Sculpt.Core.Net
         public InputCmd Next(NetServer server, ServerPlayer me)
         {
             int tick = server.Tick;
+            _server = server;
             MovementConfig mc = server.Movement;
             _wc = mc.Weapons;
             var cmd = new InputCmd { Tick = tick, ViewTick = tick };
@@ -239,11 +240,17 @@ namespace Sculpt.Core.Net
             else
             {
                 Vec3d goal;
+                bool br = server.Match.IsBr;
+                // Battle royale: get out of the circle first, whatever else is going on.
+                if (br && StormGoal(server, s, tick, out Vec3d safe)) goal = safe;
                 // A ping newer than its last sighting: go where it was shown (it still has to find and see them to fight).
-                if (!recentlySeen && _pingTick > _lastSeenTick && tick - _pingTick < 600 * SimTime.Per60) goal = _pingPos;
+                else if (!recentlySeen && _pingTick > _lastSeenTick && tick - _pingTick < 600 * SimTime.Per60) goal = _pingPos;
                 else if (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60) goal = _lastSeenPos;
                 else if (tick - _lastHeardTick < 600 * SimTime.Per60) goal = _lastHeardPos;
-                else goal = RoamGoal(s.Position);
+                // Battle royale: loot what is near (chests, a gun it lacks, a better rarity, a utility), else roam inside the circle.
+                else if (br && LootGoal(server, s, tick, out Vec3d loot)) goal = loot;
+                else goal = br ? RoamInCircle(server, s.Position, tick) : RoamGoal(s.Position);
+                if (br && server.Match.Phase == MatchPhase.Countdown) goal = s.Position; // waits on its pad
                 wish = FollowPath(s, goal, tick, ref jump, out Vec3d lookAt, out bool arrived);
                 if (arrived)
                 {
@@ -251,8 +258,9 @@ namespace Sculpt.Core.Net
                     if (goal.Equals(_pingPos)) _pingTick = int.MinValue / 2;
                     else if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
                     else if (goal.Equals(_lastHeardPos)) _lastHeardTick = int.MinValue / 2;
-                    else _hasRoam = false;
+                    else if (_lootId == 0) _hasRoam = false;
                 }
+                if (br && _lootId != 0) TakeLoot(server, s, tick, ref cmd);
                 sprint = wish.LengthSquared > 0.01;
                 if (!aimEnemy && wish.LengthSquared > 0.01)
                 {
@@ -453,7 +461,9 @@ namespace Sculpt.Core.Net
             // Empty in a fight: swap instead of reloading (pump <-> SMG).
             if (_engaged && s.Hand.HasGun && s.Weapon.UsedOf(s.Hand.Held) >= Stats(s.Hand.Held).MagSize)
                 want = s.Hand.Held == Weapon.Pump ? Weapon.Smg : Weapon.Pump;
-            if (want != cur && tick - _switchTick >= 60 * SimTime.Per60) { WantGun = want; _switchTick = tick; }
+            want = Owned(want, s.Hand.Bag);
+            bool lacking = s.Hand.Bag.SlotOf(Items.Of(cur)) < 0;
+            if (want != cur && (lacking || tick - _switchTick >= 60 * SimTime.Per60)) { WantGun = want; _switchTick = tick; }
 
             int slot = s.Hand.Bag.SlotOf(Items.Of(WantGun));
             bool holding = s.Hand.HasGun && s.Hand.Held == WantGun;
@@ -466,7 +476,24 @@ namespace Sculpt.Core.Net
             }
         }
 
+        /// <summary>The gun it carries nearest in use to the one it wants (a battle royale bag is not the full loadout).</summary>
+        private static Weapon Owned(Weapon want, in Bag bag)
+        {
+            if (bag.SlotOf(Items.Of(want)) >= 0) return want;
+            Weapon[] order;
+            switch (want)
+            {
+                case Weapon.Pump: order = new[] { Weapon.Smg, Weapon.Pistol, Weapon.Ar }; break;
+                case Weapon.Smg: order = new[] { Weapon.Pump, Weapon.Ar, Weapon.Pistol }; break;
+                case Weapon.Ar: order = new[] { Weapon.Pistol, Weapon.Smg, Weapon.Pump }; break;
+                default: order = new[] { Weapon.Ar, Weapon.Smg, Weapon.Pump }; break;
+            }
+            foreach (Weapon w in order) if (bag.SlotOf(Items.Of(w)) >= 0) return w;
+            return want;
+        }
+
         private WeaponsConfig _wc = new WeaponsConfig();
+        private NetServer _server;
         private WeaponStats Stats(Weapon w) => _wc.Stats[(int)w];
 
         // ================================================================ Movement
@@ -578,8 +605,9 @@ namespace Sculpt.Core.Net
                 Vec3d next = Nav.Feet(_path[_pathAt]);
                 if ((next - feet).HorizontalLength > 4 || feet.Y < next.Y - 2.2) replan = true; // fell off or got pushed
             }
-            if (replan && tick - _pathTick >= 15 * SimTime.Per60)
+            if (replan && tick - _pathTick >= 15 * SimTime.Per60 && (_server == null || _server.BotPathsThisTick < _server.BotPathsPerTick))
             {
+                if (_server != null) _server.BotPathsThisTick++;
                 _pathTick = tick;
                 _pathGoal = goal;
                 _pathAt = 0;
@@ -612,6 +640,130 @@ namespace Sculpt.Core.Net
             Vec3d d = (tp - feet).WithY(0);
             if (_pathAt == _path.Count - 1 && d.Length < 0.4) { arrived = true; return Vec3d.Zero; }
             return d.Length > 1e-6 ? d.Normalized : Vec3d.Zero;
+        }
+
+        // ================================================================ Battle royale
+
+        private int _lootId;
+        private Vec3d _lootPos;
+        private int _lootSince, _lootNearSince, _lootPickTick = int.MinValue / 2, _lootScanTick = int.MinValue / 2;
+        private readonly HashSet<int> _lootGaveUp = new HashSet<int>();
+        private int _lootMatch = -1;
+
+        /// <summary>The circle it should be inside: the next one once its shrink is near, else the current one.</summary>
+        private static void SafeCircle(NetServer server, int tick, out double x, out double z, out double r)
+        {
+            StormState st = server.Match.Storm;
+            if (tick >= st.ShrinkStart - 15 * 60 * SimTime.Per60) { x = st.ToX; z = st.ToZ; r = st.ToRadius; }
+            else { x = st.CentreXAt(tick); z = st.CentreZAt(tick); r = st.RadiusAt(tick); }
+        }
+
+        /// <summary>Outside (or at the edge of) the safe circle: a point well inside it to walk to.</summary>
+        private bool StormGoal(NetServer server, in MotorState s, int tick, out Vec3d goal)
+        {
+            goal = default;
+            StormState st = server.Match.Storm;
+            if (server.Match.Phase != MatchPhase.Playing || !st.Active) return false;
+            SafeCircle(server, tick, out double cx, out double cz, out double r);
+            double dx = s.Position.X - cx, dz = s.Position.Z - cz;
+            double d = Math.Sqrt(dx * dx + dz * dz);
+            if (d < Math.Max(0, r - 4)) return false;
+            double into = Math.Max(0, Math.Min(r * 0.4, d));
+            goal = d > 1e-3 ? new Vec3d(cx + dx / d * into, s.Position.Y, cz + dz / d * into) : new Vec3d(cx, s.Position.Y, cz);
+            _lootId = 0;
+            return true;
+        }
+
+        private bool Wants(in GroundItem g, in Bag bag)
+        {
+            if (g.Kind == Item.Chest) return true;
+            if (Items.IsGun(g.Kind))
+            {
+                int have = bag.SlotOf(g.Kind);
+                if (have >= 0) return g.Rarity > bag.RarityOf(have);
+                for (int k = 0; k < Items.Slots; k++) if (k != Items.UtilitySlot && bag[k] == Item.None) return true;
+                return false;
+            }
+            if (Items.Throws(g.Kind)) return bag[Items.UtilitySlot] == Item.None || bag.CountIn(Items.UtilitySlot) == 0;
+            return false;
+        }
+
+        /// <summary>The nearest thing worth picking up within 45 m (re-chosen every half second).</summary>
+        private bool LootGoal(NetServer server, in MotorState s, int tick, out Vec3d goal)
+        {
+            goal = default;
+            if (server.Match.Phase != MatchPhase.Playing) { _lootId = 0; return false; }
+            if (_lootMatch != server.BrMatchNumber) { _lootMatch = server.BrMatchNumber; _lootGaveUp.Clear(); _lootId = 0; }
+            Bag bag = s.Hand.Bag;
+            if (_lootId != 0 && (!server.Items.TryGet(_lootId, out GroundItem cur) || !Wants(cur, bag))) _lootId = 0;
+            if (_lootId == 0 || tick - _lootScanTick >= 60 * SimTime.Per60)
+            {
+                _lootScanTick = tick;
+                int best = 0;
+                double bestD = 45 * 45;
+                Vec3d bestPos = default;
+                for (int i = 0; i < server.Items.Count; i++)
+                {
+                    GroundItem g = server.Items[i];
+                    if (_lootGaveUp.Contains(g.Id) || !Wants(g, bag)) continue;
+                    Vec3d d = g.Position - s.Position;
+                    double d2 = d.X * d.X + d.Z * d.Z + 4 * d.Y * d.Y; // another floor is further than it looks
+                    if (d2 >= bestD) continue;
+                    if (server.InStorm(g.Position)) continue;
+                    bestD = d2;
+                    best = g.Id;
+                    bestPos = g.Position;
+                }
+                if (best != _lootId) { _lootId = best; _lootPos = bestPos; _lootSince = tick; _lootNearSince = int.MinValue / 2; }
+            }
+            if (_lootId == 0) return false;
+            if (tick - _lootSince > 25 * 60 * SimTime.Per60) { _lootGaveUp.Add(_lootId); _lootId = 0; return false; }
+            goal = _lootPos;
+            return true;
+        }
+
+        /// <summary>Close enough: press interact on it (the server checks reach and sight like anyone's).</summary>
+        private void TakeLoot(NetServer server, in MotorState s, int tick, ref InputCmd cmd)
+        {
+            Vec3d d = _lootPos - s.Position;
+            if (d.HorizontalLength > 1.7 || Math.Abs(d.Y) > 1.2) { _lootNearSince = int.MinValue / 2; return; }
+            if (_lootNearSince < 0 && _lootNearSince == int.MinValue / 2) _lootNearSince = tick;
+            if (tick - _lootNearSince > 3 * 60 * SimTime.Per60) { _lootGaveUp.Add(_lootId); _lootId = 0; return; }
+            if (tick - _lootPickTick < 15 * SimTime.Per60) return;
+            _lootPickTick = tick;
+            cmd.Hand.Pickup = true;
+            cmd.Hand.PickId = _lootId;
+        }
+
+        private int _circleRoamTick = int.MinValue / 2;
+
+        /// <summary>A random open spot inside the circle (the next one when it is known).</summary>
+        private Vec3d RoamInCircle(NetServer server, Vec3d from, int tick)
+        {
+            StormState st = server.Match.Storm;
+            if (server.Match.Phase != MatchPhase.Playing || !st.Active) return RoamGoal(from);
+            SafeCircle(server, tick, out double cx, out double cz, out double r);
+            if (_hasRoam && tick - _circleRoamTick < 20 * 60 * SimTime.Per60)
+            {
+                double gx = _roamGoal.X - cx, gz = _roamGoal.Z - cz;
+                if (gx * gx + gz * gz < r * r) return _roamGoal;
+            }
+            _circleRoamTick = tick;
+            IReadOnlyList<BotNav.Node> nodes = Nav.Nodes;
+            for (int k = 0; k < 60; k++)
+            {
+                BotNav.Node n = nodes[_rng.Next(nodes.Count)];
+                if (n.Open < 8) continue;
+                Vec3d f = n.Feet(Nav);
+                double fx = f.X - cx, fz = f.Z - cz;
+                if (fx * fx + fz * fz > r * r * 0.7) continue;
+                _roamGoal = f;
+                _hasRoam = true;
+                return f;
+            }
+            _roamGoal = new Vec3d(cx, from.Y, cz);
+            _hasRoam = true;
+            return _roamGoal;
         }
 
         private void Unstick(in MotorState s, int tick, Vec3d wish, ref bool jump)

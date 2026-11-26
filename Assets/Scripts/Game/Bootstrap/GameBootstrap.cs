@@ -36,7 +36,7 @@ namespace Sculpt.Game.Bootstrap
 
         // ---- What the next scene load starts (the main menu picks it, then reloads the scene) ----
         public enum Launch { Menu, Offline, Host, Join, VsBot, Replay, Spectate }
-        public enum MapChoice { Duel, Breach }
+        public enum MapChoice { Duel, Breach, BattleRoyale }
         public static Launch NextLaunch = Launch.Menu;
         public static MapChoice NextMap = MapChoice.Duel;
         public static string NextAddress = "";
@@ -46,6 +46,13 @@ namespace Sculpt.Game.Bootstrap
         public static string ReplayError = "";
         /// <summary>How good the bot is in a "Play vs bot" launch.</summary>
         public static BotLevel NextBotLevel = BotLevel.Normal;
+        /// <summary>Solos, duos or squads in a battle royale launch.</summary>
+        public static BrMode NextBrMode = BrMode.Solos;
+        /// <summary>
+        /// The battle royale bots' walking grid takes a few seconds to build, so it is built once per run on a worker
+        /// thread (from its own copy of the map); bots stand still in the lobby until it is ready.
+        /// </summary>
+        private static System.Threading.Tasks.Task<BotNav> _brNav;
         private static bool _commandLineDone;
 
         /// <summary>Reloads the game with a new map and start (menu buttons). Everything is rebuilt from code.</summary>
@@ -53,7 +60,7 @@ namespace Sculpt.Game.Bootstrap
         public static void RelaunchReplay(string path, string mapName)
         {
             NextReplayPath = path ?? "";
-            Relaunch(Launch.Replay, mapName == "Breach" ? MapChoice.Breach : MapChoice.Duel);
+            Relaunch(Launch.Replay, MapOf(mapName));
         }
 
         public static void Relaunch(Launch launch, MapChoice map, string address = "")
@@ -70,6 +77,9 @@ namespace Sculpt.Game.Bootstrap
         private static BotNav _duelNav;
 
         public static MapChoice CurrentMap { get; private set; }
+
+        /// <summary>The map a replay header names.</summary>
+        public static MapChoice MapOf(string mapName) => mapName == "Breach" ? MapChoice.Breach : mapName == "BattleRoyale" ? MapChoice.BattleRoyale : MapChoice.Duel;
 
         /// <summary>Each Play press starts at the menu, even with domain reload off.</summary>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -88,6 +98,7 @@ namespace Sculpt.Game.Bootstrap
         private SubGrid _grid;
         private FirstPersonMode _firstPerson;
         private SpectatorCamera _spectatorCam;
+        private BrDeathCamera _brDeathCam;
         private WorldView _world;
         private LocalPlayer _player;
         private CameraRig _rig;
@@ -130,7 +141,19 @@ namespace Sculpt.Game.Bootstrap
             Func<SubGrid, ITerrain> terrain = null;
             if (!_commandLineDone) ReadLaunchArgs();
             CurrentMap = NextMap;
-            if (NextMap == MapChoice.Duel)
+            BrMapInfo brInfo = null;
+            if (NextMap == MapChoice.BattleRoyale)
+            {
+                // The battle royale (Ben 2026-11-26): 32 players, bots fill the lobby.
+                build = BrMap.BuildGround;
+                _grid = BrMap.BuildGround();
+                brushes = BrMap.BuildBrushes(out breachInfo, out brInfo, breach);
+                terrain = g => BrMap.Terrain(g, BrMap.BuildBrushes(out _, out _, breach));
+                spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
+                yaw = new double[] { brInfo.Regions[0].PadYaw[0], brInfo.Regions[0].PadYaw[0] };
+                _brNav ??= System.Threading.Tasks.Task.Run(() => BrMap.BuildNav(1.0));
+            }
+            else if (NextMap == MapChoice.Duel)
             {
                 // The 1v1 friend demo map (Ben 2026-11-25).
                 build = DuelMap.BuildGround;
@@ -171,7 +194,20 @@ namespace Sculpt.Game.Bootstrap
             Mark("map");
             Action<NetServer> setup = null;
             bool vsBot = NextLaunch == Launch.VsBot && NextMap == MapChoice.Duel;
-            if (vsBot)
+            if (brInfo != null)
+            {
+                BreachMapInfo bi = breachInfo;
+                BrMapInfo bri = brInfo;
+                var navTask = _brNav;
+                var cfg = new BrConfig { Mode = NextBrMode, Seed = Environment.TickCount };
+                cfg.MakeBot = i => new PendingBot(navTask, (BotLevel)(i % 3), cfg.Seed + 31 * i);
+                setup = server =>
+                {
+                    server.EnableBattleRoyale(cfg, bri);
+                    BrSetup.PlaceItems(server, bi, bri);
+                };
+            }
+            else if (vsBot)
             {
                 // Play vs bot: the same 1v1 match on the local server, the bot is the second player (team 2).
                 BreachMapInfo bi = breachInfo;
@@ -200,8 +236,9 @@ namespace Sculpt.Game.Bootstrap
                     if (withDummy) server.AddDummy(new PracticeDummy(bi.RoomCentre, Math.PI, bi.Room, dummy), team: 2);
                 };
             }
-            string mapName = NextMap == MapChoice.Duel ? "Duel" : breachMap ? "Breach" : map.ToString();
-            string modeLabel = vsBot ? "Vs bot " + NextBotLevel : NextLaunch == Launch.Host ? "1v1 hosted" : "Practice";
+            string mapName = NextMap == MapChoice.BattleRoyale ? "BattleRoyale" : NextMap == MapChoice.Duel ? "Duel" : breachMap ? "Breach" : map.ToString();
+            string modeLabel = brInfo != null ? "Battle royale " + NextBrMode + (NextLaunch == Launch.Host ? " hosted" : "")
+                : vsBot ? "Vs bot " + NextBotLevel : NextLaunch == Launch.Host ? "1v1 hosted" : "Practice";
             _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup, mapName, modeLabel);
             _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
             if (vsBot) { _session.MatchOffline = true; _session.Server.MatchConfig.Enabled = true; }
@@ -268,6 +305,7 @@ namespace Sculpt.Game.Bootstrap
             _firstPerson = firstPerson;
             _rig.Mode = firstPerson;
             _spectatorCam = new SpectatorCamera(_player, client, _session, movement, _input);
+            _brDeathCam = new BrDeathCamera(_player, client, _session, _input);
 
             _weapons = new GameObject("Weapon View").AddComponent<WeaponView>();
             _weapons.Init(_player, _session, _rig, firstPerson, client, movement);
@@ -294,6 +332,8 @@ namespace Sculpt.Game.Bootstrap
             gameObject.AddComponent<FeelHud>().Init(_player, client);
             gameObject.AddComponent<SettingsMenu>().Init(_player, client, _input);
             gameObject.AddComponent<MatchHud>().Init(_player, _session);
+            gameObject.AddComponent<BrHud>().Init(_player, _session);
+            if (brInfo != null) new GameObject("Storm").AddComponent<StormView>().Init(_session);
             gameObject.AddComponent<PingHud>().Init(_session, _rig.Camera);
             gameObject.AddComponent<SpectatorHud>().Init(_player, _session, _spectatorCam, _input);
             var menu = gameObject.AddComponent<MainMenu>();
@@ -345,7 +385,11 @@ namespace Sculpt.Game.Bootstrap
             bool watching = net.IsSpectator;
             if (watching) _spectatorCam.HandleInput();
             else Player.RemotePlayersView.HiddenPlayer = 0;
-            _rig.Mode = watching ? _spectatorCam : (ICameraMode)_firstPerson;
+            // Battle royale, out of the match: watch the living until the next one.
+            bool brOut = !watching && net.Match.IsBr && net.Match.Phase == MatchPhase.Playing && net.Predicted.Dead;
+            if (brOut) _brDeathCam.HandleInput();
+            else _brDeathCam.Reset();
+            _rig.Mode = watching ? _spectatorCam : brOut ? _brDeathCam : (ICameraMode)_firstPerson;
             _weapons.PreCamera(Time.unscaledDeltaTime);  // this frame's shots kick the view before it is placed
             _rig.Apply(Time.unscaledDeltaTime);
             _weapons.PostCamera(Time.unscaledDeltaTime); // tracers from the muzzle as drawn this frame
@@ -401,6 +445,9 @@ namespace Sculpt.Game.Bootstrap
                 else if (a == "-offline") NextLaunch = Launch.Offline;
                 else if (a == "-bot") NextLaunch = Launch.VsBot;
                 else if (a == "-breach") NextMap = MapChoice.Breach;
+                else if (a == "-br") { NextMap = MapChoice.BattleRoyale; if (NextLaunch == Launch.Menu) NextLaunch = Launch.Offline; }
+                else if (a == "-duos") NextBrMode = BrMode.Duos;
+                else if (a == "-squads") NextBrMode = BrMode.Squads;
                 else if (a == "-phototour") NextLaunch = Launch.Offline;
                 else if (a == "-spectate" && i + 1 < args.Length) { NextLaunch = Launch.Spectate; NextAddress = args[i + 1]; }
                 else if (a == "-replay" && i + 1 < args.Length)
@@ -411,7 +458,7 @@ namespace Sculpt.Game.Bootstrap
                     try
                     {
                         var f = Sculpt.Core.Replay.ReplayFile.Read(System.IO.File.ReadAllBytes(NextReplayPath));
-                        NextMap = f.Header.Map == "Breach" ? MapChoice.Breach : MapChoice.Duel;
+                        NextMap = MapOf(f.Header.Map);
                     }
                     catch (Exception) { /* the launch reports it */ }
                 }
@@ -454,6 +501,31 @@ namespace Sculpt.Game.Bootstrap
             _input?.Dispose();
             _session?.Dispose();
             Debug.Log($"[SCULPT] Unload: input and network shut down in {sw.ElapsedMilliseconds} ms.");
+        }
+    }
+
+    /// <summary>A battle royale bot that waits (standing still) until the walking grid is built, then plays as a duel bot.</summary>
+    internal sealed class PendingBot : IBotBrain
+    {
+        private readonly System.Threading.Tasks.Task<BotNav> _nav;
+        private readonly BotLevel _level;
+        private readonly int _seed;
+        private DuelBot _bot;
+
+        public PendingBot(System.Threading.Tasks.Task<BotNav> nav, BotLevel level, int seed)
+        {
+            _nav = nav;
+            _level = level;
+            _seed = seed;
+        }
+
+        public bool CountsAsPlayer => true;
+
+        public InputCmd Next(NetServer server, ServerPlayer me)
+        {
+            if (_bot == null && _nav.IsCompleted && !_nav.IsFaulted) _bot = new DuelBot(_nav.Result, DuelBotConfig.For(_level), _seed);
+            if (_bot != null) return _bot.Next(server, me);
+            return new InputCmd { Tick = server.Tick, ViewTick = server.Tick, Move = new MoveInput { Yaw = InputCmd.QuantizeYaw(me.SpawnYaw) } };
         }
     }
 }

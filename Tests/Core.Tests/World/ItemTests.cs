@@ -350,7 +350,7 @@ namespace Sculpt.Core.Tests.World
                 new GroundItem { Id = 8, Kind = Item.Grenade, Count = 2, Position = new Vec3d(0, 4.5, 0), DroppedTick = -5 },
             };
             var w = new ByteWriter(128);
-            ItemsProtocol.Write(w, new ItemsMsg { Tick = 77, Items = list });
+            ItemsProtocol.Write(w, new ItemsMsg { Tick = 77, Full = true, Items = list });
             byte[] data = w.ToArray();
             var r = new ByteReader(data, 0, data.Length);
             var into = new List<GroundItem>();
@@ -361,7 +361,8 @@ namespace Sculpt.Core.Tests.World
             Assert.That(into[0].AmmoUsed, Is.EqualTo(4));
             Assert.That(into[0].Position, Is.EqualTo(new Vec3d(1.5, 0, -2.25)));
             Assert.That(into[1].Count, Is.EqualTo(2));
-            data[1 + 4 + 2 + 4] = 9; // first item's kind
+            Assert.That(m.Full, Is.True);
+            data[1 + 4 + 1 + 2 + 4] = 9; // first item's kind (above the last ground kind)
             Assert.Throws<NetFormatException>(() => { var b = new ByteReader(data, 0, data.Length); ItemsProtocol.Read(ref b, into); });
         }
 

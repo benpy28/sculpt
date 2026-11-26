@@ -560,7 +560,9 @@ namespace Sculpt.Core.Tests.Replay
             Assert.That(early.Playing, Is.False);
             Assert.That(early.SpectatorDelayTicks, Is.EqualTo(delay));
             Assert.That(early.SpectatorSynced && late.SpectatorSynced, "both have the whole state");
-            Assert.That(late.SpectatorFrameTick, Is.EqualTo(early.SpectatorFrameTick), "the late one caught up");
+            // Each link has its own +-10 ms jitter, so on any one tick the two can be a frame apart either way.
+            int skew = (int)Math.Ceiling(2 * 10 / 1000.0 * SimTime.TicksPerSecond) + 2;
+            Assert.That(late.SpectatorFrameTick, Is.InRange(early.SpectatorFrameTick - skew, early.SpectatorFrameTick + skew), "the late one caught up");
             Assert.That(rig.Server.Tick - early.SpectatorFrameTick, Is.InRange(delay, delay + SimTime.TicksPerSecond / 5), "about the delay behind (plus the link)");
             Assert.That(early.DroppedPackets + late.DroppedPackets, Is.Zero);
             Assert.That(WallStates(late.Walls), Is.EqualTo(WallStates(early.Walls)));

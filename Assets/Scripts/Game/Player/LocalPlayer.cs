@@ -522,6 +522,15 @@ namespace Sculpt.Game.Player
         /// <summary>Turn to face the way your spawn faces (a new match moved you back there).</summary>
         public void FaceSpawnNow() => FaceSpawn();
 
+        /// <summary>Turns the view to look level at a point (battle royale: the map's middle when a match is dealt).</summary>
+        public void FaceTowards(Vec3d point)
+        {
+            Vec3d d = point - State.Position;
+            if (d.X * d.X + d.Z * d.Z < 1e-6) return;
+            Yaw = (float)(System.Math.Atan2(d.X, d.Z) * Mathf.Rad2Deg);
+            Pitch = 0;
+        }
+
         private void StopRace()
         {
             _race = null;

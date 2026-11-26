@@ -53,9 +53,18 @@ namespace Sculpt.Core.Net
         private bool CountsForMatch(ServerPlayer p) =>
             !IsBotConnection(p.ConnectionId) || (_brains.TryGetValue(p.Id, out IBotBrain b) && b.CountsAsPlayer);
 
+        /// <summary>
+        /// Bot path searches started this tick. Bots share a small budget per tick (<see cref="BotPathsPerTick"/>) so 32
+        /// bots choosing where to go on the same tick (a battle royale start) spread their searches over a few ticks
+        /// instead of stalling one.
+        /// </summary>
+        public int BotPathsThisTick { get; internal set; }
+        public int BotPathsPerTick = 1;
+
         /// <summary>Writes each bot's command for this tick into its input ring, as if it had arrived.</summary>
         private void FeedBots()
         {
+            BotPathsThisTick = 0;
             if (_dummies.Count == 0 && _brains.Count == 0) return;
             foreach (ServerPlayer p in _players)
             {

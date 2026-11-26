@@ -33,6 +33,49 @@ namespace Sculpt.Core.Net
         public int Team;
         public int Kills;
         public int Deaths;
+        /// <summary>Battle royale: where this player's team finished (1 = won), 0 while it is still in.</summary>
+        public int Place;
+    }
+
+    /// <summary>Battle royale team sizes (0 = not a battle royale).</summary>
+    public enum BrMode : byte { None = 0, Solos = 1, Duos = 2, Squads = 3 }
+
+    /// <summary>
+    /// The battle royale circle as every client knows it: during a phase it waits (showing where the next circle will
+    /// be), then shrinks from <see cref="From"/> to <see cref="To"/> between <see cref="ShrinkStart"/> and
+    /// <see cref="ShrinkEnd"/>. Outside it you take <see cref="Dps"/> once a second. Clients work out the radius at any
+    /// tick from these numbers, so the message only goes out when a phase starts.
+    /// </summary>
+    public struct StormState
+    {
+        /// <summary>Phase index, -1 before the first.</summary>
+        public int Phase;
+        public int PhaseCount;
+        public double FromX, FromZ, FromRadius;
+        public double ToX, ToZ, ToRadius;
+        public int ShrinkStart, ShrinkEnd;
+        public int Dps;
+
+        public bool Active => Phase >= 0;
+
+        /// <summary>0 before the shrink, 1 after it.</summary>
+        public double Progress(double tick)
+        {
+            if (tick <= ShrinkStart) return 0;
+            if (tick >= ShrinkEnd || ShrinkEnd <= ShrinkStart) return 1;
+            return (tick - ShrinkStart) / (ShrinkEnd - ShrinkStart);
+        }
+
+        public double RadiusAt(double tick) { double f = Progress(tick); return FromRadius + (ToRadius - FromRadius) * f; }
+        public double CentreXAt(double tick) { double f = Progress(tick); return FromX + (ToX - FromX) * f; }
+        public double CentreZAt(double tick) { double f = Progress(tick); return FromZ + (ToZ - FromZ) * f; }
+
+        /// <summary>How far outside the circle a point is (negative inside).</summary>
+        public double OutsideBy(Vec3d p, double tick)
+        {
+            double dx = p.X - CentreXAt(tick), dz = p.Z - CentreZAt(tick);
+            return System.Math.Sqrt(dx * dx + dz * dz) - RadiusAt(tick);
+        }
     }
 
     /// <summary>What every client knows about the match.</summary>
@@ -46,6 +89,15 @@ namespace Sculpt.Core.Net
         /// <summary>Bumped on every change, so views can tell something happened.</summary>
         public int Version;
         public readonly List<MatchScore> Scores = new List<MatchScore>();
+        /// <summary>Battle royale (None for the 1v1).</summary>
+        public BrMode Mode;
+        public int TeamSize = 1;
+        public int AliveTeams, AlivePlayers;
+        /// <summary>The team that won the last battle royale (0 = none yet, or nobody).</summary>
+        public int WinnerTeam;
+        public StormState Storm;
+
+        public bool IsBr => Mode != BrMode.None;
 
         public bool Protects => Phase == MatchPhase.Countdown || Phase == MatchPhase.Ended;
         public bool CountsKills => Phase == MatchPhase.Playing;
@@ -77,12 +129,24 @@ namespace Sculpt.Core.Net
             Version++;
             Scores.Clear();
             Scores.AddRange(o.Scores);
+            Mode = o.Mode;
+            TeamSize = o.TeamSize;
+            AliveTeams = o.AliveTeams;
+            AlivePlayers = o.AlivePlayers;
+            WinnerTeam = o.WinnerTeam;
+            Storm = o.Storm;
         }
     }
 
     /// <summary>MsgType.Match, reliable: the whole match state (tiny), sent on every change and to joiners.</summary>
     public static class MatchProtocol
     {
+        private static double Finite(float v)
+        {
+            if (float.IsNaN(v) || float.IsInfinity(v)) throw new NetFormatException("Bad number.");
+            return v;
+        }
+
         public const int MaxScores = 64;
 
         public static void Write(ByteWriter w, MatchState m, int tick)
@@ -101,7 +165,22 @@ namespace Sculpt.Core.Net
                 w.U8((byte)s.Team);
                 w.U16((ushort)System.Math.Max(0, System.Math.Min(ushort.MaxValue, s.Kills)));
                 w.U16((ushort)System.Math.Max(0, System.Math.Min(ushort.MaxValue, s.Deaths)));
+                w.U8((byte)System.Math.Max(0, System.Math.Min(255, s.Place)));
             }
+            w.U8((byte)m.Mode);
+            if (m.Mode == BrMode.None) return;
+            w.U8((byte)m.TeamSize);
+            w.U8((byte)System.Math.Min(255, m.AliveTeams));
+            w.U8((byte)System.Math.Min(255, m.AlivePlayers));
+            w.U8((byte)System.Math.Max(0, System.Math.Min(255, m.WinnerTeam)));
+            StormState st = m.Storm;
+            w.U8((byte)(st.Phase + 1));
+            w.U8((byte)st.PhaseCount);
+            if (st.Phase < 0) return;
+            w.F32((float)st.FromX); w.F32((float)st.FromZ); w.F32((float)st.FromRadius);
+            w.F32((float)st.ToX); w.F32((float)st.ToZ); w.F32((float)st.ToRadius);
+            w.I32(st.ShrinkStart); w.I32(st.ShrinkEnd);
+            w.U8((byte)System.Math.Max(0, System.Math.Min(255, st.Dps)));
         }
 
         public static void Read(ref ByteReader r, MatchState into)
@@ -117,7 +196,31 @@ namespace Sculpt.Core.Net
             if (n > MaxScores) throw new NetFormatException("Too many scores.");
             into.Scores.Clear();
             for (int i = 0; i < n; i++)
-                into.Scores.Add(new MatchScore { PlayerId = r.I32(), Team = r.U8(), Kills = r.U16(), Deaths = r.U16() });
+                into.Scores.Add(new MatchScore { PlayerId = r.I32(), Team = r.U8(), Kills = r.U16(), Deaths = r.U16(), Place = r.U8() });
+            byte mode = r.U8();
+            if (mode > (byte)BrMode.Squads) throw new NetFormatException("Bad mode.");
+            into.Mode = (BrMode)mode;
+            into.Storm = new StormState { Phase = -1 };
+            into.AliveTeams = into.AlivePlayers = into.WinnerTeam = 0;
+            into.TeamSize = 1;
+            if (into.Mode != BrMode.None)
+            {
+                into.TeamSize = r.U8();
+                if (into.TeamSize < 1 || into.TeamSize > 4) throw new NetFormatException("Bad team size.");
+                into.AliveTeams = r.U8();
+                into.AlivePlayers = r.U8();
+                into.WinnerTeam = r.U8();
+                var st = new StormState { Phase = r.U8() - 1, PhaseCount = r.U8() };
+                if (st.Phase >= 0)
+                {
+                    st.FromX = Finite(r.F32()); st.FromZ = Finite(r.F32()); st.FromRadius = Finite(r.F32());
+                    st.ToX = Finite(r.F32()); st.ToZ = Finite(r.F32()); st.ToRadius = Finite(r.F32());
+                    st.ShrinkStart = r.I32(); st.ShrinkEnd = r.I32();
+                    st.Dps = r.U8();
+                    if (st.FromRadius < 0 || st.ToRadius < 0) throw new NetFormatException("Bad circle.");
+                }
+                into.Storm = st;
+            }
             into.Version++;
         }
     }

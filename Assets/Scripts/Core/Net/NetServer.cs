@@ -57,6 +57,10 @@ namespace Sculpt.Core.Net
         public int MatchKills, MatchDeaths;
         /// <summary>Respawn on the next tick (a new match).</summary>
         internal bool ForceRespawn;
+        /// <summary>Battle royale: give the start-of-match loadout once this respawn has happened.</summary>
+        internal bool BrLoadout;
+        /// <summary>Battle royale: the gun picked in the locker (None: the server's default).</summary>
+        public Item Locker;
         /// <summary>The last enemy who hurt this player, and when (kill credit for falls).</summary>
         public int LastHurtBy, LastHurtTick;
 
@@ -442,6 +446,7 @@ namespace Sculpt.Core.Net
                 Before before = TakeBefore(p);
                 NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches, Walls != null ? _charge : null);
                 CheckIntegrity(p, before);
+                if (p.BrLoadout && !p.State.Dead) { GiveBrLoadout(p); p.BrLoadout = false; }
                 if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
                 if (!p.State.Dead && (cmd.Hand.Pickup || cmd.Hand.Drop)) HandleItems(p, cmd);
                 if (cmd.Hand.Heal) HandleHeal(p, cmd);
@@ -466,7 +471,7 @@ namespace Sculpt.Core.Net
             ResolvePunches();
             ResolveGrenades();
             StepHealing();
-            StepPing();
+            if (Br == null) StepPing(); // no anti-hiding ping in a battle royale (the circle does that job)
             StepInterest();
 
             if (Sculpt != null)
@@ -477,6 +482,7 @@ namespace Sculpt.Core.Net
                 SendWorldDelta();
             }
 
+            StepBrEnd();
             SendCombat();
             SendTiles();
             if (Items.Version != _itemsSentVersion) { _itemsSentVersion = Items.Version; SendItems(-1); }
@@ -488,6 +494,7 @@ namespace Sculpt.Core.Net
                 Stream.EndTick(this);
                 StepSpectators();
             }
+            BrBetweenTicks(); // bots join and leave between ticks, like people (a re-run adds them back at the same place)
         }
 
         // ================================================================ Items
@@ -501,6 +508,11 @@ namespace Sculpt.Core.Net
             if (cmd.Hand.Pickup)
             {
                 Vec3d eye = p.State.Position + new Vec3d(0, PlayerMovement.EyeOf(p.State, Movement), 0);
+                if (Br != null && Items.TryGet(cmd.Hand.PickId, out GroundItem chest) && chest.Kind == Item.Chest)
+                {
+                    ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, OpenChest(p, chest, eye)));
+                    return;
+                }
                 PickupResult r = ItemRules.TryPickup(ref p.State, Items, cmd.Hand.PickId, Grid, eye, p.Id, Tick, Movement);
                 ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, r));
             }
@@ -508,14 +520,29 @@ namespace Sculpt.Core.Net
                 ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, PickupResult.Ok));
         }
 
-        /// <summary>The whole ground list to one connection, or to everyone (-1).</summary>
+        private readonly Dictionary<int, GroundItem> _itemsSent = new Dictionary<int, GroundItem>();
+        private readonly List<GroundItem> _itemUpserts = new List<GroundItem>();
+        private readonly List<int> _itemRemoved = new List<int>();
+        private readonly HashSet<int> _itemSeen = new HashSet<int>();
+
+        /// <summary>
+        /// The whole ground list to one connection (a joiner), or to everyone (-1) only what changed since the last
+        /// broadcast. Broadcasts also go into the spectator stream, whose key frames carry the whole list.
+        /// </summary>
         private void SendItems(int connectionId)
         {
-            var w = new ByteWriter(16 + Items.Count * 24);
-            ItemsProtocol.Write(w, new ItemsMsg { Tick = Tick, Items = new List<GroundItem>(Items.All) });
-            byte[] data = w.ToArray();
-            if (connectionId >= 0) { Send(connectionId, data, true); return; }
-            Broadcast(data);
+            if (connectionId != -1)
+            {
+                var full = new ByteWriter(16 + Items.Count * 24);
+                ItemsProtocol.Write(full, new ItemsMsg { Tick = Tick, Full = true, Items = new List<GroundItem>(Items.All) });
+                Send(connectionId, full.ToArray(), true);
+                return;
+            }
+            ItemsProtocol.Diff(_itemsSent, Items.All, _itemUpserts, _itemRemoved, _itemSeen);
+            if (_itemUpserts.Count == 0 && _itemRemoved.Count == 0) return;
+            var w = new ByteWriter(24 + _itemUpserts.Count * 24 + _itemRemoved.Count * 4);
+            ItemsProtocol.Write(w, new ItemsMsg { Tick = Tick, Items = _itemUpserts, Removed = _itemRemoved });
+            Broadcast(w.ToArray());
         }
 
         /// <summary>Puts an item on the map (map setup, tests). It rests on the surface below the point.</summary>

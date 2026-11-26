@@ -71,7 +71,7 @@ namespace Sculpt.Core
         public const double SegmentRise = 0.6;
 
         /// <summary>One building on the module grid, built from its edges and slab holes.</summary>
-        private sealed class Building
+        internal sealed class Building
         {
             public double X0, Z0;
             public int Mx, Mz, Storeys = 2;
@@ -316,7 +316,7 @@ namespace Sculpt.Core
         /// length is split into equal pieces no wider than a tile (so walls between buildings fit exactly, and a hole is
         /// never narrower than about a tile).
         /// </summary>
-        private static int[] StripWall(TileWalls t, Vec3d corner, double length, bool alongX, int rows)
+        internal static int[] StripWall(TileWalls t, Vec3d corner, double length, bool alongX, int rows)
         {
             double s = t.Config.TileSize, th = t.Config.TileThickness;
             int n = (int)Math.Ceiling(length / s - 1e-9);
@@ -360,7 +360,7 @@ namespace Sculpt.Core
         }
 
         /// <summary>A berm along X: rises north from z0 over <paramref name="run"/>, flat for <paramref name="flat"/>, falls over the same run.</summary>
-        private static void Berm(BrushWorld w, GreyboxInfo info, double x0, double x1, double z0, double run, double flat, double h)
+        internal static void Berm(BrushWorld w, GreyboxInfo info, double x0, double x1, double z0, double run, double flat, double h)
         {
             info.Hills.Add(w.AddRamp(new Vec3d(x0, 0, z0), new Vec3d(x1, h, z0 + run), Dir.North, BrushKind.Ground));
             info.Hills.Add(w.AddBox(new Vec3d(x0, 0, z0 + run), new Vec3d(x1, h, z0 + run + flat), BrushKind.Ground));
@@ -406,7 +406,7 @@ namespace Sculpt.Core
         /// across. Each segment is a wedge on the same slope, so the treads are one smooth climb; the underside is open
         /// (a sawtooth), so a broken segment is a hole you drop through.
         /// </summary>
-        private static void Climb(BrushWorld w, GreyboxInfo info, Aabb box, Dir rise, TileKind kind)
+        internal static void Climb(BrushWorld w, GreyboxInfo info, Aabb box, Dir rise, TileKind kind)
         {
             bool alongZ = rise == Dir.North || rise == Dir.South;
             bool up = rise == Dir.North || rise == Dir.East;
@@ -443,7 +443,7 @@ namespace Sculpt.Core
         /// -1 along the axis): each starts in the far cell, crosses the middle cell (open above, through every slab, so
         /// there is headroom) and arrives at the near cell's floor. Opens the walls across the stairwell.
         /// </summary>
-        private static void Stairwell(BrushWorld w, GreyboxInfo info, Building b, int lane, bool alongZ, int dir, bool flip = false)
+        internal static void Stairwell(BrushWorld w, GreyboxInfo info, Building b, int lane, bool alongZ, int dir, bool flip = false)
         {
             int n = alongZ ? b.Mz : b.Mx;
             if (n < 3) throw new ArgumentException("A stairwell needs three cells in a line.");
@@ -479,7 +479,7 @@ namespace Sculpt.Core
         /// Puts up a building: tile walls, floor tiles, then the frame as followers of them (beam strips over the wall
         /// lines, column pieces one tile row tall, nodes where strips and columns meet in a slab).
         /// </summary>
-        private static void Raise(BrushWorld w, GreyboxInfo info, Building b, string name)
+        internal static void Raise(BrushWorld w, GreyboxInfo info, Building b, string name)
         {
             TileWalls t = w.Tiles;
             double ts = t.Config.TileSize;

@@ -117,6 +117,7 @@ namespace Sculpt.Core.Net
         private readonly List<CombatEvent> _combatScratch = new List<CombatEvent>();
         private readonly List<TileChange> _tileScratch = new List<TileChange>();
         private readonly List<GroundItem> _itemScratch = new List<GroundItem>();
+        private readonly List<int> _itemGone = new List<int>();
 
         /// <summary>This client's copy of the items on the ground (only the server's Items messages change it).</summary>
         public readonly GroundItems Items = new GroundItems();
@@ -238,13 +239,21 @@ namespace Sculpt.Core.Net
                     case MsgType.Items:
                     {
                         if (!Joined) return;
-                        ItemsMsg im = ItemsProtocol.Read(ref r, _itemScratch);
-                        Items.ReplaceAll(im.Items);
+                        ItemsMsg im = ItemsProtocol.Read(ref r, _itemScratch, _itemGone);
+                        ItemsProtocol.Apply(Items, im);
                         break;
                     }
                     case MsgType.Match:
                         if (!Joined) return;
                         MatchProtocol.Read(ref r, Match);
+                        // Battle royale deals teams out at every match start; the scores carry yours.
+                        if (Match.IsBr)
+                            foreach (MatchScore sc in Match.Scores)
+                                if (sc.PlayerId == PlayerId && sc.Team > 0 && sc.Team != Team)
+                                {
+                                    Team = sc.Team;
+                                    Sculpt?.SetLocalTeam(Team);
+                                }
                         break;
                     case MsgType.Reveal:
                         if (!Joined) return;

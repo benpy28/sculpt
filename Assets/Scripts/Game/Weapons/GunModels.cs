@@ -106,6 +106,39 @@ namespace Sculpt.Game.Weapons
             return root;
         }
 
+        // (Wood is shared with the gun stocks.)
+        private static readonly Color WoodDark = new Color(0.30f, 0.19f, 0.10f);
+        private static readonly Color Brass = new Color(0.86f, 0.66f, 0.28f);
+
+        /// <summary>
+        /// A battle royale loot chest: a wooden box with a curved-looking lid (stepped), dark iron bands and a brass lock
+        /// on the front (+Z). Origin at the middle of its base.
+        /// </summary>
+        public static GameObject BuildChest(Material mat, int layer = 0)
+        {
+            var root = new GameObject("Chest") { layer = layer };
+            var b = new BoxBuilder();
+            b.Box(new Vector3(0, 0.22f, 0), new Vector3(0.9f, 0.44f, 0.56f), Wood);                    // body
+            b.Box(new Vector3(0, 0.49f, 0), new Vector3(0.9f, 0.1f, 0.52f), WoodDark);                 // lid, stepped
+            b.Box(new Vector3(0, 0.56f, 0), new Vector3(0.9f, 0.06f, 0.4f), WoodDark);
+            b.Box(new Vector3(0, 0.6f, 0), new Vector3(0.9f, 0.04f, 0.24f), WoodDark);
+            foreach (float x in new[] { -0.34f, 0.34f })
+                b.Box(new Vector3(x, 0.3f, 0), new Vector3(0.06f, 0.62f, 0.58f), DarkSteel);           // iron bands
+            b.Box(new Vector3(0, 0.36f, 0.29f), new Vector3(0.12f, 0.14f, 0.03f), Brass);              // lock
+            Attach(root.transform, "Body", b.ToMesh("Chest"), mat, layer);
+            return root;
+        }
+
+        /// <summary>A thin glowing plate under a battle royale gun, in its rarity's colour.</summary>
+        public static GameObject BuildRarityPlate(Material mat, Color colour, int layer = 0)
+        {
+            var root = new GameObject("Rarity") { layer = layer };
+            var b = new BoxBuilder();
+            b.Box(new Vector3(0, 0.006f, 0), new Vector3(0.75f, 0.012f, 0.32f), colour);
+            Attach(root.transform, "Plate", b.ToMesh("Rarity plate"), mat, layer);
+            return root;
+        }
+
         private static readonly Color Putty = new Color(0.66f, 0.62f, 0.50f);
         private static readonly Color Tape = new Color(0.10f, 0.10f, 0.10f);
         private static readonly Color Blink = new Color(1f, 0.16f, 0.10f);
