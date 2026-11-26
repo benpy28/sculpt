@@ -91,6 +91,31 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
+        public void RarityIsTheGunThatFired_EvenIfItLeavesTheBagOnTheSameTick()
+        {
+            // The shot is resolved after the shooter's item actions (and after other shots, which can kill the shooter
+            // and, in a battle royale, drop the whole bag). The damage must be the rarity of the copy that fired.
+            var h = Arena();
+            var a = h.AddClient(SculptNetHarness.FeetIn(10, 5), team: 1);
+            var b = h.AddClient(SculptNetHarness.FeetIn(10, 12), team: 2);
+            var shoot = Shooter(Weapon.Pistol, () => b, k => k == 60);
+            int fired = int.MinValue;
+            a.Script = (p, t) =>
+            {
+                SculptTickInput i = shoot(p, t);
+                if (i.Move.FirePressed && fired == int.MinValue) { fired = t; i.Hand.Drop = true; } // drop it on the shot's tick
+                return i;
+            };
+            h.RunSeconds(0.2);
+            int slot = a.ServerSide.State.Hand.Bag.SlotOf(Item.Pistol);
+            a.ServerSide.State.Hand.Bag.SetRarity(slot, Rarity.Legendary);
+            h.RunSeconds(1.2);
+            Assert.That(fired, Is.Not.EqualTo(int.MinValue), "the script fired");
+            Assert.That(a.ServerSide.State.Hand.Bag.SlotOf(Item.Pistol), Is.LessThan(0), "the pistol was dropped");
+            Assert.That(b.ServerSide.State.Damage, Is.EqualTo(WeaponsConfig.Round(25.5 * 1.2)), "a legendary pistol body shot: 31");
+        }
+
+        [Test]
         public void DeadPlayerRespawnsAtSpawnWithFullHealth()
         {
             var h = Arena();
