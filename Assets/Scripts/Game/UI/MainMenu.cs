@@ -144,7 +144,7 @@ namespace Sculpt.Game.UI
                 if (b.enabled && n.EndsWith("Hud") && n != "PerfHud") { b.enabled = false; _hidden.Add(b); }
             }
             if (_session.Mode == NetMode.Offline && GameBootstrap.CurrentMap == GameBootstrap.MapChoice.Duel)
-                _blasted = MainMenuScene.Blast(_session.Server?.Walls);
+                lock (_session.ServerLock) _blasted = MainMenuScene.Blast(_session.Server?.Walls);
         }
 
         private void SceneOff()
@@ -156,7 +156,7 @@ namespace Sculpt.Game.UI
             _hiddenObjects.Clear();
             foreach (Behaviour b in _hidden) if (b != null) b.enabled = true;
             _hidden.Clear();
-            MainMenuScene.Restore(_session.Server?.Walls, _blasted);
+            lock (_session.ServerLock) MainMenuScene.Restore(_session.Server?.Walls, _blasted);
             _blasted = null;
         }
 

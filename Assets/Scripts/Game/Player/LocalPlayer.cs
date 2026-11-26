@@ -29,6 +29,8 @@ namespace Sculpt.Game.Player
         /// <summary>View angles in degrees. Yaw 0 = north, positive turns toward east.</summary>
         public float Yaw { get; private set; }
         public float Pitch { get; private set; }
+        /// <summary>Dev only (-autoplay): when set, its command replaces what the keyboard and mouse would send.</summary>
+        public System.Func<InputCmd?> AutoPilot;
 
         /// <summary>Interpolated feet position for rendering (includes the decaying correction offset).</summary>
         public Vector3 RenderFeet { get; private set; }
@@ -473,6 +475,21 @@ namespace Sculpt.Game.Player
                 mi = _showcase.Next(State);
                 _showcaseYaw = (float)(mi.Yaw * Mathf.Rad2Deg); // the camera eases toward it per frame (SampleFrame)
                 if (_showcase.Finished) StopShowcase();
+            }
+
+            // Dev autoplay (-autoplay): a bot brain plays you, so a profile run is a real first-person match.
+            if (AutoPilot != null && Net.Joined)
+            {
+                InputCmd? auto = AutoPilot();
+                if (auto.HasValue)
+                {
+                    mi = auto.Value.Move;
+                    hand = auto.Value.Hand;
+                    confirm = false;
+                    respawn = false;
+                    Yaw = (float)(mi.Yaw * Mathf.Rad2Deg);
+                    Pitch = auto.Value.Pitch;
+                }
             }
 
             MoveMode modeBefore = State.Mode;

@@ -62,7 +62,8 @@ namespace Sculpt.Game.Net
                 : GameBootstrap.CurrentMap == GameBootstrap.MapChoice.Breach ? LanRoomMap.Breach : LanRoomMap.Duel;
             int players = 0;
             if (_session.Server != null)
-                foreach (ServerPlayer p in _session.Server.Players) if (!NetServer.IsBotConnection(p.ConnectionId)) players++;
+                lock (_session.ServerLock) // the server thread adds and removes bots between ticks
+                    foreach (ServerPlayer p in _session.Server.Players) if (!NetServer.IsBotConnection(p.ConnectionId)) players++;
             return new LanRoomReply
             {
                 Code = Code, Nonce = nonce, Protocol = Protocol.Version, GamePort = _session.Port, Map = map,

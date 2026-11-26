@@ -233,7 +233,9 @@ namespace Sculpt.Core.Net
             }
 
             // Interest: the shooter must have been sent the victim around the view the hit was checked against.
-            if (AC.Interest.Enabled && TryPair(p.Id, victim.Id, out InterestPair pair))
+            // (A bot is sent nothing and sees with its own checks: nothing to compare.)
+            if (!p.Viewer) { }
+            else if (AC.Interest.Enabled && TryPair(p.Id, victim.Id, out InterestPair pair))
             {
                 int sent = pair.A == p.Id ? pair.SentToA : pair.SentToB;
                 double view = Math.Max(Tick - Weapons.MaxRewindTicks, Math.Min(Tick, cmd.ViewTick + cmd.ViewFrac / 256.0));
@@ -416,6 +418,9 @@ namespace Sculpt.Core.Net
                 for (int j = i + 1; j < n; j++)
                 {
                     ServerPlayer b = _players[j];
+                    // Nobody looks through either's eyes (two bots): nothing to send, nothing to test. With 31 bots and
+                    // one person this leaves 31 pairs of 496.
+                    if (!a.Viewer && !b.Viewer) continue;
                     InterestPair pair = InterestOf(a, b);
                     bool friends = a.Team == b.Team && !Weapons.FriendlyFire;
                     if (friends) { pair.SentToA = pair.SentToB = Tick; continue; }

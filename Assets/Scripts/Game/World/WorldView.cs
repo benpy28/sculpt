@@ -127,7 +127,21 @@ namespace Sculpt.Game.World
             _grass?.Bind(grid);
             if (same) return;
             grid.MarkAllDirty();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             RebuildDirty();
+            Debug.Log($"[SCULPT] Ground meshed: {grid.ChunkCount} chunks in {sw.ElapsedMilliseconds} ms.");
+            if (Debug.isDebugBuild && System.Array.Exists(System.Environment.GetCommandLineArgs(), a => a == "-meshcheck"))
+            {
+                int bad = 0, done = 0;
+                for (int i = 0; i < grid.ChunkCount && done < 400; i += 7)
+                {
+                    Int3 cc = grid.ChunkCoordFromIndex(i);
+                    string p = _mesher.CheckFlat(grid, cc);
+                    done++;
+                    if (p != null) { bad++; if (bad <= 5) Debug.LogWarning($"[SCULPT] Mesh check: chunk {cc.X},{cc.Y},{cc.Z}: {p}"); }
+                }
+                Debug.Log($"[SCULPT] Mesh check: {done} chunks compared, {bad} differ.");
+            }
         }
 
         /// <summary>Players whose feet flatten the grass (the local player and everyone drawn remotely).</summary>

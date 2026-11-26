@@ -88,7 +88,9 @@ namespace Sculpt.Game.Diagnostics
             b._shotMenu = Array.Exists(args, a => string.Equals(a, "-benchmarkshotmenu", StringComparison.OrdinalIgnoreCase));
             string off = Arg(args, "-benchmarkdisable");
             if (!string.IsNullOrEmpty(off)) b._disable = off.Split(',');
-            rig.Mode = b;
+            // -benchmarkplay: keep the game's own camera (first person, or the battle royale's watch camera once out),
+            // for a run where -autoplay plays the match. Otherwise the fixed route.
+            if (!Array.Exists(args, a => string.Equals(a, "-benchmarkplay", StringComparison.OrdinalIgnoreCase))) rig.Mode = b;
             player.InputBlocked = true;
             LocalPlayer.LockCursor(false);
             Debug.Log($"[SCULPT] Benchmark: {b._seconds:0} s after a {b.WarmupSeconds:0} s warm-up. Report: {b._outPath}");

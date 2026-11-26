@@ -23,6 +23,12 @@ namespace Sculpt.Game.World
     public sealed partial class BrushView : MonoBehaviour
     {
         private const float BlockSize = 16f;
+        /// <summary>Breakable tiles are drawn in smaller blocks than the static brushes, so a change rebuilds less.</summary>
+        private const float TileBlockSize = 8f;
+        /// <summary>Tile blocks this close to the camera are rebuilt on the frame they change; farther ones share
+        /// <see cref="RebuildBudgetMs"/> a frame, nearest first (a far wall's new look may wait a few frames).</summary>
+        private const float RebuildAlwaysMetres = 30f;
+        private const double RebuildBudgetMs = 1.5;
         private const double StepRise = 0.15;
 
         public static readonly Color Floor = new Color(0.66f, 0.62f, 0.56f);
@@ -80,6 +86,26 @@ namespace Sculpt.Game.World
         private readonly HashSet<Vector2Int> _dirty = new HashSet<Vector2Int>();
         private TileDebris _debris;
 
+        private static Vector2Int TileBlockOf(in Brush b)
+        {
+            Vector3 c = ((b.Bounds.Min + b.Bounds.Max) * 0.5).ToUnity();
+            return new Vector2Int(Mathf.FloorToInt(c.x / TileBlockSize), Mathf.FloorToInt(c.z / TileBlockSize));
+        }
+
+        // Tiles drawn without cells (frame, stairs, ramps, doors): the only ones whose look is found by scanning.
+        private int[] _plainTiles;
+        private bool _firstScan;
+        private readonly MeshBits _scratch = new MeshBits { Cells = true };
+        private readonly List<Vector2Int> _order = new List<Vector2Int>();
+        private Vector3 _camAt;
+        private System.Comparison<Vector2Int> _nearest;
+
+        private float BlockDistance(Vector2Int k)
+        {
+            float x = (k.x + 0.5f) * TileBlockSize - _camAt.x, z = (k.y + 0.5f) * TileBlockSize - _camAt.z;
+            return x * x + z * z;
+        }
+
         private static Vector2Int BlockOf(in Brush b)
         {
             Vector3 c = ((b.Bounds.Min + b.Bounds.Max) * 0.5).ToUnity();
@@ -102,11 +128,15 @@ namespace Sculpt.Game.World
             _look = new int[tiles.Count];
             for (int i = 0; i < tiles.Count; i++)
             {
-                Vector2Int key = BlockOf(tiles.World[tiles[i].Brush]);
+                Vector2Int key = TileBlockOf(tiles.World[tiles[i].Brush]);
                 if (!_tilesByBlock.TryGetValue(key, out var list)) _tilesByBlock[key] = list = new List<int>();
                 list.Add(i);
                 _look[i] = -1;
             }
+            var plain = new List<int>();
+            for (int i = 0; i < tiles.Count; i++) if (!tiles.HasCells(i)) plain.Add(i);
+            _plainTiles = plain.ToArray();
+            _firstScan = true;
             if (_debris == null) _debris = new GameObject("Tile Debris").AddComponent<TileDebris>();
             _debris.transform.SetParent(transform, false);
             BindRims();
@@ -137,7 +167,7 @@ namespace Sculpt.Game.World
                 if (c.To == TileState.Broken || (after & ~before) != 0 || c.Cause == TileCause.Heal || c.Cause == TileCause.Reinforce)
                     _marks?.ClearTile(c.Tile);
                 // Cells drawn round this tile changed (cracks spread by area, so its neighbours redraw too).
-                if (_tiles.HasCells(c.Tile)) { _dirty.Add(BlockOf(_tiles.World[_tiles[c.Tile].Brush])); DirtyNeighbours(c.Tile); }
+                if (_tiles.HasCells(c.Tile)) { _dirty.Add(TileBlockOf(_tiles.World[_tiles[c.Tile].Brush])); DirtyNeighbours(c.Tile); }
                 // Sound finds its way through what is open now (a new hole, a healed wall, a door).
                 Audio.SoundRouter.Invalidate(_tiles.BoundsOf(c.Tile));
                 if (c.Cause == TileCause.Server || c.Cause == TileCause.Built) continue;
@@ -169,20 +199,55 @@ namespace Sculpt.Game.World
             }
             _tiles.Changes.Clear();
             if (_tiles.Revision == _tilesRev && _dirty.Count == 0) return;
-            _tilesRev = _tiles.Revision;
-            for (int i = 0; i < _tiles.Count; i++)
+            if (_tiles.Revision != _tilesRev)
             {
-                if (_tiles.HasCells(i) && _look[i] != -1) continue; // walls and floors redraw from their changes (above)
-                int look = LookOf(_tiles[i]);
-                ulong open = _tiles[i].Open;
-                if (look == _look[i] && open == _openSeen[i]) continue;
-                _look[i] = look;
-                _openSeen[i] = open;
-                _dirty.Add(BlockOf(_tiles.World[_tiles[i].Brush]));
-                DirtyNeighbours(i); // a hole's rim is drawn by the broken tile and depends on the tiles around it
+                _tilesRev = _tiles.Revision;
+                // Walls and floors redraw from their changes (above); after the first pass only the plain tiles are
+                // scanned for a new look (the map has tens of thousands of walls).
+                int n = _firstScan ? _tiles.Count : _plainTiles.Length;
+                for (int k = 0; k < n; k++)
+                {
+                    int i = _firstScan ? k : _plainTiles[k];
+                    if (_tiles.HasCells(i) && _look[i] != -1) continue;
+                    int look = LookOf(_tiles[i]);
+                    ulong open = _tiles[i].Open;
+                    if (look == _look[i] && open == _openSeen[i]) continue;
+                    _look[i] = look;
+                    _openSeen[i] = open;
+                    _dirty.Add(TileBlockOf(_tiles.World[_tiles[i].Brush]));
+                    DirtyNeighbours(i); // a hole's rim is drawn by the broken tile and depends on the tiles around it
+                }
             }
-            foreach (Vector2Int key in _dirty) RebuildTiles(key);
-            _dirty.Clear();
+            bool all = _firstScan;
+            _firstScan = false;
+            RebuildDirty(all);
+        }
+
+        /// <summary>
+        /// Rebuilds changed tile blocks, nearest the camera first: everything within <see cref="RebuildAlwaysMetres"/>
+        /// at once, the rest while this frame's budget lasts (all of it on the first build).
+        /// </summary>
+        private void RebuildDirty(bool all)
+        {
+            if (_dirty.Count == 0) return;
+            Camera cam = Camera.main;
+            _camAt = cam != null ? cam.transform.position : Vector3.zero;
+            _order.Clear();
+            foreach (Vector2Int key in _dirty) _order.Add(key);
+            if (!all)
+            {
+                _nearest ??= (a, b) => BlockDistance(a).CompareTo(BlockDistance(b));
+                _order.Sort(_nearest);
+            }
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            double budgetTicks = RebuildBudgetMs * System.Diagnostics.Stopwatch.Frequency / 1000.0;
+            float always = RebuildAlwaysMetres * RebuildAlwaysMetres;
+            foreach (Vector2Int key in _order)
+            {
+                if (!all && BlockDistance(key) > always && System.Diagnostics.Stopwatch.GetTimestamp() - start > budgetTicks) break;
+                RebuildTiles(key);
+                _dirty.Remove(key);
+            }
         }
 
         private void RebuildTiles(Vector2Int key)
@@ -201,7 +266,8 @@ namespace Sculpt.Game.World
                 _tileMeshes[key] = mesh;
                 _blocks.Add(go);
             }
-            var m = new MeshBits { Cells = true };
+            MeshBits m = _scratch;
+            m.Clear();
             if (_tilesByBlock.TryGetValue(key, out var ids))
                 foreach (int id in ids) AddTile(m, id, _tiles[id]);
             mesh.Clear();
@@ -431,6 +497,11 @@ namespace Sculpt.Game.World
             public bool Cells;
             /// <summary>Colours are shade only, not linearised (the voxel shader's nature palette does the colour).</summary>
             public bool Raw;
+
+            public void Clear()
+            {
+                V.Clear(); N.Clear(); C.Clear(); T.Clear(); U1.Clear(); U2.Clear();
+            }
         }
 
         private static Color ColorOf(BrushKind k)

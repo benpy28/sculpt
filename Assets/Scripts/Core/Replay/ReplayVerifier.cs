@@ -129,6 +129,7 @@ namespace Sculpt.Core.Replay
                 {
                     Join j = joins[ji];
                     ServerPlayer p = s.AddBot(new Scripted { Cmds = cmds, CountsAsPlayer = j.Counts }, j.Team, j.Spawn, j.Yaw);
+                    p.Viewer = j.Kind == JoinKind.Human; // interest is worked out as it was live
                     if (p.Id != j.Id) { check.Problem = $"player {j.Id} came back as {p.Id}"; return check; }
                     byId[p.Id] = p;
                 }

@@ -172,6 +172,8 @@ namespace Sculpt.Game.Bootstrap
             BrushWorld brushes = null;
             Func<SubGrid, ITerrain> terrain = null;
             if (!_commandLineDone) ReadLaunchArgs();
+            HookCoreProfiling();
+            if (!Array.Exists(Environment.GetCommandLineArgs(), a => a == "-nojitwarm")) JitWarmup.Start(typeof(NetServer).Assembly); // compile the simulation while the map loads
             CurrentMap = NextMap;
             BrMapInfo brInfo = null;
             if (NextMap == MapChoice.BattleRoyale)
@@ -328,6 +330,27 @@ namespace Sculpt.Game.Bootstrap
             }
             _world.TrackPlayers(_player, _session);
 
+            if (brInfo != null && _session.Server != null && Array.Exists(Environment.GetCommandLineArgs(), a => string.Equals(a, "-autoplay", StringComparison.OrdinalIgnoreCase)))
+            {
+                // Dev: a hard bot brain plays the local player (profiling a real first-person battle royale, no hands).
+                var autoBot = new PendingBot(_brNav, BotLevel.Hard, 777);
+                NetSession s = _session;
+                InputCmd? autoLast = null;
+                _player.AutoPilot = () =>
+                {
+                    // Never wait for the server thread (a person's input never does): mid-tick, hold the last command.
+                    if (!System.Threading.Monitor.TryEnter(s.ServerLock)) return autoLast;
+                    try
+                    {
+                        ServerPlayer sp = s.LocalServerPlayer;
+                        if (sp == null || s.Server == null) return null;
+                        autoLast = autoBot.Next(s.Server, sp);
+                        return autoLast;
+                    }
+                    finally { System.Threading.Monitor.Exit(s.ServerLock); }
+                };
+                Debug.Log("[SCULPT] Autoplay: a bot plays the local player.");
+            }
             new GameObject("Remote Players").AddComponent<RemotePlayersView>().Init(_session, movement);
             new GameObject("Ground Items").AddComponent<ItemsView>().Init(_session, _player);
 
@@ -403,17 +426,24 @@ namespace Sculpt.Game.Bootstrap
 #if UNITY_EDITOR
             if (weaponSettings != null) weaponSettings.ApplyTo(_movement.Weapons); // live tuning in Play mode
 #endif
-            using (MkSession.Auto()) _session.BeginFrame(dt); // read network, run server ticks (offline/host), deliver snapshots
+            GarbageSections.Frame();
+            GarbageSections.Begin(_gcSession);
+            using (MkSession.Auto()) _session.BeginFrame(dt);
+            GarbageSections.End(_gcSession); // read network, run server ticks (offline/host), deliver snapshots
             _player.Events.Clear();        // this frame's movement events (read in LateUpdate by HUD and audio)
             _player.SampleFrame();
 
             NetClient net = _session.Client;
             int ticks = net.BeginFrame(dt); // client clock runs a little ahead of the server
+            GarbageSections.Begin(_gcPredict);
             using (MkPredict.Auto()) for (int i = 0; i < ticks; i++) _player.Tick();
+            GarbageSections.End(_gcPredict);
             _session.EndFrame();            // inputs leave this frame
             PerfRuntime.PacketsSent();      // latency overlay: this frame's commands are on the wire
 
+            GarbageSections.Begin(_gcVisual);
             using (MkVisual.Auto()) { net.UpdateVisual(dt); _player.Render((float)net.Alpha); }
+            GarbageSections.End(_gcVisual);
             // Watching (live or a replay): the spectator camera, else first person.
             bool watching = net.IsSpectator;
             if (watching) _spectatorCam.HandleInput();
@@ -424,16 +454,48 @@ namespace Sculpt.Game.Bootstrap
             else _brDeathCam.Reset();
             if (!(_rig.Mode is Benchmark)) // a -benchmark run flies its own fixed route
                 _rig.Mode = watching ? _spectatorCam : brOut ? _brDeathCam : (ICameraMode)_firstPerson;
+            GarbageSections.Begin(_gcLate);
             _weapons.PreCamera(Time.unscaledDeltaTime);  // this frame's shots kick the view before it is placed
             _rig.Apply(Time.unscaledDeltaTime);
             _weapons.PostCamera(Time.unscaledDeltaTime); // tracers from the muzzle as drawn this frame
             using (MkWorld.Auto()) _world.RebuildDirty();
+            GarbageSections.End(_gcLate);
         }
 
         // Named sections for -benchmarkmarkers and the Unity profiler.
         private static readonly Unity.Profiling.ProfilerMarker MkSession = new Unity.Profiling.ProfilerMarker("SCULPT.SessionFrame"),
             MkPredict = new Unity.Profiling.ProfilerMarker("SCULPT.Predict"), MkVisual = new Unity.Profiling.ProfilerMarker("SCULPT.Visual"),
             MkWorld = new Unity.Profiling.ProfilerMarker("SCULPT.WorldRebuild");
+        private static Unity.Profiling.ProfilerMarker[] _coreMarkers;
+        private static int _gcSession = 31, _gcPredict = 31, _gcVisual = 31, _gcLate = 31;
+
+        /// <summary>Development builds: the server tick's sections (Core) show as SCULPT.S.* profiler markers.</summary>
+        private static void HookCoreProfiling()
+        {
+            if (!Debug.isDebugBuild || _coreMarkers != null) return;
+            int n = (int)global::Sculpt.Core.Diagnostics.Prof.Section.Count;
+            _coreMarkers = new Unity.Profiling.ProfilerMarker[n];
+            GarbageSections.Init();
+            for (int i = 0; i < n; i++)
+            {
+                _coreMarkers[i] = new Unity.Profiling.ProfilerMarker("SCULPT.S." + (global::Sculpt.Core.Diagnostics.Prof.Section)i);
+                GarbageSections.Register("S." + (global::Sculpt.Core.Diagnostics.Prof.Section)i); // ids 0..n-1 match the sections
+            }
+            _gcSession = GarbageSections.Register("SessionFrame");
+            _gcPredict = GarbageSections.Register("Predict");
+            _gcVisual = GarbageSections.Register("Visual");
+            _gcLate = GarbageSections.Register("CameraAndWorld");
+            if (GarbageSections.On)
+            {
+                global::Sculpt.Core.Diagnostics.Prof.BeginHook = i => { _coreMarkers[i].Begin(); GarbageSections.Begin(i); };
+                global::Sculpt.Core.Diagnostics.Prof.EndHook = i => { GarbageSections.End(i); _coreMarkers[i].End(); };
+            }
+            else
+            {
+                global::Sculpt.Core.Diagnostics.Prof.BeginHook = i => _coreMarkers[i].Begin();
+                global::Sculpt.Core.Diagnostics.Prof.EndHook = i => _coreMarkers[i].End();
+            }
+        }
 
         /// <summary>Points in the tree canopies where birds sing (none on the movement course).</summary>
         private static System.Collections.Generic.List<Vector3> Perches(MapInfo info)
@@ -487,7 +549,8 @@ namespace Sculpt.Game.Bootstrap
                 else if (a == "-br") { NextMap = MapChoice.BattleRoyale; if (NextLaunch == Launch.Menu) NextLaunch = Launch.Offline; }
                 else if (a == "-duos") NextBrMode = BrMode.Duos;
                 else if (a == "-squads") NextBrMode = BrMode.Squads;
-                else if (a == "-phototour") NextLaunch = Launch.Offline;
+                else if (a == "-phototour") { NextLaunch = Launch.Offline; NetSession.ThreadedServer = false; } // the tour damages walls on the server from the main thread
+                else if (a == "-serverthread" && i + 1 < args.Length) NetSession.ThreadedServer = args[i + 1] != "0";
                 else if (a == "-spectate" && i + 1 < args.Length) { NextLaunch = Launch.Spectate; NextAddress = args[i + 1]; }
                 else if (a == "-replay" && i + 1 < args.Length)
                 {

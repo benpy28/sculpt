@@ -119,6 +119,7 @@ namespace Sculpt.Game.World
             if (NoSurface(g, o))
             {
                 if (ny == n) { mesh.Clear(); return; }
+                if (FlatFastPath && FlatTop(g, chunkCoord, o, mesh)) return;
                 y0 = n;
             }
             for (int y = y0; y < ny; y++)
@@ -147,6 +148,182 @@ namespace Sculpt.Game.World
             mesh.SetUVs(1, _uv1);
             mesh.SetTriangles(_tris, 0, false);
             mesh.RecalculateBounds();
+        }
+
+        /// <summary>
+        /// Plain flat ground on the grid's top (the breach, duel and battle royale maps: solid below y 0, air above, away
+        /// from the map's edge): the kernel gives one 0.3 m square per lattice vertex, all facing up with the same shade
+        /// and no occlusion. Drawn instead as one quad per run of squares that look the same (meadow or paved, same owner
+        /// colour): the same picture with a sixteenth of the vertices, and far faster to build (the 614 m map has 16
+        /// thousand ground chunks). False: not plain here, use the kernel.
+        /// </summary>
+        private bool FlatTop(SubGrid g, Int3 chunk, Int3 o, Mesh mesh)
+        {
+            const int n = SubGrid.ChunkSize;
+            if (chunk.X <= 0 || chunk.Z <= 0 || chunk.X >= g.ChunksX - 1 || chunk.Z >= g.ChunksZ - 1) return false; // the edge has walls
+            if (g.ChunkSolidity(chunk.X, chunk.Y, chunk.Z) != 1 || Hidden != null && Hidden.Count > 0 || OnlyId != 0 || Decor != null) return false;
+            const float h = (float)TerrainShape.H, sz = (float)SubGrid.SubSize;
+            int vy = o.Y + n;
+            int cfg0 = TerrainShape.ConfigAt(g, o.X, vy, o.Z);
+            TerrainShape.Poly poly = TerrainShape.Get(cfg0);
+            if (poly == null) return false;
+            TerrainShape.Face top = null;
+            foreach (var f in poly.Faces)
+            {
+                if (!TerrainShape.IsFaceVisible(g, o.X, vy, o.Z, poly, f)) continue;
+                if (top != null || f.Normal.Y < 0.999) return false;
+                top = f;
+            }
+            if (top == null) return false;
+            float faceY = n * sz - h + (float)(MinOf(top, 1) * h); // local height of the face (all its vertices share it)
+            float shade = Shade(top.Normal);
+            float lx0 = (float)(MinOf(top, 0) * h), lx1 = (float)(MaxOf(top, 0) * h), lz0 = (float)(MinOf(top, 2) * h), lz1 = (float)(MaxOf(top, 2) * h);
+            if (MaxOf(top, 1) - MinOf(top, 1) > 1e-9 || top.Verts.Length != 4) return false; // not a flat square
+            Vector3 up = top.Normal.ToUnity();
+            for (int z = 0; z < n; z++)
+            {
+                int runStart = 0;
+                Color runColor = default;
+                Vector2 runUv1 = default;
+                float runSculpt = 0;
+                for (int x = 0; x <= n; x++)
+                {
+                    Color c = default;
+                    Vector2 uv1 = default;
+                    float sculpt = 0;
+                    if (x < n)
+                    {
+                        int vx = o.X + x, vz = o.Z + z;
+                        if (TerrainShape.ConfigAt(g, vx, vy, vz) != cfg0) return Abandon();
+                        Vec3d centroid = new Vec3d(vx * SubGrid.SubSize, vy * SubGrid.SubSize, vz * SubGrid.SubSize);
+                        Int3 owner = TerrainGeometry.NearestOccupied(cfg0, vx, vy, vz, centroid);
+                        ushort id = g.Get(owner);
+                        float kind = id == SubId.Natural ? KindGround : KindStone;
+                        bool paved = kind == KindGround && Cover != null && Cover.Paved(owner.X, owner.Z);
+                        if (paved) kind = KindStone;
+                        c = (kind != KindStone ? Color.white : Lin(paved ? GroundCover.Concrete : Albedo(id, owner))) * shade;
+                        c.a = 1f - (PieceReinforce != null && SubId.IsPiece(id) ? Mathf.Clamp01(PieceReinforce(id)) : 0f);
+                        sculpt = MarkSculptable && SubId.IsSculptable(id) && owner.Y >= SubGrid.SculptMinY && owner.Y < 4 * SubGrid.TileSubs ? 1f : 0f;
+                        if (SubId.IsPiece(id)) return Abandon(); // seams and crystal: the kernel's way
+                        // Ground depth: the top sits right above the owner here (nothing above y 0 on plain ground).
+                        uv1 = new Vector2(kind, 0f);
+                        if (x > 0 && c == runColor && uv1 == runUv1 && sculpt == runSculpt) continue;
+                    }
+                    if (x > 0)
+                    {
+                        // The run's squares: x from runStart to x - 1, each 2h wide round its lattice vertex.
+                        float x0 = runStart * sz - h + lx0, x1 = (x - 1) * sz - h + lx1, z0 = z * sz - h + lz0, z1 = z * sz - h + lz1;
+                        int start = _verts.Count;
+                        _verts.Add(new Vector3(x0, faceY, z0));
+                        _verts.Add(new Vector3(x0, faceY, z1));
+                        _verts.Add(new Vector3(x1, faceY, z1));
+                        _verts.Add(new Vector3(x1, faceY, z0));
+                        for (int k = 0; k < 4; k++)
+                        {
+                            _normals.Add(up);
+                            _colors.Add(runColor);
+                            _uvs.Add(new Vector3(0f, runSculpt, 0f));
+                            _uv1.Add(runUv1);
+                        }
+                        _tris.Add(start); _tris.Add(start + 1); _tris.Add(start + 2);
+                        _tris.Add(start); _tris.Add(start + 2); _tris.Add(start + 3);
+                    }
+                    runStart = x;
+                    runColor = c;
+                    runUv1 = uv1;
+                    runSculpt = sculpt;
+                }
+            }
+            mesh.Clear();
+            mesh.indexFormat = IndexFormat.UInt32;
+            mesh.SetVertices(_verts);
+            mesh.SetNormals(_normals);
+            mesh.SetColors(_colors);
+            mesh.SetUVs(0, _uvs);
+            mesh.SetUVs(1, _uv1);
+            mesh.SetTriangles(_tris, 0, false);
+            mesh.RecalculateBounds();
+            return true;
+        }
+
+        /// <summary>Set false to build every chunk with the kernel (the -meshcheck comparison).</summary>
+        public bool FlatFastPath = true;
+
+        /// <summary>
+        /// Development check (-meshcheck): builds a chunk both ways and compares what is drawn: covered area, the
+        /// height, and every vertex's attributes. Returns a problem in words, or null when they match (or the chunk is
+        /// not plain flat ground).
+        /// </summary>
+        public string CheckFlat(SubGrid g, Int3 chunk)
+        {
+            var fast = new Mesh();
+            var slow = new Mesh();
+            try
+            {
+                FlatFastPath = true;
+                Build(g, chunk, fast);
+                FlatFastPath = false;
+                Build(g, chunk, slow);
+                FlatFastPath = true;
+                if (fast.vertexCount == 0 && slow.vertexCount == 0) return null;
+                if (fast.vertexCount == slow.vertexCount) return null; // the kernel ran both times (not plain here)
+                double Area(Mesh m)
+                {
+                    Vector3[] v = m.vertices;
+                    int[] t = m.triangles;
+                    double a = 0;
+                    for (int i = 0; i < t.Length; i += 3) a += Vector3.Cross(v[t[i + 1]] - v[t[i]], v[t[i + 2]] - v[t[i]]).magnitude * 0.5;
+                    return a;
+                }
+                double af = Area(fast), aslow = Area(slow);
+                if (System.Math.Abs(af - aslow) > 1e-3) return $"area {af:0.0000} vs {aslow:0.0000}";
+                if (System.Math.Abs(fast.bounds.min.y - slow.bounds.min.y) > 1e-5 || System.Math.Abs(fast.bounds.max.y - slow.bounds.max.y) > 1e-5) return "height differs";
+                if ((fast.bounds.min - slow.bounds.min).magnitude > 1e-4 || (fast.bounds.max - slow.bounds.max).magnitude > 1e-4) return $"bounds {fast.bounds} vs {slow.bounds}";
+                // Every attribute set the kernel drew appears in the fast mesh at the same place (sampled at its vertices).
+                var fv = fast.vertices; var fc = fast.colors; var fu = new List<Vector3>(); fast.GetUVs(0, fu); var f1 = new List<Vector2>(); fast.GetUVs(1, f1);
+                var sv = slow.vertices; var sc = slow.colors; var su = new List<Vector3>(); slow.GetUVs(0, su); var s1 = new List<Vector2>(); slow.GetUVs(1, s1);
+                var sn = slow.normals;
+                for (int i = 0; i < sv.Length; i++)
+                {
+                    if (sn[i].y < 0.999f) return "the kernel drew a face that is not flat ground";
+                    // The fast quad covering this vertex's square (nudged inward toward the square's centre).
+                    bool found = false;
+                    for (int q = 0; q < fv.Length && !found; q += 4)
+                    {
+                        float x0 = Mathf.Min(fv[q].x, fv[q + 2].x), x1 = Mathf.Max(fv[q].x, fv[q + 2].x), z0 = Mathf.Min(fv[q].z, fv[q + 2].z), z1 = Mathf.Max(fv[q].z, fv[q + 2].z);
+                        if (sv[i].x < x0 - 1e-4f || sv[i].x > x1 + 1e-4f || sv[i].z < z0 - 1e-4f || sv[i].z > z1 + 1e-4f) continue;
+                        if (fc[q] == sc[i] && fu[q] == su[i] && f1[q] == s1[i]) found = true;
+                    }
+                    if (!found) return $"no matching fast quad at {sv[i]} (colour {sc[i]}, uv {su[i]}, uv1 {s1[i]})";
+                }
+                return null;
+            }
+            finally
+            {
+                FlatFastPath = true;
+                Object.Destroy(fast);
+                Object.Destroy(slow);
+            }
+        }
+
+        private bool Abandon()
+        {
+            _verts.Clear(); _colors.Clear(); _uvs.Clear(); _uv1.Clear(); _normals.Clear(); _tris.Clear();
+            return false;
+        }
+
+        private static double MaxOf(TerrainShape.Face f, int axis)
+        {
+            double m = double.MinValue;
+            foreach (var v in f.Verts) m = System.Math.Max(m, axis == 0 ? v.X : axis == 1 ? v.Y : v.Z);
+            return m;
+        }
+
+        private static double MinOf(TerrainShape.Face f, int axis)
+        {
+            double m = double.MaxValue;
+            foreach (var v in f.Verts) m = System.Math.Min(m, axis == 0 ? v.X : axis == 1 ? v.Y : v.Z);
+            return m;
         }
 
         private void EmitFace(SubGrid g, TerrainShape.Face f, Vector3 cellMin, int vx, int vy, int vz, int cfg)
