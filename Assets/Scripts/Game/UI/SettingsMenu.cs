@@ -846,6 +846,8 @@ namespace Sculpt.Game.UI
             if (string.IsNullOrEmpty(path)) return;
             GameInput.Context ca = _input.ContextOf(a);
             foreach (InputActionMap map in new[] { _input.Player, _input.Dev })
+            {
+                if (map == _input.Dev && !GameInput.DevBuild) continue; // dev keys are off (and not shown) in a release build
                 foreach (InputAction other in map.actions)
                 {
                     if (other == a || other == _input.Look) continue; // a second bind on the same action is fine
@@ -858,6 +860,7 @@ namespace Sculpt.Game.UI
                         return;
                     }
                 }
+            }
         }
 
         private void SwapClash()
