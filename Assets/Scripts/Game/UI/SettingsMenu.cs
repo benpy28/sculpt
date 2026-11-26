@@ -427,6 +427,7 @@ namespace Sculpt.Game.UI
             {
                 _settings.ResetGroup(group);
                 _video.ResetGroup(group);
+                if (group == SettingsGroup.Controls) ApplySlotPrefs(SlotPrefs.Default); // the auto-sort row is on this page too
                 _sensText = _dpiText = _cmText = null;
                 _dirty = true;
             }
@@ -462,6 +463,8 @@ namespace Sculpt.Game.UI
         private void DrawSearch()
         {
             List<string> q = SettingsSearch.QueryWords(_search);
+            // A bind changed from the results can clash: the Swap prompt lives in the binds header, which the search may hide.
+            if (_clashA != null) { DrawClash(); GUILayout.Space(6); }
             int lastTab = -1, found = 0;
             foreach (Entry e in _entries)
             {
@@ -825,6 +828,13 @@ namespace Sculpt.Game.UI
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Reset all binds", _button, GUILayout.Width(150))) ResetBinds();
             GUILayout.EndHorizontal();
+            if (_search.Trim().Length == 0) DrawClash(); // search results draw it at their top
+            GUILayout.Space(6);
+        }
+
+        /// <summary>The "also bound to" warning with Swap / Keep both (on the binds page and over search results).</summary>
+        private void DrawClash()
+        {
             if (_clashA != null)
             {
                 string key = _clashA.GetBindingDisplayString(_clashAIndex);
@@ -835,7 +845,6 @@ namespace Sculpt.Game.UI
                 if (GUILayout.Button("Keep both", _button, GUILayout.Width(110))) _clashA = null;
                 GUILayout.EndHorizontal();
             }
-            GUILayout.Space(6);
         }
 
         /// <summary>After a bind changed: is its key also bound to another action that can be live at the same time?</summary>
@@ -846,6 +855,8 @@ namespace Sculpt.Game.UI
             if (string.IsNullOrEmpty(path)) return;
             GameInput.Context ca = _input.ContextOf(a);
             foreach (InputActionMap map in new[] { _input.Player, _input.Dev })
+            {
+                if (map == _input.Dev && !GameInput.DevBuild) continue; // dev keys are off (and not shown) in a release build
                 foreach (InputAction other in map.actions)
                 {
                     if (other == a || other == _input.Look) continue; // a second bind on the same action is fine
@@ -858,6 +869,7 @@ namespace Sculpt.Game.UI
                         return;
                     }
                 }
+            }
         }
 
         private void SwapClash()
@@ -1081,7 +1093,7 @@ namespace Sculpt.Game.UI
             var map = new Dictionary<string, string>();
             _settings.WriteTo(map);
             _video.WriteTo(map);
-            map[BindsKey] = _input.Player.SaveBindingOverridesAsJson();
+            map[BindsKey] = GameInput.ExportOverrides(_input.Player);
             SlotPrefs p = NetSession.LocalSlotPrefs;
             var c = new char[Items.Slots];
             for (int k = 0; k < Items.Slots; k++) c[k] = (char)('0' + (int)p[k]);
@@ -1121,8 +1133,15 @@ namespace Sculpt.Game.UI
             _settings.BeginnerView = beginner; // the view you are using stays
             if (map.TryGetValue(BindsKey, out string json))
             {
-                try { _input.Player.RemoveAllBindingOverrides(); if (json.Length > 0) _input.Player.LoadBindingOverridesFromJson(json); n++; }
-                catch (Exception e) { Debug.LogWarning("[SCULPT] Settings code binds ignored: " + e.Message); }
+                string before = GameInput.ExportOverrides(_input.Player);
+                try { if (json.Length > 0) GameInput.ImportOverrides(_input.Player, json); else _input.Player.RemoveAllBindingOverrides(); n++; }
+                catch (Exception e)
+                {
+                    // A bad binds part must not leave you with default binds: put yours back.
+                    Debug.LogWarning("[SCULPT] Settings code binds ignored: " + e.Message);
+                    _input.Player.RemoveAllBindingOverrides();
+                    if (before.Length > 0) GameInput.ImportOverrides(_input.Player, before);
+                }
             }
             if (map.TryGetValue(SlotsKey, out string slots) && slots.Length == Items.Slots)
             {

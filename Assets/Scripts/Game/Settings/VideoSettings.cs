@@ -48,7 +48,7 @@ namespace Sculpt.Game.Settings
         public Sculpt.Core.Settings.VideoValues Values
         {
             get => new Sculpt.Core.Settings.VideoValues { VSync = VSync, FpsCap = FpsCap, LowLatency = LowLatency, LeanRendering = LeanRendering, RenderScale = RenderScale, Msaa = Msaa };
-            set { VSync = value.VSync; FpsCap = value.FpsCap; LowLatency = value.LowLatency; LeanRendering = value.LeanRendering; RenderScale = value.RenderScale; Msaa = Sculpt.Core.Settings.DisplayPresets.NormMsaa(value.Msaa); Clamped(); Changed(); }
+            set { VSync = value.VSync; FpsCap = value.FpsCap; LowLatency = value.LowLatency; LeanRendering = value.LeanRendering; RenderScale = value.RenderScale; Msaa = Sculpt.Core.Settings.DisplayPresets.NormMsaa(value.Msaa); _cmd = null; Clamped(); Changed(); }
         }
 
         /// <summary>Bumped by <see cref="Changed"/>; whoever applies settings compares it with the version it last applied.</summary>
@@ -95,12 +95,45 @@ namespace Sculpt.Game.Settings
             return v;
         }
 
-        public void Save() => Table.Save(this);
+        /// <summary>Saves the settings. A value still at a one-run command-line override (-vsync, -fpscap, -lean, ...) is
+        /// saved as what was stored before the override, so the override never sticks; one the player changed since is
+        /// saved as changed.</summary>
+        public void Save()
+        {
+            if (_cmd == null) { Table.Save(this); return; }
+            CommandLineOverrides c = _cmd;
+            // Once the player changes a value away from its override it is theirs from then on.
+            c.VSync &= VSync == c.Over.VSync;
+            c.LowLatency &= LowLatency == c.Over.LowLatency;
+            c.Lean &= LeanRendering == c.Over.LeanRendering;
+            c.ShowFps &= ShowFps == c.Over.ShowFps;
+            c.ShowLatency &= ShowLatency == c.Over.ShowLatency;
+            c.FpsCap &= FpsCap == c.Over.FpsCap;
+            c.RenderScale &= Mathf.Approximately(RenderScale, c.Over.RenderScale);
+            var v = (VideoSettings)MemberwiseClone();
+            if (c.VSync) v.VSync = c.Stored.VSync;
+            if (c.LowLatency) v.LowLatency = c.Stored.LowLatency;
+            if (c.Lean) v.LeanRendering = c.Stored.LeanRendering;
+            if (c.ShowFps) v.ShowFps = c.Stored.ShowFps;
+            if (c.ShowLatency) v.ShowLatency = c.Stored.ShowLatency;
+            if (c.FpsCap) v.FpsCap = c.Stored.FpsCap;
+            if (c.RenderScale) v.RenderScale = c.Stored.RenderScale;
+            Table.Save(v);
+        }
 
-        public void ResetGroup(string group) { Table.Defaults(this, group); Clamped(); Changed(); }
-        public void ResetAll() { Table.Defaults(this); Clamped(); Changed(); }
+        /// <summary>Which values the command line overrode this run, what they were before, and what they became.</summary>
+        private sealed class CommandLineOverrides
+        {
+            public bool VSync, LowLatency, Lean, ShowFps, ShowLatency, FpsCap, RenderScale;
+            public VideoSettings Stored, Over;
+        }
+
+        private CommandLineOverrides _cmd;
+
+        public void ResetGroup(string group) { _cmd = null; Table.Defaults(this, group); Clamped(); Changed(); }
+        public void ResetAll() { _cmd = null; Table.Defaults(this); Clamped(); Changed(); }
         public void WriteTo(System.Collections.Generic.IDictionary<string, string> into) => Table.Write(this, into);
-        public int ReadFrom(System.Collections.Generic.IReadOnlyDictionary<string, string> from) { int n = Table.Read(this, from); Clamped(); Changed(); return n; }
+        public int ReadFrom(System.Collections.Generic.IReadOnlyDictionary<string, string> from) { _cmd = null; int n = Table.Read(this, from); Clamped(); Changed(); return n; }
 
         /// <summary>
         /// One-run overrides, never saved (benchmarks and A/B tests): -vsync 0|1, -fpscap N (0 = unlimited, -1 = display - 3),
@@ -109,18 +142,25 @@ namespace Sculpt.Game.Settings
         public void ApplyCommandLine(string[] args)
         {
             if (args == null) return;
+            var stored = (VideoSettings)MemberwiseClone();
+            var cmd = new CommandLineOverrides();
             for (int i = 0; i + 1 < args.Length; i++)
             {
                 string a = args[i].ToLowerInvariant(), next = args[i + 1];
-                if (a == "-vsync" && Flag(next, out bool b)) VSync = b;
-                else if (a == "-lowlatency" && Flag(next, out b)) LowLatency = b;
-                else if (a == "-lean" && Flag(next, out b)) LeanRendering = b;
-                else if (a == "-showfps" && Flag(next, out b)) ShowFps = b;
-                else if (a == "-showlatency" && Flag(next, out b)) ShowLatency = b;
-                else if (a == "-fpscap" && int.TryParse(next, NumberStyles.Integer, CultureInfo.InvariantCulture, out int cap)) FpsCap = cap;
-                else if (a == "-renderscale" && float.TryParse(next, NumberStyles.Float, CultureInfo.InvariantCulture, out float s)) RenderScale = s;
+                if (a == "-vsync" && Flag(next, out bool b)) { VSync = b; cmd.VSync = true; }
+                else if (a == "-lowlatency" && Flag(next, out b)) { LowLatency = b; cmd.LowLatency = true; }
+                else if (a == "-lean" && Flag(next, out b)) { LeanRendering = b; cmd.Lean = true; }
+                else if (a == "-showfps" && Flag(next, out b)) { ShowFps = b; cmd.ShowFps = true; }
+                else if (a == "-showlatency" && Flag(next, out b)) { ShowLatency = b; cmd.ShowLatency = true; }
+                else if (a == "-fpscap" && int.TryParse(next, NumberStyles.Integer, CultureInfo.InvariantCulture, out int cap)) { FpsCap = cap; cmd.FpsCap = true; }
+                else if (a == "-renderscale" && float.TryParse(next, NumberStyles.Float, CultureInfo.InvariantCulture, out float s)) { RenderScale = s; cmd.RenderScale = true; }
             }
             Clamped();
+            if (!(cmd.VSync || cmd.LowLatency || cmd.Lean || cmd.ShowFps || cmd.ShowLatency || cmd.FpsCap || cmd.RenderScale)) return;
+            cmd.Stored = stored;
+            cmd.Over = (VideoSettings)MemberwiseClone();
+            cmd.Over._cmd = null;
+            _cmd = cmd;
         }
 
         private static bool Flag(string s, out bool value)
