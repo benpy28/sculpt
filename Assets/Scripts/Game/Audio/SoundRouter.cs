@@ -30,6 +30,9 @@ namespace Sculpt.Game.Audio
 
         public static bool Active => _paths != null && _listener != null;
 
+        /// <summary>The ears sounds are routed to (the camera), or null.</summary>
+        public static Transform Listener => _listener;
+
         /// <summary>Routes sounds through <paramref name="world"/> to <paramref name="listener"/> (the camera's ears).
         /// Call again whenever the client world is replaced. Null switches routing off.</summary>
         public static void Bind(ITerrain world, Transform listener)
@@ -63,8 +66,13 @@ namespace Sculpt.Game.Audio
             LastRoute = r;
             if (!r.Audible) return false;
             SoundPaths.HeadShadow(_listener.forward.ToCore(), r.ArrivesFrom, Config, out double shadowDb, out double shadowHz);
+            // Settings > Audio > front/back cue: scales how much a sound behind you is dulled (1 = as designed).
+            double hs = Sculpt.Game.Settings.ClientSettings.Current.HeadShadow;
+            double open = Config.OpenCutoffHz;
+            shadowDb *= hs;
+            shadowHz = Math.Max(500, Math.Min(open, open - (open - shadowHz) * hs));
             gain = (float)Math.Pow(10, (r.GainDb + shadowDb) / 20);
-            cutoff = (float)Math.Min(r.CutoffHz, shadowHz);
+            cutoff = SoundMix.Cutoff((float)Math.Min(r.CutoffHz, shadowHz), (float)open);
             at = r.Apparent.ToUnity();
             return true;
         }

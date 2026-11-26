@@ -57,7 +57,7 @@ namespace Sculpt.Game.Audio
             }
             float pitch = 0.92f + (float)_rng.NextDouble() * 0.16f;
             Synth.Play(_birds[_phraseClip], _phraseAt, amb * (0.10f + (float)_rng.NextDouble() * 0.06f), pitch,
-                       spatial: true, minDistance: 6f, maxDistance: 70f, logarithmic: true, priority: 220, route: false);
+                       spatial: true, minDistance: 6f, maxDistance: 70f, logarithmic: true, priority: 220, route: false, bus: SoundBus.Ambience);
             _phraseLeft--;
             _nextBird = _phraseLeft > 0 ? 0.25f + (float)_rng.NextDouble() * 0.5f : 2.5f + (float)_rng.NextDouble() * 6f;
         }

@@ -406,7 +406,7 @@ namespace Sculpt.Game.Weapons
                         HitTime = now;
                         LastHitDamage = e.Damage;
                         if (e.Headshot) HeadHitTime = now;
-                        if (!e.Killed) GunAudio.Play(e.Headshot ? GunAudio.HitHead : GunAudio.HitTick, Vector3.zero, e.Headshot ? 0.7f : 0.55f, 1f, false);
+                        if (!e.Killed) GunAudio.Play(e.Headshot ? GunAudio.HitHead : GunAudio.HitTick, Vector3.zero, e.Headshot ? 0.7f : 0.55f, 1f, false, bus: Audio.SoundBus.Ui);
                     }
                     if (e.Victim == me)
                     {
@@ -415,7 +415,7 @@ namespace Sculpt.Game.Weapons
                         Vector3 from = at;
                         if (net.TryGetRemote(e.Attacker, out RemoteView v)) from = v.Position.ToUnity() + Vector3.up * 1.4f;
                         Arrows.Add(new DamageArrow { From = from, Time = now, Damage = e.Damage });
-                        GunAudio.Play(GunAudio.Hurt, Vector3.zero, 0.8f, Random.Range(0.95f, 1.05f), false);
+                        GunAudio.Play(GunAudio.Hurt, Vector3.zero, 0.8f, Random.Range(0.95f, 1.05f), false, bus: Audio.SoundBus.Ui);
                         _rollVel += Random.Range(-60f, 60f);
                     }
                     else GunAudio.Play(GunAudio.Flesh, at, 0.6f, Random.Range(0.9f, 1.1f), true, 40f, 2f);
@@ -427,7 +427,7 @@ namespace Sculpt.Game.Weapons
                     if (e.Attacker == me && e.Victim != me)
                     {
                         KillMarkTime = now;
-                        GunAudio.Play(GunAudio.Kill, Vector3.zero, 0.8f, 1f, false);
+                        GunAudio.Play(GunAudio.Kill, Vector3.zero, 0.8f, 1f, false, bus: Audio.SoundBus.Ui);
                     }
                     if (e.Victim == me) { KilledBy = e.Attacker; KilledWith = e.Source; }
                     break;

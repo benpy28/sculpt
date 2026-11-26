@@ -280,7 +280,7 @@ namespace Sculpt.Game.World
             _recentBreaks.Add(new Vector4(at.x, at.y, at.z, now));
             float vol = 0.45f + 0.5f * Mathf.Clamp01(cellsLost / 24f);
             float pitch = (door ? 1.35f : 1f) * Random.Range(0.92f, 1.06f);
-            Audio.Synth.Play(_break, at, vol, pitch, true, 3f, 60f, sourceRadius: 0.8f);
+            Audio.Synth.Play(_break, at, vol, pitch, true, 3f, 60f, sourceRadius: 0.8f, bus: Audio.SoundBus.World, caption: Audio.SoundCaption.WallBreaking);
         }
 
         private static AudioClip _doorOpen, _doorShut;
@@ -302,7 +302,8 @@ namespace Sculpt.Game.World
             }
             Vec3d c = (b.Min + b.Max) * 0.5;
             // The door's middle is inside the door: heard straight from both sides (routed, like every sound).
-            Audio.Synth.Play(open ? _doorOpen : _doorShut, c.ToUnity(), 0.8f, 1f, true, 2f, 35f, sourceRadius: 0.4f);
+            Audio.Synth.Play(open ? _doorOpen : _doorShut, c.ToUnity(), 0.8f, 1f, true, 2f, 35f, sourceRadius: 0.4f,
+                             caption: open ? Audio.SoundCaption.DoorOpening : Audio.SoundCaption.DoorClosing);
         }
 
         private void AddTile(MeshBits m, int id, in WallTile t)

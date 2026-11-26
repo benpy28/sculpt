@@ -225,20 +225,18 @@ namespace Sculpt.Game.UI
 
     /// <summary>
     /// Battle royale rarity colours (Claude's call, 2026-11-26): grey, green, blue, red, gold. Never purple: purple is
-    /// reserved for sculptable.
+    /// reserved for sculptable. Settings > Accessibility > Colourblind mode swaps in a set made for that eye
+    /// (<see cref="Sculpt.Core.Settings.ColourVision"/>).
     /// </summary>
     public static class RarityColours
     {
-        private static readonly Color[] C =
-        {
-            new Color(0.96f, 0.97f, 0.98f),   // none
-            new Color(0.78f, 0.80f, 0.82f),   // common
-            new Color(0.42f, 0.86f, 0.38f),   // uncommon
-            new Color(0.35f, 0.66f, 1.00f),   // rare
-            new Color(1.00f, 0.38f, 0.30f),   // epic
-            new Color(1.00f, 0.80f, 0.22f),   // legendary
-        };
+        /// <summary>The mode the colours are in now (anything that bakes them, like the ground plates, rebuilds when it changes).</summary>
+        public static Sculpt.Core.Settings.ColourMode Mode => Sculpt.Game.Settings.ClientSettings.Current.Colours;
 
-        public static Color Of(Rarity r) => C[Mathf.Clamp((int)r, 0, C.Length - 1)];
+        public static Color Of(Rarity r)
+        {
+            Sculpt.Core.Settings.Rgb c = Sculpt.Core.Settings.ColourVision.Rarity(Mode, (int)r);
+            return new Color(c.R, c.G, c.B);
+        }
     }
 }

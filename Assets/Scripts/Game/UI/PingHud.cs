@@ -54,7 +54,7 @@ namespace Sculpt.Game.UI
                 longest = Mathf.Max(longest, (float)((e.EndTick - _session.Client.ServerTimeEstimate) / SimTime.TicksPerSecond));
             started.Clear();
             _bannerUntil = Time.unscaledTime + Mathf.Max(0.5f, longest);
-            Synth.Play(_blip, Vector3.zero, 0.8f, 1f, spatial: false);
+            Synth.Play(_blip, Vector3.zero, 0.8f, 1f, spatial: false, bus: SoundBus.Ui);
         }
 
         private void OnGUI()

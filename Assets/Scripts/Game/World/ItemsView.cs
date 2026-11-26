@@ -21,6 +21,7 @@ namespace Sculpt.Game.World
         private int _version = -1;
         private NetClient _boundTo;
         private readonly Dictionary<int, Transform> _shown = new Dictionary<int, Transform>();
+        private Sculpt.Core.Settings.ColourMode _colours = Sculpt.Game.UI.RarityColours.Mode;
         private readonly HashSet<int> _alive = new HashSet<int>();
         private readonly List<int> _gone = new List<int>();
 
@@ -38,6 +39,14 @@ namespace Sculpt.Game.World
             NetClient net = _session.Client;
             if (net != _boundTo) { _boundTo = net; _version = -1; }
             GroundItems items = net.Items;
+            if (Sculpt.Game.UI.RarityColours.Mode != _colours)
+            {
+                // Colourblind mode changed: the rarity plates are baked in their colour, so rebuild every item.
+                _colours = Sculpt.Game.UI.RarityColours.Mode;
+                foreach (var kv in _shown) Destroy(kv.Value.gameObject);
+                _shown.Clear();
+                _version = -1;
+            }
             if (items.Version != _version)
             {
                 _version = items.Version;

@@ -98,7 +98,8 @@ namespace Sculpt.Game.Cameras
             _dipVel += (-w * w * _dip - 2f * w * _dipVel) * dt;
             _dip = Mathf.Clamp(_dip + _dipVel * dt, -0.08f, 0.02f);
 
-            position = _player.RenderFeet + new Vector3(0, _eye + bob + _dip, 0);
+            float shake = Mathf.Clamp01(_settings.CameraShake); // Settings > Accessibility > Camera motion
+            position = _player.RenderFeet + new Vector3(0, _eye + bob + _dip * shake, 0);
             // Recoil is part of the real aim (Core), so the camera follows it exactly; Shake is cosmetic roll only and never
             // moves the crosshair off the bullet's line.
             Vector2 recoil = _player.RenderRecoil;
@@ -128,8 +129,8 @@ namespace Sculpt.Game.Cameras
             float leanTarget = _leanTarget;
             if (!_settings.HeadBob) leanTarget = 0f; // same comfort switch as the head bob
             _lean = Mathf.Lerp(_lean, leanTarget, 1f - Mathf.Exp(-10f * dt));
-            rotation = Quaternion.Euler(_player.Pitch - recoil.x, _player.Yaw + recoil.y, Shake.Roll + _lean);
-            position += Shake.Offset;
+            rotation = Quaternion.Euler(_player.Pitch - recoil.x, _player.Yaw + recoil.y, Shake.Roll * shake + _lean);
+            position += Shake.Offset * shake;
 
             MovementConfig c = _player.Config;
             float over = Mathf.InverseLerp((float)c.SprintSpeed + 0.2f, (float)c.SlideMaxSpeed, speed);
@@ -141,7 +142,7 @@ namespace Sculpt.Game.Cameras
             _zoom = Mathf.Lerp(_zoom, zoomTarget, 1f - Mathf.Exp(-28f * dt));
             float baseFov = _settings.Fov + _fovKick * _zoom;
             float half = Mathf.Atan(Mathf.Tan(baseFov * 0.5f * Mathf.Deg2Rad) * _zoom) * Mathf.Rad2Deg;
-            horizontalFov = 2f * half + Shake.FovPunch;
+            horizontalFov = 2f * half + Shake.FovPunch * shake;
         }
     }
 }

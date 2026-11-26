@@ -82,14 +82,14 @@ namespace Sculpt.Game.UI
                 {
                     HudDraw.LoadPixels();
                     HudDraw.BeginBatch();
-                    DrawFeedPanels(net, sw, sh);
+                    if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeedPanels(net, sw, sh);
                 }
                 finally
                 {
                     HudDraw.EndBatch();
                     GL.PopMatrix();
                 }
-                DrawFeed(net, sw);
+                if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeed(net, sw);
                 return;
             }
 
@@ -105,13 +105,13 @@ namespace Sculpt.Game.UI
                     HudDraw.LoadPixels();
                     HudDraw.BeginBatch(); // every shape below goes out as one draw
                     if (!s.Dead) DrawCrosshair(s, cfg, w / 2f, h / 2f);
-                    DrawHitMarker(w / 2f, h / 2f);
+                    if (Sculpt.Game.Settings.ClientSettings.Current.HitMarkers) DrawHitMarker(w / 2f, h / 2f);
                     DrawHurt(w, h);
                     if (s.Dead) HudDraw.RoundRect(w / 2f - 220, h * 0.64f - 110, 440, 120, 12, new Color(0.05f, 0.06f, 0.08f, 0.6f));
                     DrawHealthBar(s, cfg);
                     DrawAmmo(s, cfg, net.Tick, w);
                     DrawHotbar(s, net.Tick, w);
-                    DrawFeedPanels(net, w, h);
+                    if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeedPanels(net, w, h);
                 }
                 finally
                 {
@@ -208,11 +208,11 @@ namespace Sculpt.Game.UI
                 HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), "Dropping " + Items.Name(s.Hand.HeldItem) + "...", 13, HudDraw.Dim, TextAnchor.MiddleCenter, true);
 
             // Damage dealt by the last hit, next to the crosshair.
-            if (Time.time - _view.HitTime < 0.5f)
+            if (Sculpt.Game.Settings.ClientSettings.Current.DamageNumbers && Time.time - _view.HitTime < 0.5f)
                 HudDraw.Label(new Rect(w / 2f + 20, h / 2f + 8, 80, 20), HudDraw.Num(_view.LastHitDamage), 14,
                      Time.time - _view.HeadHitTime < 0.5f ? HudDraw.Amber : HudDraw.Text, TextAnchor.MiddleLeft, true);
 
-            DrawFeed(net, w);
+            if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeed(net, w);
 
             if (s.Dead)
             {
@@ -252,21 +252,22 @@ namespace Sculpt.Game.UI
         private void DrawCrosshair(in MotorState s, WeaponsConfig cfg, float cx, float cy)
         {
             HandState hand = s.Hand;
+            Color tint = Sculpt.Game.Settings.ClientSettings.Current.CrosshairColour; // Settings > Crosshair (colour only for now)
             if (hand.InSculptMode)
             {
-                Cross(cx, cy, 3f, 5f, 1.5f, new Color(1, 1, 1, 0.9f));
+                Cross(cx, cy, 3f, 5f, 1.5f, HudDraw.A(tint, 0.9f));
                 return;
             }
             if (!hand.HasGun)
             {
                 // A grenade or empty hands: a plain dot (the throw arc arrives with grenades).
-                Dot(cx, cy, 2f, hand.ItemReady ? new Color(1, 1, 1, 0.95f) : new Color(1, 1, 1, 0.4f));
+                Dot(cx, cy, 2f, HudDraw.A(tint, hand.ItemReady ? 0.95f : 0.4f));
                 return;
             }
             WeaponStats st = cfg.Of(hand.Held);
             double spread = WeaponRules.Spread(s, _player.Config, st);
             bool ready = hand.CanFire && s.CanShoot;
-            Color c = ready ? new Color(1, 1, 1, 0.95f) : new Color(1, 1, 1, 0.4f);
+            Color c = HudDraw.A(tint, ready ? 0.95f : 0.4f);
             if (st.Pellets > 1)
             {
                 // Pump: the pellet ring at its real size, plus a centre dot.
@@ -276,7 +277,7 @@ namespace Sculpt.Game.UI
                 // Cycle: the ring fills back in as the pump comes ready.
                 long next = s.Weapon.NextPump, now = _session.Client.Tick * 1000L;
                 float k = Mathf.Clamp01(1f - (next - now) / (float)st.FireIntervalMilliTicks);
-                if (k < 1f) Arc(cx, cy, r + 5f, 2f, 0, 360 * k, new Color(1, 1, 1, 0.6f));
+                if (k < 1f) Arc(cx, cy, r + 5f, 2f, 0, 360 * k, HudDraw.A(tint, 0.6f));
                 return;
             }
             float gap = Mathf.Max(3f, Px(spread));

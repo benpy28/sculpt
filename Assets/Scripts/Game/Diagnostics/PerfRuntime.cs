@@ -61,6 +61,8 @@ namespace Sculpt.Game.Diagnostics
         public static double NowMs => Time.realtimeSinceStartupAsDouble * 1000.0;
 
         private NetSession _session;
+        /// <summary>The session the overlays read network figures from.</summary>
+        public NetSession Session => _session;
         private LocalPlayer _player;
         private UI.SettingsMenu _menu;
         private UI.MainMenu _mainMenu;

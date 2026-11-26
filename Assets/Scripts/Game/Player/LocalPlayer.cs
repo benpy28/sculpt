@@ -153,6 +153,19 @@ namespace Sculpt.Game.Player
         private SculptAction _confirmAction;
         private bool _hadJoined;
 
+        /// <summary>
+        /// Degrees of turn per mouse count right now: the sensitivity, times the ADS multiplier (and the zoom itself when
+        /// "zoom matched" is on) while zoomed with a gun that zooms (AR, pistol).
+        /// </summary>
+        private float LookDegreesPerCount()
+        {
+            MotorState st = State;
+            if (!Zoomed || !st.Hand.HasGun) return _client.DegreesPerCount;
+            double zoom = Config.Weapons.Of(st.Hand.Held).AimFovScale;
+            if (zoom >= 0.999) return _client.DegreesPerCount; // pump and SMG don't zoom: right mouse only drops sprint
+            return (float)global::Sculpt.Core.Settings.AimMath.AdsDegreesPerCount(_client.Sensitivity, _client.AdsMultiplier, _client.AdsZoomMatched, zoom);
+        }
+
         public void Init(NetSession session, MovementConfig cfg, MovementSettings settingsAsset, GameInput input, ClientSettings client)
         {
             _session = session;
@@ -208,10 +221,11 @@ namespace Sculpt.Game.Player
             else if (CursorLocked)
             {
                 Vector2 d = _input.Look.ReadValue<Vector2>();
-                float k = _client.DegreesPerCount;
+                float k = LookDegreesPerCount();
+                float ky = k * _client.VerticalMultiplier * (_client.InvertY ? -1f : 1f);
                 Yaw = Mathf.Repeat(Yaw + d.x * k + 180f, 360f) - 180f;
-                Pitch = Mathf.Clamp(Pitch - d.y * k, -89f, 89f);
-                LookDelta = new Vector2(d.x * k, d.y * k);
+                Pitch = Mathf.Clamp(Pitch - d.y * ky, -89f, 89f);
+                LookDelta = new Vector2(d.x * k, d.y * ky);
             }
             else LookDelta = Vector2.zero;
 

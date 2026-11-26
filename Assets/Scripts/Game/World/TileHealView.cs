@@ -147,6 +147,7 @@ namespace Sculpt.Game.World
             {
                 s = RoutedLoop.Create("Heal Hum", transform, SculptAudio.HumRaise, 3f, 40f);
                 s.Source.time = Random.Range(0f, s.Source.clip.length * 0.9f);
+                s.Caption = SoundCaption.WallHealing;
                 _hums[player] = s;
             }
             // Routed: heard through the doorway or hole it comes from, or muffled through the wall.

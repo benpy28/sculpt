@@ -318,7 +318,7 @@ namespace Sculpt.Game.Bootstrap
 
             Mark("scenery");
             _input = new GameInput();
-            var client = ClientSettings.Load();
+            var client = ClientSettings.Current;
 
             _player = new GameObject("Local Player").AddComponent<LocalPlayer>();
             _player.Init(_session, movement, movementSettings, _input, client);
@@ -364,6 +364,7 @@ namespace Sculpt.Game.Bootstrap
             new GameObject("Tile Heal View").AddComponent<TileHealView>().Init(_player, _session, _rig);
             gameObject.AddComponent<CombatHud>().Init(_player, _session, _weapons, _rig.Camera);
             gameObject.AddComponent<FeelHud>().Init(_player, client);
+            CaptionsHud.Install(gameObject);
             gameObject.AddComponent<SettingsMenu>().Init(_player, client, _input);
             gameObject.AddComponent<InventoryHud>().Init(_player, _input);
             gameObject.AddComponent<MatchHud>().Init(_player, _session);

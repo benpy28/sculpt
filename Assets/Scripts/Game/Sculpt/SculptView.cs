@@ -382,7 +382,8 @@ namespace Sculpt.Game.Sculpting
             }
             Vector3 at = CellBounds(cells, Int3.Zero).center;
             s.transform.position = at;
-            s.volume = volume * (0.45f + 0.55f * progress);
+            s.volume = volume * (0.45f + 0.55f * progress) * SoundMix.Gain(SoundBus.World);
+            s.spread = SoundMix.Spread;
             switch (type)
             {
                 case SculptActionType.Throw: s.pitch = 0.7f + 0.9f * progress; break;
@@ -397,7 +398,8 @@ namespace Sculpt.Game.Sculpting
                 _crystals[key] = c;
             }
             c.transform.position = at;
-            c.volume = volume * 0.8f * (0.6f + 0.4f * progress);
+            c.volume = volume * 0.8f * (0.6f + 0.4f * progress) * SoundMix.Gain(SoundBus.World);
+            c.spread = SoundMix.Spread;
             c.pitch = 0.9f + 0.2f * progress;
         }
 

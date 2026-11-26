@@ -165,7 +165,7 @@ namespace Sculpt.Game.Weapons
         /// <summary>A full gunshot: the dry layer plus the reflections the space around <paramref name="at"/> gives back.</summary>
         public static void PlayShot(Weapon w, ITerrain grid, Vector3 at, float volume, float pitch, bool spatial)
         {
-            Play(Shot(w), at, volume, pitch, spatial);
+            Play(Shot(w), at, volume, pitch, spatial, caption: spatial ? Audio.SoundCaption.Gunfire : Audio.SoundCaption.None); // someone else's shot gets a caption
             Space(grid, at, out float enc, out float wallDist);
             // The slap arrives after the sound has gone to the walls and back (capped so it never reads as a separate echo).
             float delay = Mathf.Min(0.055f, wallDist * 2f / 343f);
@@ -266,9 +266,10 @@ namespace Sculpt.Game.Weapons
         /// A one-shot from the shared voice pool (no GameObject per sound). Gunshots carry far (logarithmic rolloff out to
         /// 220 m) so you can always hear where fire comes from.
         /// </summary>
-        public static void Play(AudioClip clip, Vector3 at, float volume, float pitch, bool spatial, float maxDistance = 220f, float minDistance = 3f, float delay = 0f)
+        public static void Play(AudioClip clip, Vector3 at, float volume, float pitch, bool spatial, float maxDistance = 220f, float minDistance = 3f, float delay = 0f,
+                                Audio.SoundBus bus = Audio.SoundBus.Weapons, Audio.SoundCaption caption = Audio.SoundCaption.None)
         {
-            Audio.Synth.Play(clip, at, volume, pitch, spatial, minDistance, maxDistance, logarithmic: true, priority: spatial ? 128 : 16, delay: delay);
+            Audio.Synth.Play(clip, at, volume, pitch, spatial, minDistance, maxDistance, logarithmic: true, priority: spatial ? 128 : 16, delay: delay, bus: bus, caption: caption);
         }
     }
 }

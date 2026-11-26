@@ -33,6 +33,7 @@ namespace UnityEngine.Rendering.Universal
     {
         public ReadOnlySpan<ScriptableRendererData> rendererDataList => default;
         public float renderScale { get; set; }
+        public int msaaSampleCount { get; set; }
         public bool supportsHDR { get; set; }
     }
     public static class UniversalRenderPipeline
