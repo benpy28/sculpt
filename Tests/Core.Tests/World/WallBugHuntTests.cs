@@ -90,6 +90,21 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
+        public void APatchedOrReinforcedDoor_StaysPatchedOrReinforced_AfterOpeningAndShutting()
+        {
+            DoorArena(out TileWalls w, out int left, out int right);
+            var leaves = new List<int>();
+            w.Set(left, TileState.Patched, w.Config.PatchedHealth, TileCause.Heal, 1);
+            w.Set(right, TileState.Reinforced, 80, TileCause.Reinforce, 1); // a reinforced leaf that took some damage
+            DoorRules.Set(w, left, true, TileCause.Door, 1, leaves);
+            DoorRules.Set(w, left, false, TileCause.Door, 1, leaves);
+            Assert.That(w[left].State, Is.EqualTo(TileState.Patched), "a healed door still looks healed");
+            Assert.That(w[left].Health, Is.EqualTo(w.Config.PatchedHealth));
+            Assert.That(w[right].State, Is.EqualTo(TileState.Reinforced), "a reinforced door is still reinforced");
+            Assert.That(w[right].Health, Is.EqualTo(80));
+        }
+
+        [Test]
         public void AHoleBesideAnOpenDoor_IsStillAFairHole_OnceTheDoorShuts()
         {
             DoorArena(out TileWalls w, out int left, out _);

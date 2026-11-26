@@ -372,6 +372,17 @@ namespace Sculpt.Core
         }
 
         private readonly List<int> _doors = new List<int>();
+        private readonly Dictionary<int, TileState> _shutAs = new Dictionary<int, TileState>();
+
+        /// <summary>The state an open door leaf takes when it shuts: what it was when it opened (so a patched or
+        /// reinforced door stays so), or for a leaf seen only open (a late joiner) the state its health implies.</summary>
+        public TileState ShutStateOf(int leaf)
+        {
+            int h = _tiles[leaf].Health;
+            if (!_shutAs.TryGetValue(leaf, out TileState s)) return DoorRules.ShutState(Config, h);
+            if (s == TileState.Intact && h < Config.IntactHealth * Config.DamagedBelowFraction) return TileState.Damaged;
+            return s;
+        }
         private readonly Dictionary<int, int> _doorPartner = new Dictionary<int, int>();
 
         /// <summary>Every door leaf.</summary>
@@ -468,6 +479,8 @@ namespace Sculpt.Core
             t.Open = o;
             if (cause != TileCause.Built) t.Changed = true;
             _tiles[tile] = t;
+            if (state == TileState.DoorOpen && !Gone(from)) _shutAs[tile] = from; // what it is again when it shuts
+            else if (state != TileState.DoorOpen) _shutAs.Remove(tile);
             if (Gone(from) != Gone(state)) World.SetSolid(t.Brush, !Gone(state));
             if (state == TileState.Broken && cause == TileCause.Charge) _chargedAt[tile] = Tick;
             else _chargedAt.Remove(tile);

@@ -87,7 +87,7 @@ namespace Sculpt.Core
             {
                 WallTile t = w[l];
                 if ((t.State == TileState.DoorOpen) == open) continue;
-                TileState to = open ? TileState.DoorOpen : ShutState(w.Config, t.Health);
+                TileState to = open ? TileState.DoorOpen : w.ShutStateOf(l);
                 w.Set(l, to, t.Health, cause, by);
                 n++;
             }
