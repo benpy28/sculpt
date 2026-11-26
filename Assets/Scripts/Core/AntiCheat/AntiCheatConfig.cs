@@ -40,6 +40,23 @@ namespace Sculpt.Core.AntiCheat
         /// <summary>Real commands the median view lag is taken over.</summary>
         public int ViewLagWindow = 64;
 
+        /// <summary>
+        /// Clamp the lag-compensation rewind so a shooter can never rewind a victim older than the snapshot the shooter
+        /// claims (its acked snapshot tick) minus the interpolation delay and this margin. An honest client draws its
+        /// newest acked snapshot InterpDelayTicks behind, so this never clamps legit play (view and ack lag together under
+        /// ping or loss); it does stop a modified client that forges an old view while still acking a recent snapshot
+        /// (the naive backtrack), turning the cheat from "flagged" into "prevented". A client that also backdates its ack
+        /// to keep rewinding is then claiming a steady high latency, which ViewLagJump catches on the toggle.
+        /// </summary>
+        public bool ClampRewindToAck = true;
+        /// <summary>
+        /// Extra slack (ticks) BELOW the ViewBehindAck flag boundary for the rewind clamp. The clamp floor is
+        /// ack - InterpDelayTicks - ViewBehindAckTicks - this, so the clamp is always looser than the flag: a view the
+        /// flag treats as honest is never clamped, and anything the clamp caps was already flagged. Pure safety margin
+        /// for clock smoothing and jitter; it never needs to be tight.
+        /// </summary>
+        public int ViewClampMarginTicks = 4;
+
         // ---------------------------------------------------------------- integrity (server rules)
 
         /// <summary>No legit combination of slides, boosts and blasts gets near this speed, m/s.</summary>
@@ -66,6 +83,26 @@ namespace Sculpt.Core.AntiCheat
         public int FastReactionTicks => System.Math.Max(1, SimTime.SecondsToTicks(FastReactionSeconds));
         public int FastReactionHiddenTicks => System.Math.Max(1, SimTime.SecondsToTicks(FastReactionHiddenSeconds));
         public int FirstShotGapTicks => System.Math.Max(1, SimTime.SecondsToTicks(FirstShotGapSeconds));
+
+        // ---------------------------------------------------------------- phantom-track honeypot (logged only)
+
+        /// <summary>
+        /// Phantom-track: the strongest wallhack tell that needs no shot. Interest management (NobodyPopsIn) proves an
+        /// honest client was NOT sent a hidden enemy, so it has no way to know where that enemy is. If a player's aim
+        /// ray nonetheless stays locked on a hidden enemy's head WHILE the bearing to that enemy is sweeping (the enemy
+        /// has lateral motion, so holding the lock means actively following), that is through-wall tracking a fair
+        /// client cannot do. Two players walking straight at each other down a corridor do NOT trip it: the bearing
+        /// barely changes, so there is nothing to follow. Server-side, replay-verifiable (Aim category), logged only.
+        /// </summary>
+        public bool PhantomTrack = true;
+        /// <summary>The aim ray must stay within this of the hidden enemy's head to count as tracking, degrees.</summary>
+        public double PhantomAngleDegrees = 3.0;
+        /// <summary>Sustained for this many ticks before a flag (one streak = one flag).</summary>
+        public int PhantomWindowTicks = SimTime.TicksPerSecond / 2; // 0.5 s
+        /// <summary>...and over that window the bearing to the enemy must have swept at least this far, so a static straight-ahead alignment never flags, degrees.</summary>
+        public double PhantomMinBearingSweepDegrees = 15.0;
+        /// <summary>Only test enemies within this range (a head further away is too small for a lock to mean anything), m.</summary>
+        public double PhantomMaxRange = 60.0;
     }
 
     /// <summary>

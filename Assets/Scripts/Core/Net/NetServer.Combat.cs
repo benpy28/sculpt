@@ -166,7 +166,21 @@ namespace Sculpt.Core.Net
         {
             _targets.Clear();
             double view = viewTick + viewFrac / 256.0;
-            view = Math.Max(Tick - Weapons.MaxRewindTicks, Math.Min(Tick, view));
+            double floor = Tick - Weapons.MaxRewindTicks;
+            // You can't rewind a target older than the snapshot you yourself claim to be drawing. The clamp boundary is
+            // deliberately the SAME as the ViewBehindAck flag boundary (ack - interp - ViewBehindAckTicks) plus a little
+            // extra slack, so the rule is "if we wouldn't flag it, we won't clamp it": any view the flag treats as honest
+            // (an honest client draws interp behind its acked snapshot, further under ping/loss) is never clamped, so
+            // legit lag compensation over bad links is untouched. It only caps a forged old view paired with a recent
+            // ack (the naive backtrack) — which ViewBehindAck already flags. A consistent old-view+old-ack backtracker
+            // is indistinguishable from honest high latency without a trusted RTT (a documented residual), so it is
+            // neither clamped nor flagged here.
+            if (AC.ClampRewindToAck && !IsBotConnection(shooter.ConnectionId) && shooter.AckTick > int.MinValue / 2)
+            {
+                double ackFloor = shooter.AckTick - Config.InterpDelayTicks - AC.ViewBehindAckTicks - AC.ViewClampMarginTicks;
+                if (ackFloor > floor) floor = ackFloor;
+            }
+            view = Math.Max(floor, Math.Min(Tick, view));
             foreach (ServerPlayer o in _players)
             {
                 if (o == shooter) continue;
@@ -282,7 +296,14 @@ namespace Sculpt.Core.Net
             return w.ToArray();
         }
 
-        /// <summary>One reliable message per tick with events. Shots skip their shooter; health is told only to the two involved.</summary>
+        /// <summary>
+        /// One reliable message per tick with events, gated by interest so it can't be read as a wallhack. Shots skip
+        /// their shooter (predicted); health is told only to the two involved. A Shot or Grenade event carries the
+        /// attacker's exact eye and aim, so it only goes to receivers the attacker is being sent to (interest force-sends
+        /// anyone who fired or threw within 1 s and 250 m, so every shot you could hear still reaches you). A Hit event
+        /// carries the victim's impact point, so an uninvolved receiver gets it only when the victim is being sent to
+        /// them, with the victim's health masked out. Kill events carry no position and stay global (the kill feed).
+        /// </summary>
         private void SendCombat()
         {
             if (_combat.Count == 0) return;
@@ -292,9 +313,21 @@ namespace Sculpt.Core.Net
                 _combatTo.Clear();
                 foreach (CombatEvent e in _combat)
                 {
-                    if ((e.Type == CombatEventType.Shot || e.Type == CombatEventType.Grenade) && e.Attacker == to.Id) continue;
+                    bool involved = e.Attacker == to.Id || e.Victim == to.Id;
+                    switch (e.Type)
+                    {
+                        case CombatEventType.Shot:
+                        case CombatEventType.Grenade:
+                            // Leaks the attacker's eye + aim (or throw start): only receivers the attacker is sent to.
+                            if (e.Attacker == to.Id || !IsSentTo(to.Id, e.Attacker)) continue;
+                            break;
+                        case CombatEventType.Hit:
+                            // Leaks the victim's impact point: uninvolved receivers get it only if the victim is sent to them.
+                            if (!involved && !IsSentTo(to.Id, e.Victim)) continue;
+                            break;
+                    }
                     CombatEvent c = e;
-                    if (c.Type == CombatEventType.Hit && c.Attacker != to.Id && c.Victim != to.Id) c.HealthAfter = -1;
+                    if (c.Type == CombatEventType.Hit && !involved) c.HealthAfter = -1;
                     _combatTo.Add(c);
                     if (_combatTo.Count == CombatProtocol.MaxEvents) break;
                 }
