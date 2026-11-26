@@ -521,6 +521,35 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(check.Passed, check.ToString());
         }
 
+        [Test]
+        public void TheSeed_IsInTheReplay_SoTheReRunNeedsNoKnowledgeOfIt()
+        {
+            // The Game seeds each battle royale from the clock. A reviewer re-running the file can't know that number,
+            // so the file must carry it: the re-run's own server here has the default seed.
+            BrConfig cfg = Quick(BrMode.Duos);
+            cfg.Seed = 7781;
+            NetServer s = NewServer(cfg, out _, out _);
+            var ms = new MemoryStream();
+            MatchStream stream = s.StartStream();
+            var writer = new ReplayWriter(ms, new ReplayHeader { Map = "BattleRoyale", Mode = "Duos", Build = "tests", StartedUtcTicks = 1 }, stream);
+            s.AddPlayer(1, 1, new Vec3d(150, 1, 150), 0);
+            s.Step();
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            for (int i = 0; i < 2 * SimTime.TicksPerSecond; i++) s.Step();
+            writer.Finish();
+
+            ReplayFile f = ReplayFile.Read(ms.ToArray());
+            ReplayCheck check = ReplayVerifier.Run(f, () =>
+            {
+                BrConfig again = Quick(BrMode.Duos); // Seed left at its default
+                again.MakeBot = null;
+                return NewServer(again, out _, out _);
+            });
+            TestContext.WriteLine(check.ToString());
+            Assert.That(check.HashesChecked, Is.GreaterThan(10));
+            Assert.That(check.Passed, check.ToString());
+        }
+
         // ------------------------------------------------------------------ the whole thing, with bots
 
         private static BrConfig Fast(BrMode mode, int seed) => new BrConfig

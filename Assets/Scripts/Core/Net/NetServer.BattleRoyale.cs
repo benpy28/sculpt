@@ -94,6 +94,7 @@ namespace Sculpt.Core.Net
             Match.Storm = new StormState { Phase = -1, PhaseCount = config.Radius.Length };
             Movement.Items.MaxGroundItems = Math.Max(Movement.Items.MaxGroundItems, config.MaxGroundItems);
             _matchDirty = true;
+            Stream?.OnBrSeed(Tick, config.Seed); // the deal, chests and circles all come from it: a re-run needs it
         }
 
         /// <summary>Where the battle royale's place in the current match stands for a team (0 while it is still in).</summary>

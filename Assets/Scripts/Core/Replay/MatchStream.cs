@@ -50,7 +50,7 @@ namespace Sculpt.Core.Replay
     /// <summary>Record kinds inside a segment's raw bytes (each is: kind byte, varint length, body). Unknown kinds are skipped.</summary>
     public static class ReplayRecord
     {
-        public const byte Key = 1, Frame = 2, Inputs = 3, Hash = 4, Join = 5, Leave = 6, Flag = 7, Locker = 8, Prefs = 9;
+        public const byte Key = 1, Frame = 2, Inputs = 3, Hash = 4, Join = 5, Leave = 6, Flag = 7, Locker = 8, Prefs = 9, BrSeed = 10;
     }
 
     /// <summary>
@@ -98,6 +98,7 @@ namespace Sculpt.Core.Replay
         {
             if (_open != null || _finished) throw new InvalidOperationException("Stream already started.");
             StartSegment(s, s.Tick + 1);
+            if (s.Br != null) OnBrSeed(s.Tick, s.Br.Seed);
         }
 
         internal void BeginTick(int tick)
@@ -168,6 +169,15 @@ namespace Sculpt.Core.Replay
             _rec.VarU((ulong)playerId);
             for (int k = 0; k < Items.Slots; k++) _rec.U8((byte)prefs[k]);
             _pending.Add(Bytes(ReplayRecord.Prefs, _rec));
+        }
+
+        /// <summary>The battle royale's seed (team deal, chest rolls, circles): a re-run of the inputs needs the same one.</summary>
+        internal void OnBrSeed(int tick, int seed)
+        {
+            _rec.Clear();
+            _rec.VarU((ulong)Math.Max(0, tick));
+            _rec.I32(seed);
+            _pending.Add(Bytes(ReplayRecord.BrSeed, _rec));
         }
 
         internal void OnLeave(int tick, int playerId)
