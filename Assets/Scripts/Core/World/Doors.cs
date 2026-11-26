@@ -132,6 +132,16 @@ namespace Sculpt.Core
             w.Tick = keep;
         }
 
+        /// <summary>
+        /// Is there a press of yours on this leaf newer than <paramref name="msgTick"/>? Then a server change from that
+        /// tick (the answer to an older press) must not overwrite what your newer press shows; it is only remembered.
+        /// </summary>
+        public bool HasNewerPress(int tile, int msgTick)
+        {
+            foreach (Pending p in _pending) if (p.Leaf == tile && p.Tick > msgTick) return true;
+            return false;
+        }
+
         /// <summary>A tile change from the server (call for every change in a Tiles message for <paramref name="msgTick"/>).</summary>
         public void OnServerChange(TileWalls w, int tile, TileState state, int health, int msgTick)
         {

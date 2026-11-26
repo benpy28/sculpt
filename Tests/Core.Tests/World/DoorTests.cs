@@ -208,5 +208,33 @@ namespace Sculpt.Core.Tests.World
             Assert.That(a.Client.Walls[door].State, Is.EqualTo(TileState.DoorOpen), "and your view follows");
             Assert.That(blocker.ServerSide.State.Dead, Is.False);
         }
+        [Test]
+        public void OpenThenShutQuickly_AtHighPing_TheOldOpenAnswerDoesNotReopenItInYourView()
+        {
+            SculptNetHarness h = Duel(out BreachMapInfo info);
+            int door = NorthDoor(h.Server.Walls, info.Block, out Vec3d front);
+            var lag = SculptNetHarness.Lag(50);
+            var a = h.AddClient(front, team: 1, up: lag, down: lag);
+            h.RunSeconds(1);
+            int start = -1;
+            a.Script = (p, t) =>
+            {
+                if (start < 0) start = t;
+                if (t == start) return new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = true } };
+                if (t == start + 2 * SimTime.Per60) return new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = false } };
+                return default;
+            };
+            // Run until just after the shut press, then watch the client's view for a round trip and more.
+            h.RunMs(SculptNetHarness.TickMs * (2 * SimTime.Per60 + 3));
+            Assert.That(a.Client.Walls[door].State, Is.Not.EqualTo(TileState.DoorOpen), "shut in your view at once");
+            int reopened = 0;
+            for (int k = 0; k < 40 * SimTime.Per60; k++)
+            {
+                h.RunMs(SculptNetHarness.TickMs);
+                if (a.Client.Walls[door].State == TileState.DoorOpen) reopened++;
+            }
+            Assert.That(h.Server.Walls[door].State, Is.Not.EqualTo(TileState.DoorOpen), "the server shut it too");
+            Assert.That(reopened, Is.Zero, "the server's answer to the older open press never flicks it open again");
+        }
     }
 }
