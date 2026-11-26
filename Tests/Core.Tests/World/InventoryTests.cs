@@ -242,6 +242,34 @@ namespace Sculpt.Core.Tests.World
             Assert.That(s.Velocity.HorizontalLength, Is.EqualTo(Mc.RunSpeed * Heal.MoveSpeedScale).Within(0.05));
         }
 
+        [Test]
+        public void WhileUsing_NoNewSlideStarts_FromASprintOrALanding()
+        {
+            ITerrain t = Flat();
+            // Sprinting at full speed, then switch to bandages and start one while pressing crouch: no slide.
+            var s = Settled(t, new Bag { S0 = Item.Pump, S4 = Item.Bandage, N4 = 3 }, damage: 100);
+            Run(t, ref s, 60 * SimTime.Per60, k => Cmd(k, sprint: true, forward: 1));
+            Assert.That(s.Sprinting, Is.True, "sprinting before");
+            int t0 = s.Tick + 1;
+            int ready = t0 + Mc.Hand.HealItemDrawTicks;
+            Run(t, ref s, Mc.Hand.HealItemDrawTicks + 4, k =>
+            {
+                InputCmd c = Cmd(k, fire: k >= ready, sprint: true, forward: 1, key: (byte)(k == t0 ? 5 : 0));
+                if (k == ready) { c.Move.CrouchPressed = true; c.Move.CrouchHeld = true; }
+                return c;
+            });
+            Assert.That(s.Hand.Using, Is.True, "the bandage is in use");
+            Assert.That(s.Mode, Is.Not.EqualTo(MoveMode.Slide), "no slide start from a sprint while using a heal");
+
+            // Using one and jumping at speed (a hop started before the heal), then holding crouch on landing: no slide-land.
+            s.Mode = MoveMode.Ground;
+            s.Velocity = new Vec3d(0, 0, 10);
+            Run(t, ref s, 2, k => { InputCmd c = Cmd(k, fire: true, forward: 1); c.Move.JumpPressed = true; return c; });
+            Run(t, ref s, 40 * SimTime.Per60, k => { InputCmd c = Cmd(k, fire: true, forward: 1); c.Move.CrouchHeld = true; c.Move.CrouchPressed = true; return c; });
+            Assert.That(s.Hand.Using || s.Damage < 100, Is.True);
+            Assert.That(s.Mode, Is.Not.EqualTo(MoveMode.Slide), "no slide-land while using a heal");
+        }
+
         // ================================================================ manual swap (the I screen)
 
         [Test]
