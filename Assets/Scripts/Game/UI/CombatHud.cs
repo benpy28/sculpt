@@ -214,7 +214,7 @@ namespace Sculpt.Game.UI
 
             if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeed(net, w);
 
-            if (s.Dead)
+            if (s.Dead && !net.Match.IsBr) // battle royale: no respawn, its own "you're out" panel (BrHud)
             {
                 float left = Mathf.Max(0, (s.RespawnTick - net.Tick) / (float)SimTime.TicksPerSecond);
                 string by = _view.KilledBy != 0 && _view.KilledBy != net.PlayerId ? $"by P{_view.KilledBy}  ·  {SourceName(_view.KilledWith)}" : SourceName(_view.KilledWith);

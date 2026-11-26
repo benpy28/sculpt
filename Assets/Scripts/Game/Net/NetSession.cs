@@ -168,7 +168,9 @@ namespace Sculpt.Game.Net
         {
             NewLocalLinks();
             SubGrid serverGrid = _makeGrid();
-            Server = new NetServer(_terrain(serverGrid), _movement, _config, SendFromServer);
+            ITerrain serverTerrain = _terrain(serverGrid);
+            TileWalls.Find(serverTerrain)?.Prepare(); // at load, not on the first wall hit (a freeze of up to 0.1 s)
+            Server = new NetServer(serverTerrain, _movement, _config, SendFromServer);
             ServerSculpt = new SculptSystem(serverGrid, _sculptConfig);
             Server.Sculpt = ServerSculpt;
             Server.SpectatorDelayTicks = Math.Max(0, SpectatorDelaySeconds) * SimTime.TicksPerSecond;
@@ -204,7 +206,9 @@ namespace Sculpt.Game.Net
             ClientGrid = _firstClientGrid ?? _makeGrid();
             _firstClientGrid = null;
             var sculpt = new SculptClient(ClientGrid, _sculptConfig, _movement);
-            Client = new NetClient(_terrain(ClientGrid), _movement, _config, (d, r) => _up.Send(d, r, _nowMs), sculpt);
+            ITerrain clientTerrain = _terrain(ClientGrid);
+            TileWalls.Find(clientTerrain)?.Prepare();
+            Client = new NetClient(clientTerrain, _movement, _config, (d, r) => _up.Send(d, r, _nowMs), sculpt);
             Client.Prefs = LocalPrefs; // sent to the server after the welcome (a joiner's locker pick rides here too)
             ClientChanged?.Invoke();
         }

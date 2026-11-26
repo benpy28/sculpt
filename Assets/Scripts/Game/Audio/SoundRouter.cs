@@ -45,7 +45,11 @@ namespace Sculpt.Game.Audio
         }
 
         /// <summary>Something in <paramref name="region"/> changed shape (a tile broke, healed or lost cells; a door moved).</summary>
-        public static void Invalidate(Aabb region) => _paths?.Invalidate(region);
+        public static void Invalidate(Aabb region) { using (MkInvalidate.Auto()) _paths?.Invalidate(region); }
+
+        // Named sections for -benchmarkmarkers and the Unity profiler (the busy-fight cost of routing).
+        private static readonly Unity.Profiling.ProfilerMarker MkPlace = new Unity.Profiling.ProfilerMarker("SCULPT.SoundRoute"),
+            MkInvalidate = new Unity.Profiling.ProfilerMarker("SCULPT.SoundInvalidate");
 
         /// <summary>
         /// Moves <paramref name="at"/> to where the sound should be played and gives the extra gain and the low-pass
@@ -58,6 +62,7 @@ namespace Sculpt.Game.Audio
             gain = 1f;
             cutoff = (float)Config.OpenCutoffHz;
             if (!Active) return true;
+            using var mk = MkPlace.Auto();
             if (_frame != Time.frameCount) { _frame = Time.frameCount; _searches = 0; }
             Vec3d ear = _listener.position.ToCore();
             long before = _paths.Searches;

@@ -81,6 +81,12 @@ namespace Sculpt.Core
 
         private static int ThinAxis(in Brush b) => 3 - b.CellA1 - b.CellA2;
 
+        /// <summary>
+        /// Builds the cell neighbour table now instead of on the first hit. It covers the whole map (about 0.09 s on the
+        /// battle royale map), so building it lazily froze the first wall hit of every match; the game calls this at load.
+        /// </summary>
+        public void Prepare() => EnsureEdges();
+
         private void EnsureEdges()
         {
             if (_edge != null && _edge.Length == _tiles.Count * 4) return;

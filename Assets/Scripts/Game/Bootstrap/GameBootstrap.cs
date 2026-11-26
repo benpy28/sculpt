@@ -406,18 +406,17 @@ namespace Sculpt.Game.Bootstrap
 #if UNITY_EDITOR
             if (weaponSettings != null) weaponSettings.ApplyTo(_movement.Weapons); // live tuning in Play mode
 #endif
-            _session.BeginFrame(dt);       // read network, run server ticks (offline/host), deliver snapshots
+            using (MkSession.Auto()) _session.BeginFrame(dt); // read network, run server ticks (offline/host), deliver snapshots
             _player.Events.Clear();        // this frame's movement events (read in LateUpdate by HUD and audio)
             _player.SampleFrame();
 
             NetClient net = _session.Client;
             int ticks = net.BeginFrame(dt); // client clock runs a little ahead of the server
-            for (int i = 0; i < ticks; i++) _player.Tick();
+            using (MkPredict.Auto()) for (int i = 0; i < ticks; i++) _player.Tick();
             _session.EndFrame();            // inputs leave this frame
             PerfRuntime.PacketsSent();      // latency overlay: this frame's commands are on the wire
 
-            net.UpdateVisual(dt);
-            _player.Render((float)net.Alpha);
+            using (MkVisual.Auto()) { net.UpdateVisual(dt); _player.Render((float)net.Alpha); }
             // Watching (live or a replay): the spectator camera, else first person.
             bool watching = net.IsSpectator;
             if (watching) _spectatorCam.HandleInput();
@@ -426,12 +425,18 @@ namespace Sculpt.Game.Bootstrap
             bool brOut = !watching && net.Match.IsBr && net.Match.Phase == MatchPhase.Playing && net.Predicted.Dead;
             if (brOut) _brDeathCam.HandleInput();
             else _brDeathCam.Reset();
-            _rig.Mode = watching ? _spectatorCam : brOut ? _brDeathCam : (ICameraMode)_firstPerson;
+            if (!(_rig.Mode is Benchmark)) // a -benchmark run flies its own fixed route
+                _rig.Mode = watching ? _spectatorCam : brOut ? _brDeathCam : (ICameraMode)_firstPerson;
             _weapons.PreCamera(Time.unscaledDeltaTime);  // this frame's shots kick the view before it is placed
             _rig.Apply(Time.unscaledDeltaTime);
             _weapons.PostCamera(Time.unscaledDeltaTime); // tracers from the muzzle as drawn this frame
-            _world.RebuildDirty();
+            using (MkWorld.Auto()) _world.RebuildDirty();
         }
+
+        // Named sections for -benchmarkmarkers and the Unity profiler.
+        private static readonly Unity.Profiling.ProfilerMarker MkSession = new Unity.Profiling.ProfilerMarker("SCULPT.SessionFrame"),
+            MkPredict = new Unity.Profiling.ProfilerMarker("SCULPT.Predict"), MkVisual = new Unity.Profiling.ProfilerMarker("SCULPT.Visual"),
+            MkWorld = new Unity.Profiling.ProfilerMarker("SCULPT.WorldRebuild");
 
         /// <summary>Points in the tree canopies where birds sing (none on the movement course).</summary>
         private static System.Collections.Generic.List<Vector3> Perches(MapInfo info)
