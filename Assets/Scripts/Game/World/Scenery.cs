@@ -20,6 +20,8 @@ namespace Sculpt.Game.World
             sun.type = LightType.Directional;
             sun.transform.rotation = Quaternion.Euler(55f, -35f, 0f); // fixed sun direction
             sun.intensity = 1.1f;
+            sun.shadows = LightShadows.None; // Video > Picture > Shadows turns them on (Rendering/PictureEffects)
+            RenderSettings.sun = sun;
 
             Shader sky = Shader.Find("SCULPT/Sky");
             if (sky != null)
@@ -65,6 +67,7 @@ namespace Sculpt.Game.World
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var r = go.AddComponent<MeshRenderer>();
             r.sharedMaterial = new Material(shader) { name = "Backdrop (runtime)" };
+            r.sharedMaterial.SetFloat("_Scenery", 1f);
             r.sharedMaterial.SetFloat("_Detail", 0.03f);
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             r.receiveShadows = false;
@@ -108,8 +111,9 @@ namespace Sculpt.Game.World
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var r = go.AddComponent<MeshRenderer>();
             r.sharedMaterial = new Material(shader) { name = "Ground skirt (runtime)" };
+            r.sharedMaterial.SetFloat("_Scenery", 1f);
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            r.receiveShadows = false;
+            r.receiveShadows = true;
         }
 
         /// <summary>A closed band facing the arena: bottom below ground, ragged top (bumps = crowns or hilltops).</summary>

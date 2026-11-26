@@ -11,6 +11,7 @@ Shader "SCULPT/Greybox"
 {
     Properties
     {
+        [HideInInspector] _Scenery ("Scenery (1 = takes shadows, AO, lighting and atmosphere; 0 = players, loot, effects)", Float) = 0
         _Seam ("Tile Seam Darken", Range(0, 1)) = 0.22
         _SeamWidth ("Tile Seam Width (m)", Range(0.005, 0.08)) = 0.025
         _TileSize ("Tile Size (m)", Float) = 1.5
@@ -36,7 +37,12 @@ Shader "SCULPT/Greybox"
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile_fog
+            // Picture settings (Rendering/LookSettings): sun shadows and ambient occlusion on scenery only.
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
+            #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "SculptLook.hlsl"
 
             CBUFFER_START(UnityPerMaterial)
                 float _Seam;
@@ -47,6 +53,7 @@ Shader "SCULPT/Greybox"
                 float _BrickH;
                 float _Mortar;
                 float _Macro;
+                float _Scenery;
             CBUFFER_END
 
             struct Attributes
@@ -221,9 +228,58 @@ Shader "SCULPT/Greybox"
                     c *= macro * grain;
                     if (dot(i.cell, i.cell) > 1e-6) c = WallState(c, p, n, i.cell, fw);
                 }
+                c = SculptLight(c, p, normalize(i.normalWS), i.positionCS, _Scenery);
                 c = MixFog(c, i.fogFactor);
+                c = SculptAtmosphere(c, p, _Scenery);
                 return half4(c, 1);
             }
+            ENDHLSL
+        }
+
+        // Sun shadows, scene depth and depth-normals (SculptDepthPasses.hlsl): only drawn when a picture setting needs them.
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags { "LightMode" = "ShadowCaster" }
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex SculptShadowVert
+            #pragma fragment SculptDepthFrag
+            #include "SculptDepthPasses.hlsl"
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode" = "DepthOnly" }
+            ZWrite On
+            ColorMask R
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex SculptDepthVert
+            #pragma fragment SculptDepthFrag
+            #include "SculptDepthPasses.hlsl"
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "DepthNormals"
+            Tags { "LightMode" = "DepthNormals" }
+            ZWrite On
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex SculptDepthVert
+            #pragma fragment SculptDepthNormalsFrag
+            #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
+            #include "SculptDepthPasses.hlsl"
             ENDHLSL
         }
     }

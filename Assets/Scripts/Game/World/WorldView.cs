@@ -87,6 +87,7 @@ namespace Sculpt.Game.World
                 shader = Shader.Find("Universal Render Pipeline/Unlit");
             }
             _material = new Material(shader) { name = "Terrain (runtime)" };
+            _material.SetFloat("_Scenery", 1f); // takes the picture settings (shadows, AO, lighting, atmosphere)
             _material.SetFloat(IdRange, (float)sculpt.RangeMeters);
         }
 
@@ -113,8 +114,8 @@ namespace Sculpt.Game.World
                     var mf = go.AddComponent<MeshFilter>();
                     var mr = go.AddComponent<MeshRenderer>();
                     mr.sharedMaterial = _material;
-                    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                    mr.receiveShadows = false;
+                    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; // scenery casts sun shadows when that setting is on (players never do)
+                    mr.receiveShadows = true;
                     _meshes[i] = new Mesh { name = go.name };
                     mf.sharedMesh = _meshes[i];
                     _chunkObjects[i] = go;
