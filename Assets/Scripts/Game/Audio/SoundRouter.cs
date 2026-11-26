@@ -25,6 +25,9 @@ namespace Sculpt.Game.Audio
         public static double LastBuildMs { get; private set; }
         /// <summary>The last route worked out (dev overlay).</summary>
         public static SoundRoute LastRoute { get; private set; }
+        /// <summary>The last <see cref="Place"/> found the sound dulled by walls or corners (not just by the head shadow
+        /// of a sound behind you). For the "(muffled)" caption.</summary>
+        public static bool LastMuffled { get; private set; }
         /// <summary>Searches for a way round run this frame.</summary>
         public static int SearchesThisFrame => _frame == Time.frameCount ? _searches : 0;
 
@@ -57,6 +60,7 @@ namespace Sculpt.Game.Audio
         {
             gain = 1f;
             cutoff = (float)Config.OpenCutoffHz;
+            LastMuffled = false;
             if (!Active) return true;
             if (_frame != Time.frameCount) { _frame = Time.frameCount; _searches = 0; }
             Vec3d ear = _listener.position.ToCore();
@@ -65,6 +69,7 @@ namespace Sculpt.Game.Audio
             if (_paths.Searches != before) _searches++;
             LastRoute = r;
             if (!r.Audible) return false;
+            LastMuffled = r.CutoffHz < Config.OpenCutoffHz - 1;
             SoundPaths.HeadShadow(_listener.forward.ToCore(), r.ArrivesFrom, Config, out double shadowDb, out double shadowHz);
             // Settings > Audio > front/back cue: scales how much a sound behind you is dulled (1 = as designed).
             double hs = Sculpt.Game.Settings.ClientSettings.Current.HeadShadow;

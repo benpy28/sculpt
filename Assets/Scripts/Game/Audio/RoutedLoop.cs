@@ -25,7 +25,7 @@ namespace Sculpt.Game.Audio
         private AudioLowPassFilter _filter;
         private float _next, _gain, _cutoff = 22000f, _gainTarget, _cutoffTarget = 22000f;
         private Vector3 _offset;
-        private bool _audible, _placed;
+        private bool _audible, _placed, _muffled;
 
         /// <summary>A routed loop under <paramref name="parent"/>, silent until given a volume.</summary>
         public static RoutedLoop Create(string name, Transform parent, AudioClip clip, float minDistance, float maxDistance)
@@ -49,6 +49,7 @@ namespace Sculpt.Game.Audio
                 _next = now + 0.1f;
                 Vector3 p = At;
                 _audible = SoundRouter.Place(ref p, Source.maxDistance, 0.05f, out _gainTarget, out _cutoffTarget);
+                _muffled = SoundRouter.LastMuffled;
                 if (!_audible) _gainTarget = 0f;
                 // Keep the offset from the true spot to the heard spot, so a moving sound moves smoothly between routes.
                 _offset = p - At;
@@ -62,7 +63,7 @@ namespace Sculpt.Game.Audio
             Source.volume = Volume * _gain * SoundMix.Gain(Bus);
             Source.spread = SoundMix.Spread;
             if (Caption != SoundCaption.None && _audible && Source.volume > 0.02f)
-                SoundCaptions.Post(Caption, transform.position, _cutoff < (float)SoundRouter.Config.OpenCutoffHz - 1f, Source.volume);
+                SoundCaptions.Post(Caption, transform.position, _muffled, Source.volume);
             Source.pitch = Pitch;
             SoundRouter.ApplyCutoff(_filter, _cutoff);
         }
