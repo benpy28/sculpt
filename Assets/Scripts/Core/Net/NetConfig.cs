@@ -82,6 +82,17 @@ namespace Sculpt.Core.Net
         /// The game only turns it on in the Editor and development builds.
         /// </summary>
         public bool AllowDevWarp;
+
+        /// <summary>
+        /// Dev respawn (F1): whether a respawn press from a client is honoured. Off by default since 2026-11-26: before,
+        /// any client could send it, so a modified client could skip the 3 s respawn wait or teleport home at full health
+        /// mid-fight. The game turns it on only in the Editor and development builds, like the warp. The server's own
+        /// respawns (match countdown, the respawn timer, falling out of the world) never need it.
+        /// </summary>
+        public bool AllowDevRespawn;
+
+        /// <summary>Anti-cheat checks and interest management (who goes in whose snapshots).</summary>
+        public AntiCheat.AntiCheatConfig AntiCheat = new AntiCheat.AntiCheatConfig();
         public Vec3d DevWarpPoint;
     }
 }

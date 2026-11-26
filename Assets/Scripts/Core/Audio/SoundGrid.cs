@@ -83,6 +83,51 @@ namespace Sculpt.Core.Audio
 
         public int Chunks => _chunks.Count;
 
+        /// <summary>
+        /// Can a line from <paramref name="a"/> to <paramref name="b"/> get through? Walks the cells it crosses and stops
+        /// at the first face no line can pass. Errs toward open: a face counts as open while any of its four lines is,
+        /// so an opening a quarter cell across lets it through even if the real line would just miss it. Used by the
+        /// server's interest management as a cheap, generous line of sight (never blocks a line a ray would pass).
+        /// </summary>
+        public bool LineOpen(Vec3d a, Vec3d b)
+        {
+            double cs = CellSize;
+            double ax = a.X / cs, ay = a.Y / cs, az = a.Z / cs;
+            double dx = b.X / cs - ax, dy = b.Y / cs - ay, dz = b.Z / cs - az;
+            int x = (int)Math.Floor(ax), y = (int)Math.Floor(ay), z = (int)Math.Floor(az);
+            int ex = (int)Math.Floor(ax + dx), ey = (int)Math.Floor(ay + dy), ez = (int)Math.Floor(az + dz);
+            int sx = dx > 0 ? 1 : dx < 0 ? -1 : 0, sy = dy > 0 ? 1 : dy < 0 ? -1 : 0, sz = dz > 0 ? 1 : dz < 0 ? -1 : 0;
+            double tdx = sx != 0 ? Math.Abs(1 / dx) : double.PositiveInfinity;
+            double tdy = sy != 0 ? Math.Abs(1 / dy) : double.PositiveInfinity;
+            double tdz = sz != 0 ? Math.Abs(1 / dz) : double.PositiveInfinity;
+            double tx = sx > 0 ? (x + 1 - ax) * tdx : sx < 0 ? (ax - x) * tdx : double.PositiveInfinity;
+            double ty = sy > 0 ? (y + 1 - ay) * tdy : sy < 0 ? (ay - y) * tdy : double.PositiveInfinity;
+            double tz = sz > 0 ? (z + 1 - az) * tdz : sz < 0 ? (az - z) * tdz : double.PositiveInfinity;
+            int guard = Math.Abs(ex - x) + Math.Abs(ey - y) + Math.Abs(ez - z) + 3;
+            while ((x != ex || y != ey || z != ez) && guard-- > 0)
+            {
+                if (tx <= ty && tx <= tz)
+                {
+                    if (tx > 1) break;
+                    if (!Open(sx > 0 ? x : x - 1, y, z, 0)) return false;
+                    x += sx; tx += tdx;
+                }
+                else if (ty <= tz)
+                {
+                    if (ty > 1) break;
+                    if (!Open(x, sy > 0 ? y : y - 1, z, 1)) return false;
+                    y += sy; ty += tdy;
+                }
+                else
+                {
+                    if (tz > 1) break;
+                    if (!Open(x, y, sz > 0 ? z : z - 1, 2)) return false;
+                    z += sz; tz += tdz;
+                }
+            }
+            return true;
+        }
+
         // ------------------------------------------------------------------ building
 
         /// <summary>Works out the whole world (at load).</summary>

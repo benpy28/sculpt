@@ -14,6 +14,8 @@ namespace Sculpt.Core.Net
         /// <summary>View pitch in degrees, -89 (up) .. 89 (down). Used by hit checks later.</summary>
         public float Pitch;
         public bool Respawn;
+        /// <summary>Server only, never on the wire: a respawn the server itself ordered (match countdown), honoured even when dev respawns aren't.</summary>
+        public bool ForcedRespawn;
         /// <summary>Dev only: put the player at the dev warp point (the movement course start).</summary>
         public bool Warp;
         /// <summary>Server tick (with fraction) the client was drawing other players at. For lag compensation (M5+).</summary>
@@ -144,6 +146,9 @@ namespace Sculpt.Core.Net
             if (Sculpt.Type == SculptActionType.Throw) w.VecF(Sculpt.LookDir);
         }
 
+        /// <summary>Commands read whose view angles had to be wrapped or clamped (an honest client never sends those). The server reads it per packet.</summary>
+        [ThreadStatic] internal static int Sanitized;
+
         /// <summary>Reads and sanitizes one command. Non-finite angles throw (the packet is dropped).</summary>
         internal static InputCmd Read(ref ByteReader r, int tick)
         {
@@ -166,6 +171,7 @@ namespace Sculpt.Core.Net
             float pitch = r.F32();
             if (float.IsNaN(yaw) || float.IsInfinity(yaw) || float.IsNaN(pitch) || float.IsInfinity(pitch))
                 throw new NetFormatException("Non-finite view angle.");
+            if (Math.Abs((double)yaw) > Math.PI || Math.Abs((double)pitch) > MaxPitch) Sanitized++;
             c.Move.Yaw = Math.Abs((double)yaw) <= Math.PI ? yaw : QuantizeYaw(yaw); // honest clients are already wrapped
             c.Pitch = (float)Clamp(pitch, -MaxPitch, MaxPitch);
             c.ViewTick = tick - r.U8();
@@ -246,7 +252,7 @@ namespace Sculpt.Core.Net
         public static void Simulate(ITerrain grid, MovementConfig mc, NetConfig nc, ref MotorState s, in InputCmd cmd, Vec3d spawn, List<MoveEvent> events, List<WeaponShot> shots = null,
             List<GrenadeEvent> grenades = null, List<PunchSwing> punches = null, IChargeBreaker charge = null)
         {
-            if (cmd.Respawn)
+            if (cmd.Respawn && (nc.AllowDevRespawn || cmd.ForcedRespawn))
             {
                 Respawn(ref s, spawn, cmd.Tick, events, grenades);
                 return;

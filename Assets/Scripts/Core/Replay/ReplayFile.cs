@@ -10,7 +10,7 @@ namespace Sculpt.Core.Replay
     public sealed class ReplayHeader
     {
         /// <summary>Replay format version (separate from the network protocol, which must also match to play it back).</summary>
-        public const ushort FormatVersion = 1;
+        public const ushort FormatVersion = 2; // 2: anti-cheat flags (records and footer)
         public byte Protocol = Net.Protocol.Version;
         public int TicksPerSecond = SimTime.TicksPerSecond;
         /// <summary>Map name the Game layer rebuilds the world from ("Duel", "Breach").</summary>
@@ -130,6 +130,8 @@ namespace Sculpt.Core.Replay
                 f.U8((byte)m.Source);
                 f.Bool(m.Headshot);
             }
+            f.VarU((ulong)_stream.Flags.Count);
+            foreach (AntiCheat.Flag fl in _stream.Flags) AntiCheat.FlagLog.Write(f, fl);
             var w = new ByteWriter(f.Length + 32);
             long at = _out.Position;
             w.U8((byte)'F');
@@ -174,6 +176,8 @@ namespace Sculpt.Core.Replay
         public ReplayHeader Header { get; private set; }
         public readonly List<SegmentInfo> Segments = new List<SegmentInfo>();
         public readonly List<ReplayMarker> Markers = new List<ReplayMarker>();
+        /// <summary>Anti-cheat flags the recording server logged, in order (a reviewer jumps to each).</summary>
+        public readonly List<AntiCheat.Flag> Flags = new List<AntiCheat.Flag>();
         /// <summary>True when the file ended cleanly (index present); false = cut short, rebuilt by scanning.</summary>
         public bool Complete { get; private set; }
         public int FirstTick => Segments.Count > 0 ? Segments[0].FirstTick : 0;
@@ -194,7 +198,7 @@ namespace Sculpt.Core.Replay
             var f = new ReplayFile { _data = data };
             var r = new ByteReader(data, 4, data.Length - 4);
             ushort version = r.U16();
-            if (version != ReplayHeader.FormatVersion) throw new NetFormatException($"Replay format {version}, this build reads {ReplayHeader.FormatVersion}.");
+            if (version != ReplayHeader.FormatVersion && version != 1) throw new NetFormatException($"Replay format {version}, this build reads {ReplayHeader.FormatVersion}.");
             int hl = r.VarCount(1 << 16);
             int ha = r.Skip(hl);
             var hr = new ByteReader(data, ha, hl);
@@ -208,8 +212,8 @@ namespace Sculpt.Core.Replay
                 long at = tr.I64();
                 if (at >= blocksAt && at < data.Length - 12 && data[at] == 'F')
                 {
-                    try { f.ReadFooter((int)at); footer = true; }
-                    catch (NetFormatException) { f.Segments.Clear(); f.Markers.Clear(); }
+                    try { f.ReadFooter((int)at, version); footer = true; }
+                    catch (NetFormatException) { f.Segments.Clear(); f.Markers.Clear(); f.Flags.Clear(); }
                 }
             }
             if (!footer) f.Scan(blocksAt);
@@ -218,7 +222,7 @@ namespace Sculpt.Core.Replay
             return f;
         }
 
-        private void ReadFooter(int at)
+        private void ReadFooter(int at, ushort version)
         {
             var r = new ByteReader(_data, at + 1, _data.Length - at - 1);
             int len = r.VarCount(_data.Length);
@@ -234,6 +238,9 @@ namespace Sculpt.Core.Replay
             int m = b.VarCount(1 << 24);
             for (int i = 0; i < m; i++)
                 Markers.Add(new ReplayMarker { Tick = b.I32(), Killer = (int)b.VarCount(int.MaxValue), Victim = (int)b.VarCount(int.MaxValue), Source = (DamageSource)b.U8(), Headshot = b.Bool() });
+            if (version < 2) return;
+            int nf = b.VarCount(1 << 24);
+            for (int i = 0; i < nf; i++) Flags.Add(AntiCheat.FlagLog.Read(ref b));
         }
 
         /// <summary>No index (the file was cut short): walk the blocks, keep every whole one, find the kills in them.</summary>
@@ -260,6 +267,12 @@ namespace Sculpt.Core.Replay
             var events = new List<CombatEvent>();
             foreach (Record rec in Records(raw))
             {
+                if (rec.Kind == ReplayRecord.Flag)
+                {
+                    var fr = new ByteReader(raw, rec.Offset, rec.Length);
+                    Flags.Add(AntiCheat.FlagLog.Read(ref fr));
+                    continue;
+                }
                 if (rec.Kind != ReplayRecord.Frame) continue;
                 var r = new ByteReader(raw, rec.Offset, rec.Length);
                 SpecProtocol.FrameHeader h = SpecProtocol.ReadFrameHeader(ref r);

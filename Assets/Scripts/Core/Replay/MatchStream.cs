@@ -50,7 +50,7 @@ namespace Sculpt.Core.Replay
     /// <summary>Record kinds inside a segment's raw bytes (each is: kind byte, varint length, body). Unknown kinds are skipped.</summary>
     public static class ReplayRecord
     {
-        public const byte Key = 1, Frame = 2, Inputs = 3, Hash = 4, Join = 5, Leave = 6;
+        public const byte Key = 1, Frame = 2, Inputs = 3, Hash = 4, Join = 5, Leave = 6, Flag = 7;
     }
 
     /// <summary>
@@ -65,6 +65,8 @@ namespace Sculpt.Core.Replay
         /// <summary>Segments still in memory, oldest first (live spectators and the writer trim them).</summary>
         public readonly List<StreamSegment> Segments = new List<StreamSegment>();
         public readonly List<ReplayMarker> Markers = new List<ReplayMarker>();
+        /// <summary>Anti-cheat flags the server logged while recording (also written as records, for a reviewer to jump to).</summary>
+        public readonly List<AntiCheat.Flag> Flags = new List<AntiCheat.Flag>();
         /// <summary>Raised when a segment is complete (the writer saves it).</summary>
         public event Action<StreamSegment> SegmentClosed;
         public int FirstTick { get; private set; } = int.MinValue;
@@ -123,6 +125,16 @@ namespace Sculpt.Core.Replay
         }
 
         internal void AddMarker(in ReplayMarker m) => Markers.Add(m);
+
+        /// <summary>A flag the server logged (during a tick, or between ticks for packet checks): recorded with the next tick.</summary>
+        internal void AddFlag(in AntiCheat.Flag f)
+        {
+            if (_finished) return;
+            Flags.Add(f);
+            _rec.Clear();
+            AntiCheat.FlagLog.Write(_rec, f);
+            _pending.Add(Bytes(ReplayRecord.Flag, _rec));
+        }
 
         /// <summary>A player came in between ticks (after tick `tick`).</summary>
         internal void OnJoin(int tick, ServerPlayer p, JoinKind kind, bool countsAsPlayer)

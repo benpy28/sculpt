@@ -10,14 +10,20 @@ namespace Sculpt.Core.Replay
         public int TicksRun;
         public int HashesChecked;
         public int FirstMismatchTick = -1;
+        /// <summary>Anti-cheat flags worked out from the simulation (integrity, interest, aim) in the recording, and whether the re-run logged exactly the same ones.</summary>
+        public int FlagsChecked;
+        public bool FlagsMatch = true;
+        /// <summary>The re-run server's flag log (with per-player shot and hit counts), for a reviewer.</summary>
+        public AntiCheat.FlagLog ReRunFlags;
         /// <summary>Why the check couldn't run (no inputs, recorded mid-match, a join the re-run couldn't match), or null.</summary>
         public string Problem;
-        public bool Passed => Problem == null && FirstMismatchTick < 0 && HashesChecked > 0;
+        public bool Passed => Problem == null && FirstMismatchTick < 0 && HashesChecked > 0 && FlagsMatch;
 
         public override string ToString() =>
             Problem != null ? "can't check: " + Problem :
             FirstMismatchTick >= 0 ? $"MISMATCH at tick {FirstMismatchTick} ({HashesChecked} hashes checked, {TicksRun} ticks run)" :
-            $"matches: {HashesChecked} state hashes over {TicksRun} ticks";
+            !FlagsMatch ? $"state matches ({HashesChecked} hashes) but the anti-cheat flags differ from the recording's {FlagsChecked}" :
+            $"matches: {HashesChecked} state hashes over {TicksRun} ticks, {FlagsChecked} simulation flags reproduced";
     }
 
     /// <summary>
@@ -101,7 +107,11 @@ namespace Sculpt.Core.Replay
                 }
             }
 
+            var recorded = new List<AntiCheat.Flag>();
+            foreach (AntiCheat.Flag fl in file.Flags) if (AntiCheat.FlagLog.FromSimulation(fl.Kind)) recorded.Add(fl);
+
             NetServer s = makeServer();
+            check.ReRunFlags = s.Flags;
             int start = file.FirstTick - 1;
             if (s.Tick != start) { check.Problem = $"the fresh server starts at tick {s.Tick}, the recording at {start}"; return check; }
             if (s.Players.Count != 0) { check.Problem = "the fresh server already has players"; return check; }
@@ -126,6 +136,12 @@ namespace Sculpt.Core.Replay
                     if (MatchStream.StateHash(s) != want) { check.FirstMismatchTick = t; return check; }
                 }
             }
+            var again = new List<AntiCheat.Flag>();
+            foreach (AntiCheat.Flag fl in s.Flags.Flags)
+                if (AntiCheat.FlagLog.FromSimulation(fl.Kind) && fl.Tick >= file.FirstTick && fl.Tick <= file.LastTick) again.Add(fl);
+            check.FlagsChecked = recorded.Count;
+            check.FlagsMatch = again.Count == recorded.Count;
+            for (int i = 0; check.FlagsMatch && i < recorded.Count; i++) check.FlagsMatch = recorded[i].Equals(again[i]);
             return check;
         }
     }

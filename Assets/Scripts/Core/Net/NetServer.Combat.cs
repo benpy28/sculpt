@@ -41,16 +41,22 @@ namespace Sculpt.Core.Net
                         Type = CombatEventType.Shot, Attacker = p.Id, Source = (DamageSource)shot.Weapon,
                         Origin = shot.Origin, Aim = shot.Aim, Spread = (float)shot.Spread, Seed = shot.Seed,
                     });
+                    int lastShotBefore = p.Watch.LastShotTickAny;
+                    p.Watch.LastShotTickAny = shot.Tick;
+                    NoteShot(p, shot);
                     BuildTargets(p, p.LastCmd.ViewTick, p.LastCmd.ViewFrac);
                     WeaponStats st = Weapons.Of(shot.Weapon);
                     Hitscan.Resolve(Grid, shot, st, Weapons, p.Team, _targets, _victims, Walls != null ? _pellets : null);
                     Walls?.ApplyShot(_pellets, shot.Weapon, p.Id);
+                    bool firstVictim = true;
                     foreach (ShotVictim v in _victims)
                     {
                         ServerPlayer victim = FindById(v.Id);
                         if (victim == null || victim.State.Dead) continue;
                         int dmg = v.Damage;
                         if (dmg <= 0) continue;
+                        NoteHit(p, victim, shot, v.HeadPellets > 0, firstVictim, lastShotBefore);
+                        firstVictim = false;
                         bool killed = Hurt(p, victim, dmg);
                         _combat.Add(new CombatEvent
                         {
@@ -117,6 +123,7 @@ namespace Sculpt.Core.Net
                     DamageSource src = SourceOf(e.Kind);
                     if (e.Type == GrenadeEventType.Thrown)
                     {
+                        p.Watch.ShotNoiseUntil = Tick + AC.Interest.ShotNoiseTicks; // a throw is heard (and seen: its flight goes to everyone)
                         _combat.Add(new CombatEvent { Type = CombatEventType.Grenade, Attacker = p.Id, Source = src, Nade = e.Type, NadeSeq = e.Seq, Origin = e.Position, Aim = e.Velocity });
                         continue;
                     }

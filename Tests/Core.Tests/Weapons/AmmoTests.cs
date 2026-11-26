@@ -21,7 +21,7 @@ namespace Sculpt.Core.Tests.Weapons
         public void SetUp()
         {
             _mc = new MovementConfig();
-            _nc = new NetConfig();
+            _nc = new NetConfig { AllowDevRespawn = true };
             _grid = new SubGrid(4, 4, 4, -16);
             _grid.FillBaseGround();
             _spawn = new Vec3d(8 * B + 0.6, 0, 8 * B + 0.6);

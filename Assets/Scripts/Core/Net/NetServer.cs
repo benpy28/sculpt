@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Sculpt.Core.AntiCheat;
 
 namespace Sculpt.Core.Net
 {
@@ -65,6 +66,8 @@ namespace Sculpt.Core.Net
         /// <summary>Snapshot bytes sent to this client, and how many snapshots were deltas or full (stats and tests).</summary>
         public long SnapshotBytes;
         public int DeltaSnapshotsSent, FullSnapshotsSent;
+
+        internal readonly PlayerWatch Watch = new PlayerWatch();
 
         public int MissedInputs;   // ticks stepped with a repeated command
         public int LateInputs;     // commands that arrived after their tick was simulated
@@ -222,6 +225,7 @@ namespace Sculpt.Core.Net
             _dummies.Remove(p.Id);
             _brains.Remove(p.Id);
             _ownBars.Remove(p.Id);
+            ForgetInterest(p.Id);
             if (Sculpt != null)
             {
                 if (p.PendingSeq >= 0 || Sculpt.PendingOf(p.Id) != null)
@@ -238,8 +242,10 @@ namespace Sculpt.Core.Net
             {
                 var r = new ByteReader(data, offset, count);
                 if (Protocol.PeekType(data, offset, count) != MsgType.Inputs) { p.DroppedPackets++; return; }
+                InputCmd.Sanitized = 0;
                 InputsMsg im = Protocol.ReadInputs(ref r, _cmdScratch);
                 p.ReceivedPackets++;
+                if (_cmdScratch.Count > 0) CheckPacket(p, im, _cmdScratch, InputCmd.Sanitized);
                 // The ack rides with the commands; only the newest packet's counts (an older one arriving late would
                 // name an older snapshot, still valid but needlessly far back).
                 if (_cmdScratch[_cmdScratch.Count - 1].Tick > p.NewestReceived && im.AckSnapshotTick <= Tick) p.AckTick = im.AckSnapshotTick;
@@ -248,6 +254,7 @@ namespace Sculpt.Core.Net
             catch (NetFormatException)
             {
                 p.DroppedPackets++;
+                Flag(p, FlagKind.Malformed);
             }
         }
 
@@ -256,7 +263,7 @@ namespace Sculpt.Core.Net
             int newest = cmds[cmds.Count - 1].Tick;
             int lead = newest - Tick;
             // Too far ahead: a broken or cheating clock. Ignore the whole packet.
-            if (lead > Config.MaxCommandLeadTicks) return;
+            if (lead > Config.MaxCommandLeadTicks) { Flag(p, FlagKind.ClockAhead, lead); return; }
 
             RecordLead(p, lead);
             if (newest > p.NewestReceived) p.NewestReceived = newest;
@@ -400,7 +407,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryFire) { cmd.Move.FirePressed = true; p.CarryFire = false; }
                 if (p.CarryAim) { cmd.Move.AimPressed = true; p.CarryAim = false; }
                 if (p.CarryRespawn) { cmd.Respawn = true; p.CarryRespawn = false; }
-                if (p.ForceRespawn) { cmd.Respawn = true; p.ForceRespawn = false; }
+                if (p.ForceRespawn) { cmd.Respawn = true; cmd.ForcedRespawn = true; p.ForceRespawn = false; }
                 if (p.CarryWarp) { cmd.Warp = true; p.CarryWarp = false; }
                 if (p.CarryToggle) { cmd.Hand.SculptToggle = true; p.CarryToggle = false; }
                 if (p.CarryReload) { cmd.Hand.Reload = true; p.CarryReload = false; }
@@ -415,6 +422,7 @@ namespace Sculpt.Core.Net
                     if (!cmd.HasSculpt) { cmd.HasSculpt = true; cmd.SculptSeq = p.CarrySculptCmd.SculptSeq; cmd.Sculpt = p.CarrySculptCmd.Sculpt; }
                     p.CarrySculpt = false;
                 }
+                CheckCommand(p, ref cmd);
                 p.LastCmd = cmd;
                 Stream?.AddInput(p.Id, cmd);
 
@@ -431,7 +439,9 @@ namespace Sculpt.Core.Net
                 p.Nades.Clear();
                 p.Punches.Clear();
                 _charge.By = p.Id;
+                Before before = TakeBefore(p);
                 NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches, Walls != null ? _charge : null);
+                CheckIntegrity(p, before);
                 if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
                 if (!p.State.Dead && (cmd.Hand.Pickup || cmd.Hand.Drop)) HandleItems(p, cmd);
                 if (cmd.Hand.Heal) HandleHeal(p, cmd);
@@ -457,6 +467,7 @@ namespace Sculpt.Core.Net
             ResolveGrenades();
             StepHealing();
             StepPing();
+            StepInterest();
 
             if (Sculpt != null)
             {
@@ -717,7 +728,7 @@ namespace Sculpt.Core.Net
                     Self = to.State,
                     SelfBar = BarOf(to.Id).Value,
                     SelfHoldTenthMs = HoldOf(to),
-                }, to.Id, to.Sent, Config.DeltaSnapshots ? to.AckTick : -1);
+                }, to.Id, to.Sent, Config.DeltaSnapshots ? to.AckTick : -1, MaskFor(to));
                 if (delta) to.DeltaSnapshotsSent++; else to.FullSnapshotsSent++;
                 to.SnapshotBytes += _w.Length;
                 Send(to.ConnectionId, _w.ToArray(), false);

@@ -119,7 +119,7 @@ namespace Sculpt.Game.Bootstrap
             breachSettings.ApplyTo(movement.Hand);
             var breach = new BreachConfig();
             breachSettings.ApplyTo(breach);
-            var netConfig = new NetConfig { AllowDevWarp = GameInput.DevBuild };
+            var netConfig = new NetConfig { AllowDevWarp = GameInput.DevBuild, AllowDevRespawn = GameInput.DevBuild };
             // The client's own copy of the map (what it draws and predicts against). The server builds its own.
             Vec3d[][] spawns;
             double[] yaw;

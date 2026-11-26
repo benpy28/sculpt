@@ -153,14 +153,22 @@ namespace Sculpt.Core.Net
         }
 
         /// <summary>Writes <paramref name="m"/> (its Others ignored) with everyone from <see cref="SetEveryone"/> except <paramref name="receiverId"/>.</summary>
-        public bool WriteForReceiver(ByteWriter w, in SnapshotMsg m, int receiverId, SnapshotBaselines sent, int baseTick)
+        /// <param name="includeById">Interest management: by player id, who goes in (null = everyone). A player left out
+        /// is simply not in this snapshot; the client stops drawing them, and they come back as new (full) when included
+        /// again, so leaving someone out never breaks the delta chain.</param>
+        public bool WriteForReceiver(ByteWriter w, in SnapshotMsg m, int receiverId, SnapshotBaselines sent, int baseTick, bool[] includeById = null)
         {
             if (_everyoneTick != m.ServerTick) throw new InvalidOperationException("SetEveryone was not called for this tick.");
             if (_poses.Length < _everyoneCount) _poses = new SnapPose[Math.Max(_everyoneCount, _poses.Length * 2)];
             int count = 0;
             int skip = receiverId & 0xFFFF;
             for (int i = 0; i < _everyoneCount; i++)
-                if (_everyone[i].Id != skip) _poses[count++] = _everyone[i];
+            {
+                int id = _everyone[i].Id;
+                if (id == skip) continue;
+                if (includeById != null && (id >= includeById.Length || !includeById[id])) continue;
+                _poses[count++] = _everyone[i];
+            }
             if (count > Protocol.MaxPlayersPerSnapshot) throw new ArgumentException("Too many players.");
             return WriteCore(w, m, count, sent, baseTick);
         }
