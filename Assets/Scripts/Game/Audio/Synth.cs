@@ -96,14 +96,15 @@ namespace Sculpt.Game.Audio
         {
             if (clip == null) return;
             float cutoff = 22000f;
+            bool muffled = false;
             volume *= SoundMix.Gain(bus);
             if (spatial && route)
             {
-                if (!SoundRouter.Place(ref at, maxDistance, sourceRadius, out float gain, out cutoff)) return;
+                if (!SoundRouter.Place(ref at, maxDistance, sourceRadius, out float gain, out cutoff, out muffled)) return;
                 volume *= gain;
             }
             if (volume <= 0.0001f) return; // muted bus: no voice used, and no caption for a sound you turned off
-            if (caption != SoundCaption.None && spatial) SoundCaptions.Post(caption, at, cutoff < (float)SoundRouter.Config.OpenCutoffHz - 1f, volume);
+            if (caption != SoundCaption.None && spatial) SoundCaptions.Post(caption, at, muffled, volume);
             AudioSource s = Voice();
             s.spread = spatial ? SoundMix.Spread : 0f;
             SoundRouter.ApplyCutoff(_filters[_voice], spatial ? cutoff : 22000f);

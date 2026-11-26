@@ -53,10 +53,12 @@ namespace Sculpt.Game.Audio
         /// </summary>
         /// <param name="range">How far the sound carries (its fall-off distance).</param>
         /// <param name="sourceRadius">How deep in a solid the sound may sit (a door or wall tile sounds from its middle).</param>
-        public static bool Place(ref Vector3 at, float range, float sourceRadius, out float gain, out float cutoff)
+        /// <param name="muffled">The route dulled it (through walls or round a corner); the head shadow alone never counts.</param>
+        public static bool Place(ref Vector3 at, float range, float sourceRadius, out float gain, out float cutoff, out bool muffled)
         {
             gain = 1f;
             cutoff = (float)Config.OpenCutoffHz;
+            muffled = false;
             if (!Active) return true;
             if (_frame != Time.frameCount) { _frame = Time.frameCount; _searches = 0; }
             Vec3d ear = _listener.position.ToCore();
@@ -65,14 +67,11 @@ namespace Sculpt.Game.Audio
             if (_paths.Searches != before) _searches++;
             LastRoute = r;
             if (!r.Audible) return false;
-            SoundPaths.HeadShadow(_listener.forward.ToCore(), r.ArrivesFrom, Config, out double shadowDb, out double shadowHz);
             // Settings > Audio > front/back cue: scales how much a sound behind you is dulled (1 = as designed).
-            double hs = Sculpt.Game.Settings.ClientSettings.Current.HeadShadow;
-            double open = Config.OpenCutoffHz;
-            shadowDb *= hs;
-            shadowHz = Math.Max(500, Math.Min(open, open - (open - shadowHz) * hs));
-            gain = (float)Math.Pow(10, (r.GainDb + shadowDb) / 20);
-            cutoff = SoundMix.Cutoff((float)Math.Min(r.CutoffHz, shadowHz), (float)open);
+            SoundPaths.Hear(r, _listener.forward.ToCore(), Sculpt.Game.Settings.ClientSettings.Current.HeadShadow, Config,
+                            out double db, out double hz, out muffled);
+            gain = (float)Math.Pow(10, db / 20);
+            cutoff = SoundMix.Cutoff((float)hz, (float)Config.OpenCutoffHz);
             at = r.Apparent.ToUnity();
             return true;
         }

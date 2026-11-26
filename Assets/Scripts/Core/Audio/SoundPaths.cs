@@ -279,6 +279,23 @@ namespace Sculpt.Core.Audio
             cutoffHz = c.OpenCutoffHz + (c.BehindCutoffHz - c.OpenCutoffHz) * behind;
         }
 
+        /// <summary>
+        /// How a routed sound is played at the ears: the route's gain and top end, plus the head shadow scaled by the
+        /// player's front/back cue setting (<paramref name="shadowStrength"/>, 1 = as designed). <paramref name="muffled"/>
+        /// says whether the route itself dulled it (through walls, or round a corner), never the head shadow: a sound with
+        /// a clear line from behind you is not muffled, only darker. Pure.
+        /// </summary>
+        public static void Hear(in SoundRoute r, Vec3d forward, double shadowStrength, SoundConfig c, out double gainDb, out double cutoffHz, out bool muffled)
+        {
+            HeadShadow(forward, r.ArrivesFrom, c, out double shadowDb, out double shadowHz);
+            double open = c.OpenCutoffHz;
+            shadowDb *= shadowStrength;
+            shadowHz = Math.Max(500, Math.Min(open, open - (open - shadowHz) * shadowStrength));
+            gainDb = r.GainDb + shadowDb;
+            cutoffHz = Math.Min(r.CutoffHz, shadowHz);
+            muffled = r.Way == SoundWay.Through || (r.Way == SoundWay.Around && r.CutoffHz < open);
+        }
+
         /// <summary>Relative loudness used to compare ways: linear gain over distance (inverse distance law).</summary>
         public static double Loud(double gainDb, double distance, double reference) => Math.Pow(10, gainDb / 20) / Math.Max(distance, reference);
 

@@ -363,6 +363,36 @@ namespace Sculpt.Core.Tests.Audio
         }
 
         [Test]
+        public void Hear_AClearSoundBehindYou_IsDarkerButNotMuffled()
+        {
+            // Captions say "(muffled)" for sounds through walls. The game used "cutoff below open" for that, which the head
+            // shadow alone trips: every gunshot or footstep behind you in plain sight was captioned as muffled.
+            CompositeTerrain t = Room(door: true, roof: true, out _, out _);
+            var paths = new SoundPaths(t);
+            var c = paths.Config;
+            var ear = new Vec3d(5, 1.6, 5);
+            SoundRoute behind = paths.Route(ear, new Vec3d(5, 1.6, 1), Range);
+            Assert.That(behind.Way, Is.EqualTo(SoundWay.Direct));
+            SoundPaths.Hear(behind, new Vec3d(0, 0, 1), 1.0, c, out double db, out double hz, out bool muffled);
+            Assert.That(hz, Is.LessThan(c.OpenCutoffHz), "the head shadow darkens it");
+            Assert.That(db, Is.EqualTo(-c.BehindLossDb).Within(1e-9));
+            Assert.That(muffled, Is.False, "but it isn't muffled");
+            // Off: no shadow at all.
+            SoundPaths.Hear(behind, new Vec3d(0, 0, 1), 0.0, c, out db, out hz, out _);
+            Assert.That(db, Is.EqualTo(0)); Assert.That(hz, Is.EqualTo(c.OpenCutoffHz));
+            // Through a wall, and round a corner: muffled.
+            SoundPaths.Hear(paths.Route(Outside, Inside, Range), new Vec3d(0, 0, 1), 1.0, c, out _, out _, out muffled);
+            Assert.That(muffled, Is.True, "round the door");
+            CompositeTerrain sealedRoom = Room(door: false, roof: true, out _, out _);
+            SoundRoute through = new SoundPaths(sealedRoom).Route(Outside, Inside, Range);
+            Assert.That(through.Way, Is.EqualTo(SoundWay.Through));
+            SoundPaths.Hear(through, new Vec3d(0, 0, 1), 1.0, c, out db, out hz, out muffled);
+            Assert.That(muffled, Is.True);
+            Assert.That(hz, Is.EqualTo(c.ThroughCutoffHz));
+            Assert.That(db, Is.EqualTo(through.GainDb).Within(1e-9), "in front: no shadow");
+        }
+
+        [Test]
         public void Mix_PicksTheLouderWay()
         {
             var c = new SoundConfig();
