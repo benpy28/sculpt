@@ -47,6 +47,10 @@ namespace Sculpt.Game.UI
         /// <summary>A room code lookup under way (Join by room code), or null.</summary>
         private LanRoomFinder _finder;
         private Mode _finderMode;
+        // Joining by address: what to do if the host doesn't say what it runs (the tab's map, as before).
+        private GameBootstrap.Launch _fallbackLaunch;
+        private GameBootstrap.MapChoice _fallbackMap;
+        private string _fallbackAddress;
         private Item _locker;
 
         public bool IsOpen => _open;
@@ -144,7 +148,7 @@ namespace Sculpt.Game.UI
                 if (b.enabled && n.EndsWith("Hud") && n != "PerfHud") { b.enabled = false; _hidden.Add(b); }
             }
             if (_session.Mode == NetMode.Offline && GameBootstrap.CurrentMap == GameBootstrap.MapChoice.Duel)
-                _blasted = MainMenuScene.Blast(_session.Server?.Walls);
+                lock (_session.ServerLock) _blasted = MainMenuScene.Blast(_session.Server?.Walls);
         }
 
         private void SceneOff()
@@ -156,7 +160,7 @@ namespace Sculpt.Game.UI
             _hiddenObjects.Clear();
             foreach (Behaviour b in _hidden) if (b != null) b.enabled = true;
             _hidden.Clear();
-            MainMenuScene.Restore(_session.Server?.Walls, _blasted);
+            lock (_session.ServerLock) MainMenuScene.Restore(_session.Server?.Walls, _blasted);
             _blasted = null;
         }
 
@@ -212,17 +216,34 @@ namespace Sculpt.Game.UI
                 case LanRoomFinder.State.Found:
                 {
                     LanRoomReply r = _finder.Reply;
-                    string addr = _finder.Host.ToString() + (r.GamePort != FishNetTransport.DefaultPort ? ":" + r.GamePort : "");
+                    // By address: join the port the player typed (the host's game port says the same unless they differ).
+                    string addr = _finder.ByAddress ? _fallbackAddress
+                        : _finder.Host.ToString() + (r.GamePort != FishNetTransport.DefaultPort ? ":" + r.GamePort : "");
                     var map = r.Map == LanRoomMap.BattleRoyale ? GameBootstrap.MapChoice.BattleRoyale
                         : r.Map == LanRoomMap.Breach ? GameBootstrap.MapChoice.Breach : GameBootstrap.MapChoice.Duel;
                     if (r.Map == LanRoomMap.BattleRoyale && r.BrMode != BrMode.None) GameBootstrap.NextBrMode = r.BrMode;
                     string what = r.Map == LanRoomMap.BattleRoyale ? "Battle royale " + r.BrMode : r.Map == LanRoomMap.Breach ? "Breach test map" : "1v1";
-                    string note = $"Room {_finder.Code}  ·  {what}  ·  {addr}  ·  {_finder.PingMs} ms";
+                    string note = _finder.ByAddress ? $"{what}  ·  {addr}  ·  {_finder.PingMs} ms" : $"Room {r.Code}  ·  {what}  ·  {addr}  ·  {_finder.PingMs} ms";
                     bool watch = _finderMode == Mode.Replays;
                     StopFinding();
                     PlayerPrefs.SetInt(ModeKey, (int)_mode);
                     PlayerPrefs.Save();
                     GameBootstrap.Relaunch(watch ? GameBootstrap.Launch.Spectate : GameBootstrap.Launch.Join, map, addr, note);
+                    return;
+                }
+                case LanRoomFinder.State.NotFound when _finder.ByAddress:
+                case LanRoomFinder.State.Failed when _finder.ByAddress:
+                {
+                    // No answer about what it runs (a firewall on the discovery port, or an older build): join as
+                    // before, on the tab's map, and say so on the loading card.
+                    string addr = _fallbackAddress;
+                    var launch = _fallbackLaunch;
+                    var map = _fallbackMap;
+                    StopFinding();
+                    PlayerPrefs.SetInt(ModeKey, (int)_mode);
+                    PlayerPrefs.Save();
+                    string what = map == GameBootstrap.MapChoice.BattleRoyale ? "the battle royale" : map == GameBootstrap.MapChoice.Breach ? "the breach test map" : "the 1v1";
+                    GameBootstrap.Relaunch(launch, map, addr, $"{addr} didn't say what it hosts: joining {what}");
                     return;
                 }
                 default:
@@ -232,6 +253,16 @@ namespace Sculpt.Game.UI
             }
         }
 
+        /// <summary>The address part of what was typed ("192.168.1.20", "192.168.1.20:7770", "localhost"), or null.</summary>
+        private static System.Net.IPAddress ParseHost(string typed)
+        {
+            string host = typed;
+            int colon = typed.LastIndexOf(':');
+            if (colon > 0 && typed.IndexOf(':') == colon) host = typed.Substring(0, colon);
+            if (string.Equals(host, "localhost", System.StringComparison.OrdinalIgnoreCase)) return System.Net.IPAddress.Loopback;
+            return System.Net.IPAddress.TryParse(host, out System.Net.IPAddress ip) && ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? ip : null;
+        }
+
         /// <summary>Join (or watch) what the box says: a room code is looked up first, anything else is an address.</summary>
         private void JoinTyped(Mode mode, GameBootstrap.Launch launch, GameBootstrap.MapChoice map)
         {
@@ -239,7 +270,16 @@ namespace Sculpt.Game.UI
             if (a.Length == 0) { _focusJoin = true; return; }
             PlayerPrefs.SetString(JoinKey, a);
             if (LanRoom.IsCode(a)) { StartFinding(a, mode); return; }
-            Launch(launch, map, a);
+            // An address: ask it what it hosts first, so the right map loads whichever tab the address was typed in.
+            System.Net.IPAddress ip = ParseHost(a);
+            if (ip == null) { Launch(launch, map, a); return; }
+            StopFinding();
+            _error = "";
+            _finder = new LanRoomFinder(ip);
+            _finderMode = mode;
+            _fallbackLaunch = launch;
+            _fallbackMap = map;
+            _fallbackAddress = a;
         }
 
         private void Launch(GameBootstrap.Launch launch, GameBootstrap.MapChoice map, string address = "")
@@ -705,7 +745,7 @@ namespace Sculpt.Game.UI
         {
             get
             {
-                if (_finderHintCode != _finder.Code) { _finderHintCode = _finder.Code; _finderHint = $"Looking for room {_finder.Code} on your network...  (click to cancel)"; }
+                if (_finderHintCode != _finder.Code) { _finderHintCode = _finder.Code; _finderHint = _finder.ByAddress ? "Asking the host what it runs...  (click to cancel)" : $"Looking for room {_finder.Code} on your network...  (click to cancel)"; }
                 return _finderHint;
             }
         }

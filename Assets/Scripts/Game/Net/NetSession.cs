@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Collections.Concurrent;
+using System.Threading;
 using Sculpt.Core;
 using Sculpt.Core.Net;
 using Sculpt.Core.Replay;
@@ -93,6 +95,27 @@ namespace Sculpt.Game.Net
         private bool _pendingOffline;
         private const double TickSeconds = 1.0 / SimTime.TicksPerSecond;
 
+        // ---- The local server's own thread (offline and host). ----
+        /// <summary>
+        /// Run the local server (offline and hosting) on its own thread at a steady 120 Hz, so its cost (bots, sight
+        /// checks, 32 players' movement) never lands in a rendered frame. Off: ticks run at the start of each frame as
+        /// before (-serverthread 0).
+        /// </summary>
+        public static bool ThreadedServer = true;
+        /// <summary>Held by the server thread while it receives and ticks; take it to touch <see cref="Server"/> from the main thread.</summary>
+        public readonly object ServerLock = new object();
+        private Thread _serverThread;
+        private volatile bool _serverRun;
+        private struct Packet { public int Connection; public byte[] Data; public bool Reliable; }
+        private readonly ConcurrentQueue<Packet> _toServer = new ConcurrentQueue<Packet>();
+        private readonly ConcurrentQueue<Packet> _fromServer = new ConcurrentQueue<Packet>();
+        /// <summary>Server ticks that started more than a tick late (the thread could not keep up or was starved).</summary>
+        public int ServerLateTicks { get; private set; }
+        /// <summary>Server tick cost on its thread over the last second: average and worst, ms.</summary>
+        public double ServerTickAvgMs { get; private set; }
+        public double ServerTickWorstMs { get; private set; }
+        public bool ServerThreadRunning => _serverThread != null;
+
         /// <summary>teamSpawns[0] / teamYaw[0] are team 1's spawn spots and facing; [1] team 2's.</summary>
         /// <param name="terrain">What movement and bullets collide with, built around each side's ground grid (the
         /// breach map adds its buildings). Null: the ground grid alone.</param>
@@ -117,6 +140,7 @@ namespace Sculpt.Game.Net
 
         public void StartOffline()
         {
+            StopServerThread();
             StopRecording();
             Replay = null;
             Spectating = false;
@@ -145,6 +169,7 @@ namespace Sculpt.Game.Net
         /// <param name="spectate">Watch instead of play (the host decides the delay).</param>
         public void Join(string address, ushort port, bool spectate = false)
         {
+            StopServerThread();
             StopRecording();
             Replay = null;
             Spectating = spectate;
@@ -230,6 +255,12 @@ namespace Sculpt.Game.Net
 
         private void SendFromServer(int connectionId, byte[] data, bool reliable)
         {
+            if (_serverThread != null) { _fromServer.Enqueue(new Packet { Connection = connectionId, Data = data, Reliable = reliable }); return; }
+            SendNow(connectionId, data, reliable);
+        }
+
+        private void SendNow(int connectionId, byte[] data, bool reliable)
+        {
             if (connectionId == LocalConnectionId) _down.Send(data, reliable, _nowMs);
             else _fish?.SendToClient(connectionId, data, reliable);
         }
@@ -250,15 +281,20 @@ namespace Sculpt.Game.Net
             _fish.ServerClientDisconnected += id =>
             {
                 _pendingConns.Remove(id);
-                bool watcher = Server != null && Server.IsSpectator(id);
-                Server?.RemovePlayer(id);
+                bool watcher;
+                lock (ServerLock)
+                {
+                    watcher = Server != null && Server.IsSpectator(id);
+                    Server?.RemovePlayer(id);
+                }
                 Debug.Log($"[SCULPT] {(watcher ? "Spectator" : "Player")} left (connection {id}).");
             };
             _fish.ServerReceived += (id, data, reliable) =>
             {
                 if (Server == null) return;
-                if (_pendingConns.Contains(id)) { OnHello(id, data); return; }
-                Server.Receive(id, data, 0, data.Length);
+                if (_pendingConns.Contains(id)) { lock (ServerLock) OnHello(id, data); return; }
+                if (_serverThread != null) _toServer.Enqueue(new Packet { Connection = id, Data = data });
+                else Server.Receive(id, data, 0, data.Length);
             };
             _fish.ClientConnected += () =>
             {
@@ -339,6 +375,13 @@ namespace Sculpt.Game.Net
         private void WatchRecording()
         {
             if (_recWriter == null || Server == null) return;
+            if (!Monitor.TryEnter(ServerLock)) return; // the server thread is mid-tick: next frame
+            try { WatchRecordingLocked(); }
+            finally { Monitor.Exit(ServerLock); }
+        }
+
+        private void WatchRecordingLocked()
+        {
             if (Server.Match.Phase == MatchPhase.Playing) _recMatchPlayed = true;
             ServerPlayer me = LocalServerPlayer;
             if (me == null || me.State.Dead) { _recHadLast = false; return; }
@@ -390,6 +433,7 @@ namespace Sculpt.Game.Net
             catch (Exception e) { error = "The replay can't be read: " + e.Message; return false; }
             if (file.Incompatible != null) { error = "This replay was " + file.Incompatible + "."; return false; }
             if (file.Segments.Count == 0) { error = "The replay is empty."; return false; }
+            StopServerThread();
             StopRecording();
             ShutdownFishNet();
             Server = null;
@@ -444,7 +488,8 @@ namespace Sculpt.Game.Net
             DeliverUp();
 
             if (Replay != null && Mode == NetMode.Replay) Replay.Advance(dt);
-            if (Server != null)
+            if (Server != null && ThreadedServer && _serverThread == null) StartServerThread();
+            if (Server != null && _serverThread == null)
             {
                 _serverAccum += Math.Min(dt, 0.25);
                 while (_serverAccum >= TickSeconds)
@@ -453,6 +498,7 @@ namespace Sculpt.Game.Net
                     _serverAccum -= TickSeconds;
                 }
             }
+            DrainFromServer();
             DeliverDown();
             WatchRecording();
         }
@@ -461,6 +507,7 @@ namespace Sculpt.Game.Net
         public void EndFrame()
         {
             DeliverUp();
+            DrainFromServer();
             _fish?.PumpOutgoing();
         }
 
@@ -468,7 +515,11 @@ namespace Sculpt.Game.Net
         {
             _up.Deliver(_nowMs, d =>
             {
-                if (Server != null) Server.Receive(LocalConnectionId, d, 0, d.Length);
+                if (Server != null)
+                {
+                    if (_serverThread != null) _toServer.Enqueue(new Packet { Connection = LocalConnectionId, Data = d });
+                    else Server.Receive(LocalConnectionId, d, 0, d.Length);
+                }
                 else _fish?.SendToServer(d, false);
             });
         }
@@ -481,8 +532,94 @@ namespace Sculpt.Game.Net
 
         public ServerPlayer LocalServerPlayer => Server?.FindByConnection(LocalConnectionId);
 
+        /// <summary>What the server thread sent since the last call: to the local client's link, or out over FishNet.</summary>
+        private void DrainFromServer()
+        {
+            while (_fromServer.TryDequeue(out Packet p)) SendNow(p.Connection, p.Data, p.Reliable);
+        }
+
+        private void StartServerThread()
+        {
+            NetServer server = Server;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            server.Clock = () => clock.Elapsed.TotalMilliseconds; // server side only (hold = snapshot out minus command in)
+            while (_toServer.TryDequeue(out _)) { }
+            _serverRun = true;
+            _serverThread = new Thread(() => ServerLoop(server, clock)) { IsBackground = true, Name = "SCULPT server", Priority = System.Threading.ThreadPriority.AboveNormal };
+            _serverThread.Start();
+            Debug.Log("[SCULPT] The local server runs on its own thread.");
+        }
+
+        private void StopServerThread()
+        {
+            if (_serverThread == null) return;
+            _serverRun = false;
+            if (!_serverThread.Join(2000)) Debug.LogWarning("[SCULPT] Server thread did not stop in 2 s.");
+            _serverThread = null;
+            while (_toServer.TryDequeue(out _)) { }
+            DrainFromServer(); // what it sent last still goes out
+        }
+
+        [System.Runtime.InteropServices.DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
+        [System.Runtime.InteropServices.DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint ms);
+
+        private void ServerLoop(NetServer server, System.Diagnostics.Stopwatch clock)
+        {
+            bool fine = false;
+            UnityEngine.Profiling.Profiler.BeginThreadProfiling("SCULPT", "Server"); // shows in the profiler (development builds)
+            try { fine = timeBeginPeriod(1) == 0; } catch { } // 1 ms sleeps (Windows; elsewhere the spin covers it)
+            double tickMs = 1000.0 / SimTime.TicksPerSecond;
+            double next = clock.Elapsed.TotalMilliseconds;
+            double sum = 0, worst = 0, windowStart = next;
+            int count = 0;
+            var spin = new SpinWait();
+            try
+            {
+                while (_serverRun)
+                {
+                    double now = clock.Elapsed.TotalMilliseconds;
+                    double wait = next - now;
+                    if (wait > 0)
+                    {
+                        if (wait > 1.6) Thread.Sleep(1);
+                        else if (wait > 0.25) Thread.Sleep(0);
+                        else spin.SpinOnce();
+                        continue;
+                    }
+                    if (-wait > tickMs) ServerLateTicks++;
+                    if (-wait > 250) next = now; // a long stall (debugger, suspend): no burst of old ticks
+                    double t0 = clock.Elapsed.TotalMilliseconds;
+                    lock (ServerLock)
+                    {
+                        while (_toServer.TryDequeue(out Packet p)) server.Receive(p.Connection, p.Data, 0, p.Data.Length);
+                        server.Step(); // also steps the sculpt system and sends world deltas
+                    }
+                    double cost = clock.Elapsed.TotalMilliseconds - t0;
+                    sum += cost;
+                    count++;
+                    if (cost > worst) worst = cost;
+                    if (t0 - windowStart >= 1000)
+                    {
+                        ServerTickAvgMs = sum / Math.Max(1, count);
+                        ServerTickWorstMs = worst;
+                        sum = worst = 0;
+                        count = 0;
+                        windowStart = t0;
+                    }
+                    next += tickMs;
+                }
+            }
+            catch (Exception e) { Debug.LogError("[SCULPT] Server thread stopped: " + e); }
+            finally
+            {
+                if (fine) try { timeEndPeriod(1); } catch { }
+                UnityEngine.Profiling.Profiler.EndThreadProfiling();
+            }
+        }
+
         public void Dispose()
         {
+            StopServerThread();
             StopRecording();
             ShutdownFishNet();
         }

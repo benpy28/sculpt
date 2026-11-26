@@ -32,6 +32,9 @@ namespace Sculpt.Game.World
             Shader s = Shader.Find("SCULPT/Viewmodel");
             if (s == null) s = Shader.Find("Universal Render Pipeline/Unlit");
             _mat = new Material(s) { name = "Ground items" };
+            // The viewmodel shader squashes depth toward the near plane so the gun never clips into walls. Anything in the
+            // world must keep its real depth, or it draws through walls (it did: chests and guns showed through buildings).
+            _mat.SetFloat("_DepthSquash", 1f);
         }
 
         private void LateUpdate()

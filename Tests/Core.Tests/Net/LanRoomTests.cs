@@ -9,6 +9,21 @@ namespace Sculpt.Core.Tests.Net
     public class LanRoomTests
     {
         [Test]
+        public void TheAnyRoomAsk_RoundTrips_IsNeverARealCode_AndHalfZeroCodesAreJunk()
+        {
+            byte[] ask = LanRoom.AskAny(0xC0FFEE);
+            Assert.That(LanRoom.TryReadAsk(ask, ask.Length, out string code, out uint nonce), Is.True);
+            Assert.That(code, Is.EqualTo(LanRoom.AnyCode));
+            Assert.That(nonce, Is.EqualTo(0xC0FFEEu));
+            Assert.That(LanRoom.IsCode(LanRoom.AnyCode), Is.False, "nobody can type it as a room code");
+            for (int i = 0; i < 200; i++) Assert.That(LanRoom.NewCode(new Random(i)), Is.Not.EqualTo(LanRoom.AnyCode));
+            // A code with some zeros is not the any code and not a real code: refused.
+            byte[] bad = LanRoom.Ask("K7Q2", 5);
+            bad[5] = (byte)'0';
+            Assert.That(LanRoom.TryReadAsk(bad, bad.Length, out _, out _), Is.False);
+        }
+
+        [Test]
         public void NewCodes_UseOnlyTheAlphabet_AndSpreadOut()
         {
             var rng = new Random(5);

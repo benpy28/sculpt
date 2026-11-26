@@ -58,11 +58,11 @@ namespace Sculpt.Game.World
             {
                 int j = _tiles.EdgeNeighbour(tile, d);
                 if (j < 0) continue;
-                _dirty.Add(BlockOf(_tiles.World[_tiles[j].Brush]));
+                _dirty.Add(TileBlockOf(_tiles.World[_tiles[j].Brush]));
                 for (int e = 0; e < 4; e++) // diagonals: corner rubble and bands look across them
                 {
                     int k = _tiles.EdgeNeighbour(j, e);
-                    if (k >= 0) _dirty.Add(BlockOf(_tiles.World[_tiles[k].Brush]));
+                    if (k >= 0) _dirty.Add(TileBlockOf(_tiles.World[_tiles[k].Brush]));
                 }
             }
         }

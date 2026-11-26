@@ -186,6 +186,24 @@ namespace Sculpt.Core.Net
 
         public void Receive(byte[] data, int offset, int count)
         {
+            global::Sculpt.Core.Diagnostics.Prof.Begin(global::Sculpt.Core.Diagnostics.Prof.Section.ClientReceive);
+            MsgType type = count > 0 ? Protocol.PeekType(data, offset, count) : MsgType.Welcome;
+            var part = type == MsgType.Snapshot ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientSnapshot
+                : type == MsgType.Tiles ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientTiles
+                : type == MsgType.Items ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientItems
+                : type == MsgType.Match ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientMatch
+                : global::Sculpt.Core.Diagnostics.Prof.Section.ClientOther;
+            global::Sculpt.Core.Diagnostics.Prof.Begin(part);
+            try { ReceiveInner(data, offset, count); }
+            finally
+            {
+                global::Sculpt.Core.Diagnostics.Prof.End(part);
+                global::Sculpt.Core.Diagnostics.Prof.End(global::Sculpt.Core.Diagnostics.Prof.Section.ClientReceive);
+            }
+        }
+
+        private void ReceiveInner(byte[] data, int offset, int count)
+        {
             try
             {
                 var r = new ByteReader(data, offset, count);

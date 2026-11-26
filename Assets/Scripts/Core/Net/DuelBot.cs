@@ -33,6 +33,13 @@ namespace Sculpt.Core.Net
         public double StrafeMin = 0.35, StrafeMax = 0.9;
         /// <summary>Chance per tick of a hop during a close fight.</summary>
         public double FightHopChance = 0.006;
+        /// <summary>
+        /// Battle royale: for this long after the match starts a bot loots instead of hunting (Ben 2026-11-26: a lobby
+        /// was down to about 10 alive 10 seconds in, bots on neighbouring pads shooting each other on sight). It still
+        /// fights back when hurt, and fights anyone who comes within <see cref="BrCalmCloseMetres"/>.
+        /// </summary>
+        public double BrCalmSeconds = 45;
+        public double BrCalmCloseMetres = 3;
 
         public static DuelBotConfig For(BotLevel level)
         {
@@ -90,6 +97,15 @@ namespace Sculpt.Core.Net
         private Vec3d _pingPos;
         private int _pingTick = int.MinValue / 2;
         private int _lastDamage;
+        private int _hurtTick = int.MinValue / 2;
+
+        /// <summary>The battle royale's opening (see <see cref="DuelBotConfig.BrCalmSeconds"/>), and nobody has hurt it lately.</summary>
+        private bool Calm(NetServer server, ServerPlayer me, int tick)
+        {
+            if (!server.Match.IsBr || server.Match.Phase != MatchPhase.Playing) return false;
+            if (tick - server.Match.PhaseStartTick >= Config.BrCalmSeconds * SimTime.TicksPerSecond) return false;
+            return tick - _hurtTick > 4 * SimTime.TicksPerSecond;
+        }
 
         // Movement.
         private readonly List<int> _path = new List<int>();
@@ -172,6 +188,12 @@ namespace Sculpt.Core.Net
 
             // ---- What it knows now: what it perceived a reaction time ago.
             Obs p = Recall(tick - Config.ReactionTicks);
+            if (Calm(server, me, tick) && !(p.Seen && (p.Pos - s.Position).Length <= Config.BrCalmCloseMetres))
+            {
+                // Early in a battle royale: loot; an enemy seen or heard is left alone unless it hurt us or is close.
+                p.Seen = false;
+                p.Heard = false;
+            }
             if (p.Seen)
             {
                 if (!_engaged)
@@ -382,6 +404,7 @@ namespace Sculpt.Core.Net
         {
             var o = new Obs();
             MotorState s = me.State;
+            if (s.Damage > _lastDamage) _hurtTick = server.Tick;
             if (s.Damage > _lastDamage && enemy != null)
                 o = Heard(o, enemy.State.Position, 2.0); // hit: it knows roughly where from
             _lastDamage = s.Damage;

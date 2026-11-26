@@ -333,22 +333,25 @@ namespace Sculpt.Core.Tests.Net
         [Test]
         public void TheCircle_ShrinksInPhases_AndHurtsOnlyOutside()
         {
-            NetServer s = NewServer(Quick(BrMode.Solos), out _, out BrMapInfo br);
+            BrConfig cfg = Quick(BrMode.Solos);
+            NetServer s = NewServer(cfg, out _, out BrMapInfo br);
             StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
             StormState st = s.Match.Storm;
             Assert.That(st.Phase, Is.EqualTo(0));
-            Assert.That(st.FromRadius, Is.EqualTo(200));
-            Assert.That(st.ToRadius, Is.EqualTo(120));
+            // The 614 m map: 400 m to 250 m after 75 s (was 200 to 120 after 60 s on the 307 m one).
+            Assert.That(st.FromRadius, Is.EqualTo(cfg.StartRadius));
+            Assert.That(cfg.StartRadius, Is.GreaterThanOrEqualTo(br.PlayHalf * Math.Sqrt(2)), "the first circle covers the whole play area");
+            Assert.That(st.ToRadius, Is.EqualTo(cfg.Radius[0]));
             double off = Math.Sqrt(Math.Pow(st.ToX - st.FromX, 2) + Math.Pow(st.ToZ - st.FromZ, 2));
             Assert.That(off + st.ToRadius, Is.LessThanOrEqualTo(st.FromRadius), "the next circle lies inside this one");
-            Assert.That(st.ShrinkStart - s.Tick, Is.EqualTo(60 * SimTime.TicksPerSecond).Within(2));
+            Assert.That(st.ShrinkStart - s.Tick, Is.EqualTo((int)(cfg.WaitSeconds[0] * SimTime.TicksPerSecond)).Within(2));
             // Nobody is outside the first circle: nobody is hurt.
-            StepUntil(s, () => s.Tick > st.ShrinkStart, 70 * SimTime.TicksPerSecond);
+            StepUntil(s, () => s.Tick > st.ShrinkStart, (int)(cfg.WaitSeconds[0] + 10) * SimTime.TicksPerSecond);
             foreach (ServerPlayer p in s.Players) Assert.That(p.State.Damage, Is.Zero);
             // Run the phases through: each circle sits inside the last.
             int phases = 1;
             StormState last = st;
-            for (int i = 0; i < 400 * SimTime.TicksPerSecond && s.Match.Phase == MatchPhase.Playing; i++)
+            for (int i = 0; i < 600 * SimTime.TicksPerSecond && s.Match.Phase == MatchPhase.Playing; i++)
             {
                 s.Step();
                 StormState now = s.Match.Storm;

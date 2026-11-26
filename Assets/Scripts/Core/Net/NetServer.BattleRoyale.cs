@@ -28,10 +28,13 @@ namespace Sculpt.Core.Net
         public int Seed = 1;
 
         // ---- The circle. Phase k: wait, then shrink to Radius[k] over Shrink[k]; outside it you take Dps[k] each second.
-        public double StartRadius = 200;   // covers the whole play area (its corners are 192 m from the middle)
-        public double[] WaitSeconds = { 60, 45, 35, 30, 25, 20 };
-        public double[] ShrinkSeconds = { 45, 35, 30, 25, 20, 20 };
-        public double[] Radius = { 120, 70, 40, 20, 8, 0 };
+        // The 614 m map (Ben 2026-11-26): the first circles are bigger and give longer to get in (crossing half the map at
+        // a sprint takes about 30 s); the last ones are the same size as before, since the endgame is about the players
+        // left, not the map.
+        public double StartRadius = 400;   // covers the whole play area (its corners are 384 m from the middle)
+        public double[] WaitSeconds = { 75, 55, 40, 30, 25, 20 };
+        public double[] ShrinkSeconds = { 60, 45, 35, 25, 20, 20 };
+        public double[] Radius = { 250, 150, 80, 35, 12, 0 };
         public int[] Dps = { 1, 2, 4, 6, 8, 10 };
         public int StormHurtEveryTicks = 60 * SimTime.Per60;
 
