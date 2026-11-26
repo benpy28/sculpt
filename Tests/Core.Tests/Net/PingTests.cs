@@ -102,6 +102,29 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(h.Server.PingsFired, Is.EqualTo(2), "and pings again");
         }
 
+        /// <summary>
+        /// A player who leaves mid-reveal: the one left behind is told it's over at once (they used to keep a "revealed"
+        /// marker for a player who no longer exists), and the pair is forgotten (it used to stay in the table for ever).
+        /// </summary>
+        [Test]
+        public void Leaving_DuringAReveal_CancelsItForTheOtherPlayer_AndForgetsThePair()
+        {
+            var h = Duel();
+            Match(h.Server);
+            var a = h.AddClient(Spawn(1), team: 1);
+            var b = h.AddClient(Spawn(2), team: 2, seed: 2);
+            var c = h.AddClient(Spawn(2) + new Vec3d(2, 0, 0), team: 2, seed: 3);
+            int start = RunToPlaying(h);
+            int ida = a.ServerSide.Id, idb = b.ServerSide.Id;
+            RunUntilTick(h, start + SimTime.SecondsToTicks(10) + 3);
+            h.RunSeconds(0.1);
+            Assert.That(a.Client.IsRevealed(idb, out _), "B is revealed to A");
+            h.Remove(b);
+            h.RunSeconds(0.1);
+            Assert.That(a.Client.IsRevealed(idb, out _), Is.False, "B left: A is told the reveal is over");
+            Assert.That(h.Server.PingPairCount, Is.EqualTo(1), "only the A-C pair is left");
+        }
+
         [Test]
         public void OnceFired_ItKeepsPingingEveryThreeSeconds_UntilTheyAreWithin30m()
         {

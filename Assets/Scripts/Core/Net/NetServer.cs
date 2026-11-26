@@ -234,6 +234,7 @@ namespace Sculpt.Core.Net
             _brains.Remove(p.Id);
             _ownBars.Remove(p.Id);
             ForgetInterest(p.Id);
+            ForgetPing(p);
             if (Sculpt != null)
             {
                 if (p.PendingSeq >= 0 || Sculpt.PendingOf(p.Id) != null)
