@@ -97,6 +97,39 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(traded, Is.EqualTo(alive), "the traded shot hits as hard as the same shot from a player who lived");
         }
 
+        /// <summary>
+        /// Squads: once you are out you watch your living teammates (BrDeathCamera). Interest management decided what a
+        /// dead player is sent from where their body fell, so the enemy fighting the teammate you watch was never sent:
+        /// the camera showed your teammate shooting at nobody.
+        /// </summary>
+        [Test]
+        public void AnOutPlayer_IsSentWhatTheirLivingTeammatesAreSent()
+        {
+            var brains = new List<Scripted>();
+            NetServer s = NewServer(Quick(BrMode.Squads, brains), out BrMapInfo br);
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            ServerPlayer x = s.Players[0], y = null, z = null;
+            foreach (ServerPlayer p in s.Players)
+            {
+                if (p == x) continue;
+                if (p.Team == x.Team && y == null) y = p;
+                if (p.Team != x.Team && z == null) z = p;
+            }
+            // x falls to its death at its spawn (the real rules); its body stays there.
+            x.State.Damage = s.Movement.Weapons.MaxHealth - 1;
+            Place(x, x.State.Position + new Vec3d(0, 40, 0));
+            StepUntil(s, () => x.State.Dead, 10 * SimTime.TicksPerSecond);
+            Assert.That(s.InBrMatch(x.Id) && x.State.Dead, "x is out of the match");
+            x.State.Position = x.Spawn; // went down indoors (the entrance hall), out of sight of the plaza
+            // y and z face off across the open plaza, 24 m apart, standing still (no noise).
+            Vec3d yAt = ItemRules.Settle(s.Grid, br.Centre + new Vec3d(0, 5, -12));
+            Vec3d zAt = ItemRules.Settle(s.Grid, br.Centre + new Vec3d(0, 5, 12));
+            for (int i = 0; i < 2 * SimTime.TicksPerSecond; i++) { Place(y, yAt); Place(z, zAt); s.Step(); }
+            Assert.That(s.IsSentTo(y.Id, z.Id), Is.True, "y sees z across the plaza");
+            Assert.That((x.State.Position - zAt).HorizontalLength, Is.GreaterThan(40), "x went down far away");
+            Assert.That(s.IsSentTo(x.Id, z.Id), Is.True, "x, watching y, gets the enemy y is facing");
+        }
+
         private static Scripted BrainOf(List<Scripted> brains, NetServer s, ServerPlayer p)
         {
             Assert.That(s.Bots.TryGetValue(p.Id, out IBotBrain brain));
