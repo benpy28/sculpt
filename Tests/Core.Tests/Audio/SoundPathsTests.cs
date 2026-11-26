@@ -105,6 +105,26 @@ namespace Sculpt.Core.Tests.Audio
         }
 
         [Test]
+        public void ThroughAWallStraightOn_CountsExactlyItsThickness()
+        {
+            // Square on through the 0.3 m south wall: 0.3 m of solid (was counted 0.35 m, one 5 cm march step too many:
+            // 0.9 dB too quiet through every wall, and a wall just under the 2 m limit counted as over it).
+            CompositeTerrain t = Room(door: false, roof: true, out _, out _);
+            var paths = new SoundPaths(t);
+            SoundRoute r = paths.Route(new Vec3d(12.6, 1.6, 7), new Vec3d(12.6, 1.6, 13), Range);
+            Assert.That(r.Way, Is.EqualTo(SoundWay.Through));
+            Assert.That(r.Walls, Is.EqualTo(1));
+            Assert.That(r.SolidMetres, Is.EqualTo(0.3).Within(0.002));
+            // 1.96 m of solid is under the 2 m limit: still heard through.
+            var w = new BrushWorld();
+            w.AddBox(new Vec3d(0, 0, 10), new Vec3d(20, 9, 11.96), BrushKind.Frame);
+            var thick = new SoundPaths(w);
+            SoundRoute r2 = thick.Route(new Vec3d(5, 1.6, 8), new Vec3d(5, 1.6, 14), Range);
+            Assert.That(r2.ThroughPossible, Is.True);
+            Assert.That(r2.SolidMetres, Is.EqualTo(1.96).Within(0.002));
+        }
+
+        [Test]
         public void NoRoof_ASoundInsideGoesOverTheWallTop()
         {
             CompositeTerrain t = Room(door: false, roof: false, out _, out _);
@@ -162,6 +182,34 @@ namespace Sculpt.Core.Tests.Audio
             Assert.That(ba.Way, Is.EqualTo(ab.Way));
             Assert.That(ba.Distance, Is.EqualTo(ab.Distance).Within(0.5));
             Assert.That(ba.GainDb, Is.EqualTo(ab.GainDb).Within(paths.Config.BendLossDb + 1e-9));
+        }
+
+        [Test]
+        public void DuelMap_RandomPairs_SoundTheSameBothWays()
+        {
+            // Spec: "Symmetric: whoever can hear you, you can hear back." Random ears and sources on the duel map, each at
+            // least a player's half-width clear of every wall (where ears and footsteps really are).
+            CompositeTerrain t = DuelMap.Terrain(DuelMap.BuildGround(), DuelMap.BuildBrushes(out BreachMapInfo info));
+            var paths = new SoundPaths(t);
+            var rng = new Random(11);
+            double size = info.SizeX;
+            var hb = new Vec3d(0.36, 0.36, 0.36);
+            int n = 0, wayDiff = 0, distDiff = 0;
+            string first = null;
+            while (n < 1500)
+            {
+                var a = new Vec3d(size * 0.2 + rng.NextDouble() * size * 0.6, 0.3 + rng.Next(3) * 4.8 + 1.3, size * 0.2 + rng.NextDouble() * size * 0.6);
+                double ang = rng.NextDouble() * Math.PI * 2, d = 3 + rng.NextDouble() * 27;
+                var b = new Vec3d(a.X + Math.Cos(ang) * d, 0.3 + rng.Next(3) * 4.8 + 1.3, a.Z + Math.Sin(ang) * d);
+                if (t.BoxOverlapsSolid(new Aabb(a - hb, a + hb)) || t.BoxOverlapsSolid(new Aabb(b - hb, b + hb))) continue;
+                n++;
+                SoundRoute ab = paths.Route(a, b, 34), ba = paths.Route(b, a, 34);
+                if (ab.Way != ba.Way) { wayDiff++; first ??= $"{a} -> {b}: {ab.Way} ({ab.Distance:0.00} m) but back {ba.Way} ({ba.Distance:0.00} m)"; }
+                else if (ab.Audible && Math.Abs(ab.Distance - ba.Distance) > 0.05) { distDiff++; first ??= $"({a.X:R}, {a.Y:R}, {a.Z:R}) -> ({b.X:R}, {b.Y:R}, {b.Z:R}): {ab.Way} {ab.Distance:0.00} m but back {ba.Distance:0.00} m"; }
+            }
+            TestContext.Out.WriteLine($"{n} pairs: way differs {wayDiff}, distance differs {distDiff}. {first}");
+            Assert.That(wayDiff, Is.EqualTo(0), first);
+            Assert.That(distDiff, Is.EqualTo(0), first);
         }
 
         [Test]
@@ -253,6 +301,81 @@ namespace Sculpt.Core.Tests.Audio
         }
 
         [Test]
+        public void ACachedRoute_IsNeverReusedForADifferentRangeOrSourceRadius()
+        {
+            // The cache key folded range and source radius into one number (8 x range + 64 x radius), so a sound that
+            // carries 1 m further with 0.125 m less radius got the other sound's cached answer.
+            CompositeTerrain t = Room(door: true, roof: true, out _, out _);
+            double round = new SoundPaths(t).Route(Outside, Inside, Range).AroundDistance;
+            double straight = (Inside - Outside).Length;
+            double a = Math.Floor((round - 0.1) * 8) / 8 + 1.0 / 16, b = a + 1;
+            Assume.That(a, Is.GreaterThan(straight).And.LessThan(round), "a range that hears it only through the wall");
+            var paths = new SoundPaths(t);
+            SoundRoute shortRange = paths.Route(Outside, Inside, a, now: 1.0, sourceRadius: 0.175);
+            Assert.That(shortRange.Way, Is.EqualTo(SoundWay.Through));
+            SoundRoute longRange = paths.Route(Outside, Inside, b, now: 1.05, sourceRadius: 0.05);
+            Assert.That(longRange.Way, Is.EqualTo(SoundWay.Around), "carries far enough to come round through the door");
+        }
+
+        [Test]
+        public void TheGrid_AfterEveryKindOfTileChange_MatchesAFreshBuild()
+        {
+            // What the game does: every tile change invalidates the tile's bounds (BrushView). Holes, breaks (frame
+            // follows), doors opening and shutting and heals; then the patched grid must equal one built from scratch.
+            BrushWorld w = DuelMap.BuildBrushes(out _);
+            TileWalls tiles = w.Tiles;
+            var paths = new SoundPaths(w);
+            var rng = new Random(21);
+            var doors = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < tiles.Count; i++) if (tiles[i].Kind == TileKind.Door) doors.Add(i);
+            Assert.That(doors.Count, Is.GreaterThan(0));
+            int mismatches = 0, cells = 0;
+            string first = null;
+            for (int round = 0; round < 12; round++)
+            {
+                tiles.Changes.Clear();
+                for (int k = 0; k < 6; k++)
+                {
+                    int i = rng.Next(tiles.Count);
+                    switch (rng.Next(4))
+                    {
+                        case 0:
+                            if (tiles.HasCells(i)) tiles.HitArea(i, tiles.BoundsOf(i).Center, 100, 0.6, TileCause.Bullet, 1);
+                            break;
+                        case 1: tiles.Damage(i, 1000, TileCause.Grenade, 1); break;
+                        case 2:
+                        {
+                            int d = doors[rng.Next(doors.Count)];
+                            bool open = tiles[d].State != TileState.DoorOpen;
+                            tiles.Set(d, open ? TileState.DoorOpen : TileState.Intact, tiles[d].Health, TileCause.Door);
+                            break;
+                        }
+                        default:
+                            if (tiles[i].Links == null && tiles[i].Kind != TileKind.Door) tiles.Set(i, TileState.Patched, 50, TileCause.Heal);
+                            break;
+                    }
+                }
+                var touched = new System.Collections.Generic.List<Aabb>();
+                foreach (TileChange c in tiles.Changes) { paths.Invalidate(tiles.BoundsOf(c.Tile)); touched.Add(tiles.BoundsOf(c.Tile)); }
+                var fresh = new SoundGrid(w, paths.Config.CellSize);
+                fresh.Build();
+                double cs = paths.Config.CellSize;
+                foreach (Aabb b in touched)
+                    for (int x = (int)Math.Floor(b.Min.X / cs) - 3; x <= (int)Math.Floor(b.Max.X / cs) + 3; x++)
+                        for (int y = (int)Math.Floor(b.Min.Y / cs) - 3; y <= (int)Math.Floor(b.Max.Y / cs) + 3; y++)
+                            for (int z = (int)Math.Floor(b.Min.Z / cs) - 3; z <= (int)Math.Floor(b.Max.Z / cs) + 3; z++)
+                            {
+                                cells++;
+                                if (paths.Grid.Blocked(x, y, z) == fresh.Blocked(x, y, z)) continue;
+                                mismatches++;
+                                first ??= $"round {round} cell {x},{y},{z}: patched {paths.Grid.Blocked(x, y, z):X3}, fresh {fresh.Blocked(x, y, z):X3}";
+                            }
+            }
+            TestContext.Out.WriteLine($"{cells} cells compared, {mismatches} differ. {first}");
+            Assert.That(mismatches, Is.EqualTo(0), first);
+        }
+
+        [Test]
         public void TheFastGrid_AgreesWithRayCasts_OnEveryBuildingFace()
         {
             // Buildings only (no sub-cell ground, whose chamfers the grid counts as solid), with holes and broken tiles.
@@ -312,6 +435,36 @@ namespace Sculpt.Core.Tests.Audio
             Assert.That(db, Is.EqualTo(-c.BehindLossDb)); Assert.That(hz, Is.EqualTo(c.BehindCutoffHz));
             SoundPaths.HeadShadow(fwd, new Vec3d(0, -1, 0), c, out db, out hz);
             Assert.That(db, Is.EqualTo(0), "straight below: no front or back");
+        }
+
+        [Test]
+        public void Hear_AClearSoundBehindYou_IsDarkerButNotMuffled()
+        {
+            // Captions say "(muffled)" for sounds through walls. The game used "cutoff below open" for that, which the head
+            // shadow alone trips: every gunshot or footstep behind you in plain sight was captioned as muffled.
+            CompositeTerrain t = Room(door: true, roof: true, out _, out _);
+            var paths = new SoundPaths(t);
+            var c = paths.Config;
+            var ear = new Vec3d(5, 1.6, 5);
+            SoundRoute behind = paths.Route(ear, new Vec3d(5, 1.6, 1), Range);
+            Assert.That(behind.Way, Is.EqualTo(SoundWay.Direct));
+            SoundPaths.Hear(behind, new Vec3d(0, 0, 1), 1.0, c, out double db, out double hz, out bool muffled);
+            Assert.That(hz, Is.LessThan(c.OpenCutoffHz), "the head shadow darkens it");
+            Assert.That(db, Is.EqualTo(-c.BehindLossDb).Within(1e-9));
+            Assert.That(muffled, Is.False, "but it isn't muffled");
+            // Off: no shadow at all.
+            SoundPaths.Hear(behind, new Vec3d(0, 0, 1), 0.0, c, out db, out hz, out _);
+            Assert.That(db, Is.EqualTo(0)); Assert.That(hz, Is.EqualTo(c.OpenCutoffHz));
+            // Through a wall, and round a corner: muffled.
+            SoundPaths.Hear(paths.Route(Outside, Inside, Range), new Vec3d(0, 0, 1), 1.0, c, out _, out _, out muffled);
+            Assert.That(muffled, Is.True, "round the door");
+            CompositeTerrain sealedRoom = Room(door: false, roof: true, out _, out _);
+            SoundRoute through = new SoundPaths(sealedRoom).Route(Outside, Inside, Range);
+            Assert.That(through.Way, Is.EqualTo(SoundWay.Through));
+            SoundPaths.Hear(through, new Vec3d(0, 0, 1), 1.0, c, out db, out hz, out muffled);
+            Assert.That(muffled, Is.True);
+            Assert.That(hz, Is.EqualTo(c.ThroughCutoffHz));
+            Assert.That(db, Is.EqualTo(through.GainDb).Within(1e-9), "in front: no shadow");
         }
 
         [Test]
