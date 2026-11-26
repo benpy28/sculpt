@@ -43,7 +43,20 @@ namespace Sculpt.Core.Net
         /// <summary>Client prediction history length (ticks). Must cover the round trip plus lead.</summary>
         public int HistoryTicks = 128 * SimTime.Per60;
 
-        /// <summary>Server sends a snapshot every N ticks (1 = 60 Hz).</summary>
+        /// <summary>
+        /// Delta snapshots: each snapshot is coded against the newest one the client acked (see SnapshotCodec), so a
+        /// still player costs a couple of bytes and your own state only what changed. Off = every snapshot full (the
+        /// old size; for comparison). Either way the client decodes exactly the same state.
+        /// </summary>
+        public bool DeltaSnapshots = true;
+
+        /// <summary>
+        /// How far back (ticks) a delta base may be. Server and client keep this many snapshots each. An ack older than
+        /// this (a long stall or a very bad link) gets a full snapshot. 128 ticks = 1.07 s at 120 Hz.
+        /// </summary>
+        public int SnapshotBaselineTicks = 64 * SimTime.Per60;
+
+        /// <summary>Server sends a snapshot every N ticks (1 = every tick).</summary>
         public int SnapshotEveryTicks = 1;
 
         /// <summary>Remote players are drawn this many ticks behind the newest snapshot (covers jitter and a lost snapshot).</summary>

@@ -59,6 +59,13 @@ namespace Sculpt.Core.Net
         /// <summary>The last enemy who hurt this player, and when (kill credit for falls).</summary>
         public int LastHurtBy, LastHurtTick;
 
+        // Delta snapshots: the newest snapshot tick this client acked (from its newest input packet) and what we sent it.
+        internal int AckTick = int.MinValue;
+        internal SnapshotBaselines Sent;
+        /// <summary>Snapshot bytes sent to this client, and how many snapshots were deltas or full (stats and tests).</summary>
+        public long SnapshotBytes;
+        public int DeltaSnapshotsSent, FullSnapshotsSent;
+
         public int MissedInputs;   // ticks stepped with a repeated command
         public int LateInputs;     // commands that arrived after their tick was simulated
         public int ReceivedPackets;
@@ -136,6 +143,7 @@ namespace Sculpt.Core.Net
         private readonly ByteWriter _w = new ByteWriter(1024);
         private readonly List<InputCmd> _cmdScratch = new List<InputCmd>(Protocol.MaxCmdsPerPacket);
         private readonly List<PlayerSnap> _others = new List<PlayerSnap>();
+        private readonly SnapshotCodec _snapCodec = new SnapshotCodec();
         private int _nextId = 1;
         private readonly int _ringSize;
 
@@ -230,8 +238,11 @@ namespace Sculpt.Core.Net
             {
                 var r = new ByteReader(data, offset, count);
                 if (Protocol.PeekType(data, offset, count) != MsgType.Inputs) { p.DroppedPackets++; return; }
-                Protocol.ReadInputs(ref r, _cmdScratch);
+                InputsMsg im = Protocol.ReadInputs(ref r, _cmdScratch);
                 p.ReceivedPackets++;
+                // The ack rides with the commands; only the newest packet's counts (an older one arriving late would
+                // name an older snapshot, still valid but needlessly far back).
+                if (_cmdScratch[_cmdScratch.Count - 1].Tick > p.NewestReceived && im.AckSnapshotTick <= Tick) p.AckTick = im.AckSnapshotTick;
                 AcceptCommands(p, _cmdScratch);
             }
             catch (NetFormatException)
@@ -672,29 +683,32 @@ namespace Sculpt.Core.Net
 
         private void SendSnapshots()
         {
+            // What everyone sees of everyone else is the same for every receiver: build and quantize it once.
+            _others.Clear();
+            foreach (ServerPlayer o in _players)
+            {
+                _others.Add(new PlayerSnap
+                {
+                    Id = o.Id,
+                    Team = o.Team,
+                    Position = o.State.Position,
+                    Velocity = o.State.Velocity,
+                    Yaw = (float)o.LastCmd.Move.Yaw,
+                    Pitch = o.LastCmd.Pitch,
+                    Mode = o.State.Mode,
+                    Crouched = o.State.Crouched,
+                    Dead = o.State.Dead,
+                    Held = o.State.Hand.HeldItem,
+                    Hand = o.State.Hand.Mode,
+                });
+            }
+            _snapCodec.SetEveryone(Tick, _others);
             foreach (ServerPlayer to in _players)
             {
-                _others.Clear();
-                foreach (ServerPlayer o in _players)
-                {
-                    if (o == to) continue;
-                    _others.Add(new PlayerSnap
-                    {
-                        Id = o.Id,
-                        Team = o.Team,
-                        Position = o.State.Position,
-                        Velocity = o.State.Velocity,
-                        Yaw = (float)o.LastCmd.Move.Yaw,
-                        Pitch = o.LastCmd.Pitch,
-                        Mode = o.State.Mode,
-                        Crouched = o.State.Crouched,
-                        Dead = o.State.Dead,
-                        Held = o.State.Hand.HeldItem,
-                        Hand = o.State.Hand.Mode,
-                    });
-                }
+                if (IsBotConnection(to.ConnectionId)) continue; // nothing is ever sent to a bot
                 _w.Clear();
-                Protocol.Write(_w, new SnapshotMsg
+                if (to.Sent == null || to.Sent.Size != Config.SnapshotBaselineTicks) to.Sent = new SnapshotBaselines(Math.Max(2, Config.SnapshotBaselineTicks));
+                bool delta = _snapCodec.WriteForReceiver(_w, new SnapshotMsg
                 {
                     ServerTick = Tick,
                     HasSelf = true,
@@ -703,8 +717,9 @@ namespace Sculpt.Core.Net
                     Self = to.State,
                     SelfBar = BarOf(to.Id).Value,
                     SelfHoldTenthMs = HoldOf(to),
-                    Others = _others,
-                });
+                }, to.Id, to.Sent, Config.DeltaSnapshots ? to.AckTick : -1);
+                if (delta) to.DeltaSnapshotsSent++; else to.FullSnapshotsSent++;
+                to.SnapshotBytes += _w.Length;
                 Send(to.ConnectionId, _w.ToArray(), false);
             }
         }

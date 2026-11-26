@@ -42,7 +42,7 @@ namespace Sculpt.Core.Net
 
     public struct InputsMsg
     {
-        /// <summary>Newest server snapshot tick the client has received (for future delta compression).</summary>
+        /// <summary>Newest server snapshot tick the client has received and kept: the server codes the next snapshots against it.</summary>
         public int AckSnapshotTick;
         /// <summary>Oldest first, consecutive ticks.</summary>
         public List<InputCmd> Cmds;
@@ -87,7 +87,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 31; // 31 balance pass 2 (SMG head 1.5x, no crouch accuracy bonus: rules differ between builds); 30 replays and spectators (Hello, spectator frames, welcome gains the spectator delay); 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
+        public const byte Version = 32; // 32 delta snapshots (coded against the newest snapshot the client acked; other players quantized like the spectator stream); 31 balance pass 2 (SMG head 1.5x, no crouch accuracy bonus: rules differ between builds); 30 replays and spectators (Hello, spectator frames, welcome gains the spectator delay); 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
@@ -158,76 +158,13 @@ namespace Sculpt.Core.Net
 
         // ---------------------------------------------------------------- Snapshot
 
-        public static void Write(ByteWriter w, in SnapshotMsg m)
-        {
-            w.U8((byte)MsgType.Snapshot);
-            w.I32(m.ServerTick);
-            w.Bool(m.HasSelf);
-            if (m.HasSelf)
-            {
-                w.Bool(m.SelfInputWasReal);
-                int lead = m.SelfLead < sbyte.MinValue ? sbyte.MinValue : (m.SelfLead > sbyte.MaxValue ? sbyte.MaxValue : m.SelfLead);
-                w.I8((sbyte)lead);
-                WriteMotor(w, m.Self);
-                w.U16((ushort)Math.Max(0, Math.Min(ushort.MaxValue, m.SelfBar)));
-                w.U16((ushort)(m.SelfHoldTenthMs < 0 || m.SelfHoldTenthMs >= NoHold ? NoHold : m.SelfHoldTenthMs));
-            }
-            int n = m.Others?.Count ?? 0;
-            if (n > MaxPlayersPerSnapshot) throw new System.ArgumentException("Too many players.");
-            w.U8((byte)n);
-            for (int i = 0; i < n; i++)
-            {
-                PlayerSnap p = m.Others[i];
-                w.U16((ushort)p.Id);
-                w.U8((byte)p.Team);
-                w.VecF(p.Position);
-                w.VecF(p.Velocity);
-                w.F32(p.Yaw);
-                w.F32(p.Pitch);
-                w.U8((byte)p.Mode);
-                w.U8((byte)((p.Crouched ? 1 : 0) | (p.Dead ? 2 : 0) | (((byte)p.Held & 7) << 2) | ((byte)p.Hand << 5)));
-            }
-        }
+        /// <summary>Writes a full snapshot (no delta base). The server uses <see cref="SnapshotCodec"/> per client.</summary>
+        public static void Write(ByteWriter w, in SnapshotMsg m) => new SnapshotCodec().Write(w, m, null, -1);
 
+        /// <summary>Reads a full snapshot. A delta (which needs the receiver's baselines) throws.</summary>
         public static SnapshotMsg ReadSnapshot(ref ByteReader r, List<PlayerSnap> othersInto)
         {
-            Expect(ref r, MsgType.Snapshot);
-            var m = new SnapshotMsg { ServerTick = r.I32(), Others = othersInto };
-            othersInto.Clear();
-            m.HasSelf = r.Bool();
-            if (m.HasSelf)
-            {
-                m.SelfInputWasReal = r.Bool();
-                m.SelfLead = r.I8();
-                m.Self = ReadMotor(ref r);
-                m.SelfBar = r.U16();
-                m.SelfHoldTenthMs = r.U16();
-            }
-            int n = r.U8();
-            if (n > MaxPlayersPerSnapshot) throw new NetFormatException("Too many players.");
-            for (int i = 0; i < n; i++)
-            {
-                var p = new PlayerSnap
-                {
-                    Id = r.U16(),
-                    Team = r.U8(),
-                    Position = r.VecF(),
-                    Velocity = r.VecF(),
-                    Yaw = r.F32(),
-                    Pitch = r.F32(),
-                    Mode = ReadMode(ref r),
-                };
-                byte pf = r.U8();
-                p.Crouched = (pf & 1) != 0;
-                p.Dead = (pf & 2) != 0;
-                int held = (pf >> 2) & 7;
-                if (held > (int)Items.Last) throw new NetFormatException("Bad item.");
-                p.Held = (Item)held;
-                int hm = pf >> 5;
-                if (hm > (int)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
-                p.Hand = (HandMode)hm;
-                othersInto.Add(p);
-            }
+            if (!new SnapshotCodec().TryRead(ref r, othersInto, null, out SnapshotMsg m)) throw new NetFormatException("Delta snapshot without baselines.");
             return m;
         }
 

@@ -102,6 +102,9 @@ namespace Sculpt.Core.Net
         /// <summary>Smoothed estimate of the server's tick right now (for timers).</summary>
         public double ServerTimeEstimate => _serverTime;
         public int SnapshotsReceived { get; private set; }
+        /// <summary>Snapshot bytes received (accepted ones), and deltas whose base this client did not have (should stay 0).</summary>
+        public long SnapshotBytes { get; private set; }
+        public int SnapshotBaseMisses { get; private set; }
         public int DroppedPackets { get; private set; }
         public bool LastInputWasRealOnServer { get; private set; } = true;
 
@@ -126,6 +129,8 @@ namespace Sculpt.Core.Net
         private readonly ByteWriter _w = new ByteWriter(512);
         private readonly List<InputCmd> _sendCmds = new List<InputCmd>(Protocol.MaxCmdsPerPacket);
         private readonly List<PlayerSnap> _snapOthers = new List<PlayerSnap>();
+        private readonly SnapshotCodec _snapCodec = new SnapshotCodec();
+        private SnapshotBaselines _baselines;
         private readonly List<InputCmd> _readScratch = new List<InputCmd>();
         private readonly List<PieceOp> _worldOps = new List<PieceOp>();
         private readonly List<WorldEvent> _worldEvents = new List<WorldEvent>();
@@ -246,9 +251,15 @@ namespace Sculpt.Core.Net
                         OnReveal(ref r);
                         break;
                     case MsgType.Snapshot:
+                    {
                         if (!Joined || IsSpectator) return;
-                        OnSnapshot(Protocol.ReadSnapshot(ref r, _snapOthers));
+                        if (SnapshotCodec.PeekTick(data, offset, count) <= LastSnapshotTick) return; // late or duplicate: never touch the baselines
+                        if (_baselines == null || _baselines.Size != Config.SnapshotBaselineTicks) _baselines = new SnapshotBaselines(Math.Max(2, Config.SnapshotBaselineTicks));
+                        if (!_snapCodec.TryRead(ref r, _snapOthers, _baselines, out SnapshotMsg sm)) { SnapshotBaseMisses++; return; }
+                        SnapshotBytes += count;
+                        OnSnapshot(sm);
                         break;
+                    }
                     default: DroppedPackets++; break;
                 }
             }
@@ -285,6 +296,7 @@ namespace Sculpt.Core.Net
             _serverTime = m.ServerTick;
             _serverTimeValid = true;
             LastSnapshotTick = int.MinValue;
+            _baselines?.Clear();
             Sculpt?.Reset(m.PlayerId, m.Team, m.Spawn, Tick);
             Heals?.Clear();
             _healPending = false;
