@@ -462,6 +462,8 @@ namespace Sculpt.Game.UI
         private void DrawSearch()
         {
             List<string> q = SettingsSearch.QueryWords(_search);
+            // A bind changed from the results can clash: the Swap prompt lives in the binds header, which the search may hide.
+            if (_clashA != null) { DrawClash(); GUILayout.Space(6); }
             int lastTab = -1, found = 0;
             foreach (Entry e in _entries)
             {
@@ -825,6 +827,13 @@ namespace Sculpt.Game.UI
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Reset all binds", _button, GUILayout.Width(150))) ResetBinds();
             GUILayout.EndHorizontal();
+            if (_search.Trim().Length == 0) DrawClash(); // search results draw it at their top
+            GUILayout.Space(6);
+        }
+
+        /// <summary>The "also bound to" warning with Swap / Keep both (on the binds page and over search results).</summary>
+        private void DrawClash()
+        {
             if (_clashA != null)
             {
                 string key = _clashA.GetBindingDisplayString(_clashAIndex);
@@ -835,7 +844,6 @@ namespace Sculpt.Game.UI
                 if (GUILayout.Button("Keep both", _button, GUILayout.Width(110))) _clashA = null;
                 GUILayout.EndHorizontal();
             }
-            GUILayout.Space(6);
         }
 
         /// <summary>After a bind changed: is its key also bound to another action that can be live at the same time?</summary>
