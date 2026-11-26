@@ -427,6 +427,7 @@ namespace Sculpt.Game.UI
             {
                 _settings.ResetGroup(group);
                 _video.ResetGroup(group);
+                if (group == SettingsGroup.Controls) ApplySlotPrefs(SlotPrefs.Default); // the auto-sort row is on this page too
                 _sensText = _dpiText = _cmText = null;
                 _dirty = true;
             }
