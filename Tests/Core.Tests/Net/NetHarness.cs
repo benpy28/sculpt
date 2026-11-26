@@ -24,6 +24,8 @@ namespace Sculpt.Core.Tests.Net
             public Action<Peer> OnFrame;
             /// <summary>Rewrites every packet the client sends (a modified client, for anti-cheat tests).</summary>
             public Func<byte[], byte[]> Tamper;
+            /// <summary>Sees every packet the server sends this client, as the client gets it.</summary>
+            public Action<byte[]> OnDown;
         }
 
         public readonly NetConfig Config = new NetConfig();
@@ -115,7 +117,7 @@ namespace Sculpt.Core.Tests.Net
                 }
                 foreach (Peer p in Peers.ToArray())
                 {
-                    p.Down.Deliver(NowMs, d => p.Client.Receive(d, 0, d.Length));
+                    p.Down.Deliver(NowMs, d => { p.OnDown?.Invoke(d); p.Client.Receive(d, 0, d.Length); });
                     if (NowMs >= p.NextFrameMs)
                     {
                         double dt = p.FrameMs / 1000.0;
