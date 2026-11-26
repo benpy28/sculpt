@@ -318,6 +318,64 @@ namespace Sculpt.Core.Tests.Audio
         }
 
         [Test]
+        public void TheGrid_AfterEveryKindOfTileChange_MatchesAFreshBuild()
+        {
+            // What the game does: every tile change invalidates the tile's bounds (BrushView). Holes, breaks (frame
+            // follows), doors opening and shutting and heals; then the patched grid must equal one built from scratch.
+            BrushWorld w = DuelMap.BuildBrushes(out _);
+            TileWalls tiles = w.Tiles;
+            var paths = new SoundPaths(w);
+            var rng = new Random(21);
+            var doors = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < tiles.Count; i++) if (tiles[i].Kind == TileKind.Door) doors.Add(i);
+            Assert.That(doors.Count, Is.GreaterThan(0));
+            int mismatches = 0, cells = 0;
+            string first = null;
+            for (int round = 0; round < 12; round++)
+            {
+                tiles.Changes.Clear();
+                for (int k = 0; k < 6; k++)
+                {
+                    int i = rng.Next(tiles.Count);
+                    switch (rng.Next(4))
+                    {
+                        case 0:
+                            if (tiles.HasCells(i)) tiles.HitArea(i, tiles.BoundsOf(i).Center, 100, 0.6, TileCause.Bullet, 1);
+                            break;
+                        case 1: tiles.Damage(i, 1000, TileCause.Grenade, 1); break;
+                        case 2:
+                        {
+                            int d = doors[rng.Next(doors.Count)];
+                            bool open = tiles[d].State != TileState.DoorOpen;
+                            tiles.Set(d, open ? TileState.DoorOpen : TileState.Intact, tiles[d].Health, TileCause.Door);
+                            break;
+                        }
+                        default:
+                            if (tiles[i].Links == null && tiles[i].Kind != TileKind.Door) tiles.Set(i, TileState.Patched, 50, TileCause.Heal);
+                            break;
+                    }
+                }
+                var touched = new System.Collections.Generic.List<Aabb>();
+                foreach (TileChange c in tiles.Changes) { paths.Invalidate(tiles.BoundsOf(c.Tile)); touched.Add(tiles.BoundsOf(c.Tile)); }
+                var fresh = new SoundGrid(w, paths.Config.CellSize);
+                fresh.Build();
+                double cs = paths.Config.CellSize;
+                foreach (Aabb b in touched)
+                    for (int x = (int)Math.Floor(b.Min.X / cs) - 3; x <= (int)Math.Floor(b.Max.X / cs) + 3; x++)
+                        for (int y = (int)Math.Floor(b.Min.Y / cs) - 3; y <= (int)Math.Floor(b.Max.Y / cs) + 3; y++)
+                            for (int z = (int)Math.Floor(b.Min.Z / cs) - 3; z <= (int)Math.Floor(b.Max.Z / cs) + 3; z++)
+                            {
+                                cells++;
+                                if (paths.Grid.Blocked(x, y, z) == fresh.Blocked(x, y, z)) continue;
+                                mismatches++;
+                                first ??= $"round {round} cell {x},{y},{z}: patched {paths.Grid.Blocked(x, y, z):X3}, fresh {fresh.Blocked(x, y, z):X3}";
+                            }
+            }
+            TestContext.Out.WriteLine($"{cells} cells compared, {mismatches} differ. {first}");
+            Assert.That(mismatches, Is.EqualTo(0), first);
+        }
+
+        [Test]
         public void TheFastGrid_AgreesWithRayCasts_OnEveryBuildingFace()
         {
             // Buildings only (no sub-cell ground, whose chamfers the grid counts as solid), with holes and broken tiles.
