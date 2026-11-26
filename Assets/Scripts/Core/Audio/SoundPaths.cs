@@ -304,8 +304,14 @@ namespace Sculpt.Core.Audio
                 {
                     s += step;
                     if (t + s >= left) { s = left - t; break; } // the source is inside or right behind the solid
-                    if (!Inside(p + dir * (t + s))) break;
-                    if (solid + s > Config.MaxSolidMetres) return false;
+                    if (!Inside(p + dir * (t + s)))
+                    {
+                        // Out: the solid ended somewhere in the last step. Find its far face exactly (a short ray back).
+                        TerrainHit back = World.Raycast(p + dir * (t + s), -dir, step);
+                        if (back.Hit) s -= back.Distance;
+                        break;
+                    }
+                    if (solid + s - step > Config.MaxSolidMetres) return false;
                 }
                 solid += s;
                 if (solid > Config.MaxSolidMetres) return false;

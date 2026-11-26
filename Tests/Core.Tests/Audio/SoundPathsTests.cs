@@ -105,6 +105,26 @@ namespace Sculpt.Core.Tests.Audio
         }
 
         [Test]
+        public void ThroughAWallStraightOn_CountsExactlyItsThickness()
+        {
+            // Square on through the 0.3 m south wall: 0.3 m of solid (was counted 0.35 m, one 5 cm march step too many:
+            // 0.9 dB too quiet through every wall, and a wall just under the 2 m limit counted as over it).
+            CompositeTerrain t = Room(door: false, roof: true, out _, out _);
+            var paths = new SoundPaths(t);
+            SoundRoute r = paths.Route(new Vec3d(12.6, 1.6, 7), new Vec3d(12.6, 1.6, 13), Range);
+            Assert.That(r.Way, Is.EqualTo(SoundWay.Through));
+            Assert.That(r.Walls, Is.EqualTo(1));
+            Assert.That(r.SolidMetres, Is.EqualTo(0.3).Within(0.002));
+            // 1.96 m of solid is under the 2 m limit: still heard through.
+            var w = new BrushWorld();
+            w.AddBox(new Vec3d(0, 0, 10), new Vec3d(20, 9, 11.96), BrushKind.Frame);
+            var thick = new SoundPaths(w);
+            SoundRoute r2 = thick.Route(new Vec3d(5, 1.6, 8), new Vec3d(5, 1.6, 14), Range);
+            Assert.That(r2.ThroughPossible, Is.True);
+            Assert.That(r2.SolidMetres, Is.EqualTo(1.96).Within(0.002));
+        }
+
+        [Test]
         public void NoRoof_ASoundInsideGoesOverTheWallTop()
         {
             CompositeTerrain t = Room(door: false, roof: false, out _, out _);
