@@ -442,9 +442,10 @@ namespace Sculpt.Core.Net
             {
                 switch (cur)
                 {
-                    case Weapon.Pump: if (dist > 10) want = dist > 24 ? Weapon.Ar : Weapon.Smg; break;
-                    case Weapon.Smg: if (dist < 7) want = Weapon.Pump; else if (dist > 26) want = Weapon.Ar; break;
-                    case Weapon.Ar: if (dist < 18) want = dist < 7 ? Weapon.Pump : Weapon.Smg; break;
+                    // Balance pass 2 (2026-11-26): the SMG falls off from 7 m, so the AR takes over from ~16 m (was 26).
+                    case Weapon.Pump: if (dist > 10) want = dist > 18 ? Weapon.Ar : Weapon.Smg; break;
+                    case Weapon.Smg: if (dist < 7) want = Weapon.Pump; else if (dist > 16) want = Weapon.Ar; break;
+                    case Weapon.Ar: if (dist < 12) want = dist < 7 ? Weapon.Pump : Weapon.Smg; break;
                     default: want = Weapon.Smg; break;
                 }
             }

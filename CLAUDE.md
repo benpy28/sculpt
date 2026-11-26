@@ -123,6 +123,14 @@ Ben: "sculpting everywhere was becoming a bit weird and lower skill than i thoug
 - **Punch:** the gun (and throws) are locked 0.35 s after the press (`PunchConfig.GunLockSeconds`; was the whole 0.8 s swing); still one punch every 0.8 s.
 - Protocol 28 (rules differ between builds). Ben's pump report (~60 to the head in a room) is the pattern, not movement: by ~8 m only 5 of 9 pellets fit a head and falloff starts; at 3 m all 9 hit (127).
 
+### Balance pass 2 (2026-11-26; Ben's queue item 3: SMG at pro aim, crouch camping; calls by Claude, tell Ben, change if he disagrees)
+- **Sim fix first:** `Tools/Balance/v2/duel2.py` scaled a player's aim point with the target's box height, so a pro aimed near the top edge of a crouched head and missed over it: that was most of "crouching is too strong". The aim point now sits a fixed distance below the top (crouching folds the legs; head and chest keep their place). The sim also now uses the live numbers (pass 1 + the first-shot kick). With the fix alone, crouching is no longer a winning tactic at mid aim; at pro aim a still crouch was as good as standing still plus its accuracy bonus.
+- **SMG head 1.5x = 19.125** (was 1.25x = 15.94, Ben 2026-11-20): 8 heads to kill (was 10), body 12.75 unchanged (12 body shots), so chest-aiming players feel little change. At pro aim the AR's 1.58x head out-damaged it everywhere. **SMG falloff from 7 m, 0.6 at 18 m** (was 10 / 20 m) so the bigger head bonus doesn't make it a 10-15 m gun.
+- **No crouch accuracy bonus** on any gun (`CrouchFactor` 1; SMG and pistol were 0.8, AR 0.75, pump already 1): a crouch makes you smaller, it no longer steadies your aim. Pump unchanged (option 1).
+- Duel bot swaps SMG to AR from 16 m (was 26), back under 12 m (was 18).
+- Result (`Tools/Balance/sculpt-1v1-balance-2026-11-26-pass2.xlsx`): pro aim: pump 3 m, SMG 6 m (had no range), AR from 10 m. Mid aim: pump 3 m, SMG 6 m, all close at 10 m, pistol/AR 15 m, AR 25 m+ (as before). Skill ladder about the same, except pro aim with beginner tactics now beats a mid player more often up close (0.67 -> 0.91 at 3 m): headshots matter more with the SMG. Protocol 31.
+- Still true in the sim at pro aim: standing still (crouched or not) beats strafing at 6-15 m with the AR; crouching beats standing only at 25-40 m (smaller target for hand error at range), which fits "quick cover from long-range fire".
+
 ## Long-term pillars (Ben; all required)
 - Deterministic competitive gameplay; server-authoritative networking; strong anti-cheat focus; spectating and replays; ranked (necessary); custom/private lobbies; no pay-to-win in PvP (cosmetics only).
 - Competitive/performance settings so hardware from an RTX 3060 to an Xbox can approach 144 fps in almost all situations.
@@ -567,7 +575,7 @@ Goal: watch any match back (free camera and any player's view) and watch live ma
 - Bloom is per gun, with a small penalty on swapping (replaces shared bloom).
 - Ammo and reloads: yes. R becomes reload and respawn moves to F1 (a keybind thread is finalising the table).
 - Light zoom on right mouse for the AR and pistol.
-- SMG headshot multiplier 1.25x (18.75 head).
+- SMG headshot multiplier 1.25x (18.75 head). (Superseded 2026-11-26: 1.5x, see Balance pass 2.)
 - Friendly fire stays off. Respawn delay stays 3 s (non-round modes).
 - Throw on E and the top-face rule (LMB moves the piece toward the edge you aim at) are approved.
 - Built in Core (Claude's numbers, flag to Ben; all in WeaponsConfig): magazines pump 5 / SMG 30 / AR 25 / pistol 12, unlimited reserve. Magazine reloads SMG 96 ticks (1.6 s), AR 114 (1.9 s), pistol 78 (1.3 s); you can't fire through them. The pump loads shell by shell: first shell after 6 + 30 ticks, then one per 30 ticks (0.5 s); firing a loaded shell interrupts it and shells already in stay. Reload starts on the reload press when the mag isn't full, or by itself once it is empty (after the fire cycle, so the pump racks first). Only with the gun out; swapping, sculpt mode or a disarm cancels it (a magazine reload loses its progress). Sprinting, sliding and jumping don't stop it. Each gun keeps its own magazine; respawn refills all. Swap bloom penalty: pump 0.3, SMG 0.3, AR 0.4, pistol 0.3 degrees, which doesn't recover during the draw and is gone a few ticks after the gun is out. Zoom: AimFovScale AR 0.8, pistol 0.87 (camera only, no accuracy change). Protocol version 6.
@@ -591,7 +599,7 @@ Goal: watch any match back (free camera and any player's view) and watch live ma
 ## Balance analysis 2026-11-25 (destruction + momentum game)
 - Sim v2 in `Tools/Balance/v2` (Python 3 + openpyxl; `python matrix.py mid 200 '<json overrides>' <tag>`), spreadsheets `sculpt-1v1-balance-2026-11-25.xlsx` (before) and the after-pass rerun next to it. Gun duels use the real spread/bloom/recoil/pellet pattern with tracking lag; also breaching, heal war and throwables.
 - Before the pass: SMG beat the pump even at 3 m; pistol beat the AR 10-25 m (every range at pro aim); breaching saves 2-4.5 s over walking round; heals didn't stop charges; C4/launcher cost a gun; punch locked the gun 0.8 s. Skill ladder: pro vs mid 64-91%, mid vs beginner 74-91%, same aim with better movement/gun choice 72-86%.
-- Watch: at pro aim, crouching still wins more than it should (removing the crouch accuracy bonus barely changed it).
+- Watch: at pro aim, crouching still wins more than it should (removing the crouch accuracy bonus barely changed it). (Answered 2026-11-26 in Balance pass 2: mostly a sim aim bias, now fixed; crouch bonus removed.)
 
 ## Balance baseline (2026-11-20)
 - 1v1 simulator and baseline spreadsheet live in `Tools/Balance/` (Python 3, run on any PC; `sculpt-1v1-balance-baseline-2026-11-20.xlsx` is the baseline to compare future analyses against). Equal aim; only sculpt speed and decisions differ.

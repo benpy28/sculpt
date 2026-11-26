@@ -10,7 +10,7 @@ V = {
 }
 if __name__ == "__main__":
     out = {}
-    with Pool(14) as p:
+    with Pool() as p:
         for name, pv in V.items():
             ov = json.loads(json.dumps(BASE)); ov["Pump"].update(pv)
             for aim in ("mid", "pro"):

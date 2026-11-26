@@ -1,5 +1,5 @@
 """SCULPT 1v1 gun duel simulator v2 (2026-11-25, after the destruction + momentum pivot).
-Numbers are the live defaults on claude/project-thread-m8m4r9 (WeaponConfig.cs, MovementConfig.cs, Hand.cs).
+Numbers are the live defaults (WeaponConfig.cs on claude/project-thread-an1npa, incl. the balance pass and the first-shot kick) (WeaponConfig.cs, MovementConfig.cs, Hand.cs).
 120 Hz ticks. Open ground, both players see each other at t=0, fixed distance D, lateral motion only.
 
 Aim model (same for both players unless a tier says otherwise):
@@ -28,18 +28,18 @@ GRAV, JUMP_V = 30.0, math.sqrt(2 * 30.0 * 1.3)
 
 def W():
     return {
-        "Pump": dict(pellets=9, body=9.4, head=14.1, interval=0.9, auto=True, fo=([5, 12, 25], [1, .65, .2]),
-                     base=0.0, move=0.3, crouch=1.0, slide=0.6, air=0.8, pattern=2.6, bloom=0.0, bmax=0.0, brec=4, bdel=0.0,
-                     rp=3.5, ry=0.6, rmax=6, rrec=11, rdel=8 / 60, mag=5, reload=0.6, shell=0.5, draw=0.4),
-        "SMG": dict(pellets=1, body=12.75, head=15.9375, interval=5 / 60, auto=True, fo=([10, 20, 35], [1, .6, .4]),
-                    base=0.9, move=0.7, crouch=0.8, slide=1.2, air=1.8, pattern=0, bloom=0.12, bmax=1.6, brec=8, bdel=7 / 60,
-                    rp=0.28, ry=0.2, rmax=5, rrec=10, rdel=7 / 60, mag=30, reload=1.6, draw=0.3),
+        "Pump": dict(pellets=9, body=9.4, head=14.1, interval=0.75, auto=True, fo=([5, 12, 25], [1, .65, .2]),
+                     base=0.0, move=0.3, crouch=1.0, slide=1.5, air=1.5, pattern=2.6, bloom=0.0, bmax=0.0, brec=4, bdel=0.0,
+                     rp=3.5, rfs=0.5, ry=0.6, rmax=6, rrec=11, rdel=8 / 60, mag=5, reload=0.6, shell=0.5, draw=0.4),
+        "SMG": dict(pellets=1, body=12.75, head=19.125, interval=1 / 11, auto=True, fo=([7, 18, 35], [1, .6, .4]),
+                    base=0.9, move=0.7, crouch=1.0, slide=1.2, air=1.8, pattern=0, bloom=0.12, bmax=1.6, brec=8, bdel=7 / 60,
+                    rp=0.28, rfs=0.25, ry=0.2, rmax=5, rrec=10, rdel=7 / 60, mag=30, reload=1.6, draw=0.3),
         "AR": dict(pellets=1, body=21.5, head=34, interval=10.909 / 60, auto=True, fo=([0], [1]),
-                   base=0.0, move=0.9, crouch=0.75, slide=3.0, air=4.0, pattern=0, bloom=0.45, bmax=3.0, brec=6, bdel=13 / 60,
-                   rp=0.7, ry=0.3, rmax=7, rrec=9, rdel=13 / 60, mag=25, reload=1.9, draw=0.35),
-        "Pistol": dict(pellets=1, body=25.5, head=42.5, interval=0.2, auto=False, fo=([25, 50], [1, .7]),
-                       base=0.1, move=0.5, crouch=0.8, slide=1.5, air=2.0, pattern=0, bloom=0.5, bmax=2.0, brec=8, bdel=14 / 60,
-                       rp=1.4, ry=0.25, rmax=6, rrec=14, rdel=4 / 60, mag=12, reload=1.3, draw=0.2),
+                   base=0.0, move=0.9, crouch=1.0, slide=3.0, air=4.0, pattern=0, bloom=0.45, bmax=3.0, brec=6, bdel=13 / 60,
+                   rp=0.7, rfs=0.6, ry=0.3, rmax=7, rrec=9, rdel=13 / 60, mag=25, reload=1.9, draw=0.35),
+        "Pistol": dict(pellets=1, body=25.5, head=37, interval=0.2, auto=False, fo=([25, 50], [1, .7]),
+                       base=0.1, move=0.5, crouch=1.0, slide=1.5, air=2.0, pattern=0, bloom=0.8, bmax=2.5, brec=8, bdel=14 / 60,
+                       rp=1.4, rfs=0.45, ry=0.25, rmax=6, rrec=14, rdel=4 / 60, mag=12, reload=1.3, draw=0.2),
     }
 
 WEAPONS = W()
@@ -230,7 +230,10 @@ def shoot(p, s, me, tg, i, D, rng):
     vy = (tg[1][j] - tg[1][j - 1]) / TICK
     ex = tg[0][j] + vx * a["lag"] * a["lead"]
     etop = tg[1][j] + tg[2][j] + vy * a["lag"] * a["lead"] * 0.5
-    aim_y = etop - a["aim_off"] * (tg[2][j] / STAND_H if tg[2][j] < STAND_H else 1)
+    # The aim point sits a fixed distance below the top of the target: crouching folds the legs and torso, so the head
+    # and upper chest keep their place relative to the top of the box (the old model scaled the offset with box height,
+    # which put a pro's aim near the top edge of a crouched head and made crouching look stronger than it is).
+    aim_y = etop - min(a["aim_off"], tg[2][j] - 0.1)
     # own movement shakes your aim a little (mouse already compensates most of it)
     own_v = me[3][i]
     hand = a["sig"] + math.degrees(own_v / max(D, 1) * 0.015)
@@ -261,7 +264,8 @@ def shoot(p, s, me, tg, i, D, rng):
             total += w["body"]
     # recoil and bloom from this shot
     s["bloom"] = min(w["bmax"], s["bloom"] + w["bloom"])
-    s["rec"] = min(w["rmax"], s["rec"] + w["rp"])
+    first = s["streak"] == 0 and s["rec"] == 0
+    s["rec"] = min(w["rmax"], s["rec"] + w["rp"] + (w.get("rfs", 0.0) if first else 0.0))
     s["recy"] += w["ry"] * YAW_PAT[s["streak"] % len(YAW_PAT)]
     s["streak"] += 1
     if total <= 0: return 0

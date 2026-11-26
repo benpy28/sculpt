@@ -87,7 +87,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 30; // 30 replays and spectators (Hello, spectator frames, welcome gains the spectator delay); 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
+        public const byte Version = 31; // 31 balance pass 2 (SMG head 1.5x, no crouch accuracy bonus: rules differ between builds); 30 replays and spectators (Hello, spectator frames, welcome gains the spectator delay); 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
