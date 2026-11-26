@@ -82,6 +82,7 @@ namespace Sculpt.Core.Tests.Hunt
                     return c;
                 }
             }, 2, new Vec3d(20, 0, 20), Math.PI / 2);
+            v.Viewer = true; // a stand-in for a person: interest (and so the honeypot) is worked out for viewers
 
             bool everWithheld = false;
             for (int i = 0; i < 2 * SimTime.TicksPerSecond; i++)
@@ -121,6 +122,7 @@ namespace Sculpt.Core.Tests.Hunt
                     return c;
                 }
             }, 2, new Vec3d(20, 0, 20), Math.PI / 2);
+            v.Viewer = true; // a stand-in for a person: interest (and so the honeypot) is worked out for viewers
 
             bool everWithheld = false, everOnTarget = false;
             for (int i = 0; i < 2 * SimTime.TicksPerSecond; i++)
@@ -168,6 +170,7 @@ namespace Sculpt.Core.Tests.Hunt
                     return c;
                 }
             }, 2, new Vec3d(20, 0, 20), Math.PI / 2);
+            v.Viewer = true; // a stand-in for a person: interest (and so the honeypot) is worked out for viewers
 
             bool everSent = false;
             for (int i = 0; i < 2 * SimTime.TicksPerSecond; i++)
