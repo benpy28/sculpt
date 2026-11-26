@@ -1116,8 +1116,15 @@ namespace Sculpt.Game.UI
             _settings.BeginnerView = beginner; // the view you are using stays
             if (map.TryGetValue(BindsKey, out string json))
             {
+                string before = _input.Player.SaveBindingOverridesAsJson();
                 try { _input.Player.RemoveAllBindingOverrides(); if (json.Length > 0) _input.Player.LoadBindingOverridesFromJson(json); n++; }
-                catch (Exception e) { Debug.LogWarning("[SCULPT] Settings code binds ignored: " + e.Message); }
+                catch (Exception e)
+                {
+                    // A bad binds part must not leave you with default binds: put yours back.
+                    Debug.LogWarning("[SCULPT] Settings code binds ignored: " + e.Message);
+                    _input.Player.RemoveAllBindingOverrides();
+                    if (!string.IsNullOrEmpty(before)) _input.Player.LoadBindingOverridesFromJson(before);
+                }
             }
             if (map.TryGetValue(SlotsKey, out string slots) && slots.Length == Items.Slots)
             {
