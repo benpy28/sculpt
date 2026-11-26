@@ -302,7 +302,17 @@ namespace Sculpt.Core.Net
             }
             if (events == null) ev.Clear();
 
-            if (s.Position.Y < nc.KillY) { Respawn(ref s, spawn, cmd.Tick, events, grenades); return; }
+            if (s.Position.Y < nc.KillY)
+            {
+                // Fell out of the world: book it as a death (3 s respawn like any fall, credited by the server's OnKilled
+                // with DamageSource.Fall), not a free instant full-health reset. Dead players are frozen until RespawnTick,
+                // then respawn at spawn. Without this a map with an open pit would let a losing player escape a fight with
+                // no penalty and no death recorded.
+                GrenadeRules.Fizzle(ref s, cmd.Tick, grenades, false);
+                WeaponRules.Kill(ref s, cmd.Tick, mc.Weapons);
+                events?.Add(new MoveEvent { Type = MoveEventType.Died, Tick = cmd.Tick });
+                return;
+            }
             if (s.Dead) return;
             GrenadeRules.Step(grid, mc, ref s, cmd.Tick, cmd.Move, cmd.Pitch, grenades);
             PunchRules.Step(ref s, cmd.Tick, cmd.Hand.Punch, cmd.Move.Yaw, cmd.Pitch, mc, punches);

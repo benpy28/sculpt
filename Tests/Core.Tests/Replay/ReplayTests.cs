@@ -516,6 +516,7 @@ namespace Sculpt.Core.Tests.Replay
             var links = new Dictionary<int, SimulatedLink>();
             double now = 0;
             rig.Server = NewDuelServer(out rig.Info, (c, d, r) => { if (links.TryGetValue(c, out var l)) l.Send(d, r, now); });
+            rig.Server.Dedicated = true; // test the delay mechanism at 3 s; the 30 s listen-server floor is policy, not mechanism
             rig.Server.SpectatorDelayTicks = delay;
             SpawnItems(rig.Server, rig.Info);
             rig.Server.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Normal), 5), 1, rig.Info.TeamSpawns[0][0], rig.Info.SpawnYaw[0]);

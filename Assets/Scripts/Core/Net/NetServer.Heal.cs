@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Sculpt.Core.AntiCheat;
 
 namespace Sculpt.Core.Net
 {
@@ -81,7 +82,12 @@ namespace Sculpt.Core.Net
         {
             if (Walls == null || !DoorRules.IsLeaf(Walls, cmd.Hand.DoorTile)) return;
             Vec3d eye = p.State.Position + new Vec3d(0, PlayerMovement.EyeOf(p.State, Movement), 0);
-            if (DoorRules.DistanceTo(Walls.BoundsOf(cmd.Hand.DoorTile), eye) > Walls.Config.DoorReach + HealReachSlack) return;
+            Aabb db = Walls.BoundsOf(cmd.Hand.DoorTile);
+            if (DoorRules.DistanceTo(db, eye) > Walls.Config.DoorReach + HealReachSlack) return;
+            // Line of sight, like heals and item pickup: the client sends a tile id, so without this a modified client
+            // could open/close a door through a wall or round a corner it can't see. A fair client's DoorRules.FindTarget
+            // casts a ray, so an honest press always has sight to the leaf's near face.
+            if (!ItemRules.Visible(Grid, eye, db.ClosestPoint(eye))) { Flag(p, FlagKind.DoorNoSight, cmd.Hand.DoorTile); return; }
             _doorBodies.Clear();
             foreach (ServerPlayer o in _players)
                 if (!o.State.Dead) _doorBodies.Add(PlayerMovement.Box(o.State.Position, Movement.HalfWidth, PlayerMovement.HeightOf(o.State, Movement)));
