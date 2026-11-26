@@ -95,10 +95,14 @@ namespace Sculpt.Game.UI
         private void Update()
         {
             float dt = Time.unscaledDeltaTime;
+            // Fades and the settle wait count at most a short frame each: the first frames after a big load can take
+            // seconds (a 32-player map), and counting those would end the wait and skip the fade in one frame, showing
+            // a scene that is still hitching (seen in the first real-Unity check, 2026-11-26).
+            float step = Mathf.Min(dt, 1f / 30f);
             switch (_step)
             {
                 case Step.FadeIn:
-                    _t += dt;
+                    _t += step;
                     if (_t >= FadeInSeconds) { _step = Step.Load; _t = 0; _opaqueFrames = 0; }
                     break;
                 case Step.Load:
@@ -112,12 +116,12 @@ namespace Sculpt.Game.UI
                     }
                     break;
                 case Step.Settle:
-                    _t += dt;
+                    _t += Mathf.Min(dt, SmoothFrameSeconds);
                     _smooth = dt < SmoothFrameSeconds ? _smooth + 1 : 0;
                     if (_smooth >= SmoothFrames || _t >= MaxWaitSeconds) { _step = Step.FadeOut; _t = 0; }
                     break;
                 case Step.FadeOut:
-                    _t += dt;
+                    _t += step;
                     if (_t >= FadeOutSeconds) Destroy(gameObject);
                     break;
             }
