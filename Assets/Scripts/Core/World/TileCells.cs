@@ -787,7 +787,21 @@ namespace Sculpt.Core
         {
             var work = new Dictionary<int, ulong>();
             foreach (var kv in plan) work[kv.Key] = OpenCells(kv.Key) & ~kv.Value;
-            PlanFill(work, new Dictionary<int, ulong>(plan));
+            // Frame pieces this heal brings back are solid once it is done: an opening beside one must not count as
+            // reaching open air (it would be left smaller than a fair hole against the column).
+            _assumeSolid.Clear();
+            var restored = new List<int>();
+            foreach (var kv in work)
+            {
+                if (_tiles[kv.Key].State != TileState.Broken || kv.Value == Brush.AllCells) continue;
+                RestoredWith(kv.Key, restored);
+                foreach (int f in restored) _assumeSolid.Add(BoundsOf(f));
+            }
+            try { PlanFill(work, new Dictionary<int, ulong>(plan)); }
+            finally
+            {
+                if (_assumeSolid.Count > 0) { _assumeSolid.Clear(); _beyond.Clear(); }
+            }
             return work;
         }
 

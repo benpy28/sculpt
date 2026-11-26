@@ -89,6 +89,49 @@ namespace Sculpt.Core.Tests.World
             return n;
         }
 
+        /// <summary>
+        /// A wall 3 x 3 tiles at x 1.8..6.3 (y 0..4.5, z 10), with a single tile A at x 0..1.5 (y 1.5..3) and a column
+        /// piece between A and the wall's left-middle tile B linked to both; solid frame above and below the column.
+        /// </summary>
+        private static BrushWorld ColumnWall(out int a, out int b, out int col, out int[] wall)
+        {
+            var w = new BrushWorld();
+            TileWalls t = w.Tiles;
+            wall = t.AddWall(new Vec3d(1.8, 0, 10), Dir.East, 3, 3);
+            b = wall[3];
+            a = t.AddTile(new Aabb(new Vec3d(0, 1.5, 10), new Vec3d(1.5, 3, 10.3)), Dir.North);
+            col = t.AddFollower(new Aabb(new Vec3d(1.5, 1.5, 10), new Vec3d(1.8, 3, 10.3)), new[] { a, b });
+            w.Add(Brush.Box(new Aabb(new Vec3d(0, 0, 10), new Vec3d(1.8, 1.5, 10.3)), BrushKind.Frame));
+            w.Add(Brush.Box(new Aabb(new Vec3d(0, 3, 10), new Vec3d(1.8, 4.5, 10.3)), BrushKind.Frame));
+            t.Changes.Clear();
+            return w;
+        }
+
+        [Test]
+        public void HealingABrokenTileBesideABrokenColumn_NeverLeavesASmallHoleAgainstTheColumnItBringsBack()
+        {
+            var failures = new List<string>();
+            for (int k = 0; k <= 12; k++)
+            {
+                BrushWorld w = ColumnWall(out int a, out int b, out int col, out int[] wall);
+                TileWalls t = w.Tiles;
+                t.Set(a, TileState.Broken, 0, TileCause.Grenade);
+                t.Set(b, TileState.Broken, 0, TileCause.Grenade);
+                Assert.That(t[col].State, Is.EqualTo(TileState.Broken));
+                double x = 2.4 + k * 0.075;
+                int cell = t.CellAt(b, new Vec3d(x, 2.25, 10));
+                var plan = new Dictionary<int, ulong>();
+                t.HealPlan(b, cell, HealKind.Heal, plan);
+                t.ApplyHeal(plan, HealKind.Heal, 1);
+                Assert.That(t[col].State, Is.Not.EqualTo(TileState.Broken), "the heal brings the column back");
+                int open = TileWalls.PopCount(t.OpenCells(b));
+                int min = t.MinHoleCells(b);
+                // B's openings now touch only the column (solid again) and other wall: each must be a fair hole.
+                if (open != 0 && open < min) failures.Add($"aim x {x:0.000}: {open} cells left open (min {min})");
+            }
+            Assert.That(failures, Is.Empty, string.Join("\n", failures));
+        }
+
         [Test]
         public void APatchedOrReinforcedDoor_StaysPatchedOrReinforced_AfterOpeningAndShutting()
         {
