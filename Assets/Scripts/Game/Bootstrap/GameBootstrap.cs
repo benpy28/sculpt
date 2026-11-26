@@ -40,6 +40,8 @@ namespace Sculpt.Game.Bootstrap
         public static Launch NextLaunch = Launch.Menu;
         public static MapChoice NextMap = MapChoice.Duel;
         public static string NextAddress = "";
+        /// <summary>The UDP port this run hosts on (-port N on the command line; read once, at first boot).</summary>
+        public static ushort HostPort = FishNetTransport.DefaultPort;
         /// <summary>The replay file a Replay launch plays.</summary>
         public static string NextReplayPath = "";
         /// <summary>Why the last replay couldn't be played (the menu shows it), or empty.</summary>
@@ -120,6 +122,7 @@ namespace Sculpt.Game.Bootstrap
             NextLaunch = Launch.Menu;
             NextMap = MapChoice.Duel;
             NextAddress = "";
+            HostPort = FishNetTransport.DefaultPort;
             _commandLineDone = false;
         }
 
@@ -381,7 +384,7 @@ namespace Sculpt.Game.Bootstrap
             _relaunchClock = null;
             switch (NextLaunch)
             {
-                case Launch.Host: _session.StartHost(FishNetTransport.DefaultPort); break;
+                case Launch.Host: _session.StartHost(HostPort); break;
                 case Launch.Join: JoinAddress(NextAddress); break;
                 case Launch.Spectate: JoinAddress(NextAddress, spectate: true); break;
                 case Launch.Replay:
@@ -390,7 +393,7 @@ namespace Sculpt.Game.Bootstrap
                     break;
                 case Launch.Menu: menu.Open(); break;
             }
-            ApplyCommandLine(); // sim ping/loss/jitter, and a non-default -port
+            ApplyCommandLine(); // sim ping/loss/jitter
             // Frame pacing, lean rendering, the performance overlay and the -benchmark run.
             PerfSetup.Install(gameObject, _session, _player, _input, _rig, _grid);
             string tour = Sculpt.Game.Dev.PhotoTour.RequestedFolder();
@@ -501,32 +504,32 @@ namespace Sculpt.Game.Bootstrap
                 }
                 else if (a == "-noreplay") NetSession.RecordReplays = false;
                 else if (a == "-specdelay" && i + 1 < args.Length && int.TryParse(args[i + 1], out int sd)) NetSession.SpectatorDelaySeconds = Math.Max(0, sd);
+                else if (a == "-port" && i + 1 < args.Length && ushort.TryParse(args[i + 1], out ushort port) && port != 0) HostPort = port;
             }
+            // -connect address -port N: the port goes with the address (an address that names its own port keeps it).
+            if ((NextLaunch == Launch.Join || NextLaunch == Launch.Spectate) && HostPort != FishNetTransport.DefaultPort && NextAddress.LastIndexOf(':') < 0)
+                NextAddress += ":" + HostPort;
         }
 
-        /// <summary>-port N, -simping ms, -simloss percent, -simjitter ms (host and join come from ReadLaunchArgs).</summary>
+        /// <summary>
+        /// -simping ms, -simloss percent, -simjitter ms, on every load (one-run network simulation). Host, join and -port
+        /// come from ReadLaunchArgs at first boot only: doing them here too started a second host (or join) on every load,
+        /// menu reloads included.
+        /// </summary>
         private void ApplyCommandLine()
         {
             string[] args = Environment.GetCommandLineArgs();
-            ushort port = FishNetTransport.DefaultPort;
-            string connect = null;
-            bool host = false;
             for (int i = 0; i < args.Length; i++)
             {
                 string a = args[i].ToLowerInvariant();
                 string next = i + 1 < args.Length ? args[i + 1] : null;
-                if (a == "-host") host = true;
-                else if (a == "-connect" && next != null) connect = next;
-                else if (a == "-port" && next != null && ushort.TryParse(next, out ushort p)) port = p;
-                else if (a == "-simping" && next != null && double.TryParse(next, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double ping))
+                if (a == "-simping" && next != null && double.TryParse(next, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double ping))
                 { _session.SimUp.LatencyMs = ping / 2; _session.SimDown.LatencyMs = ping / 2; }
                 else if (a == "-simloss" && next != null && double.TryParse(next, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double loss))
                 { _session.SimUp.LossPercent = loss; _session.SimDown.LossPercent = loss; }
                 else if (a == "-simjitter" && next != null && double.TryParse(next, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double jit))
                 { _session.SimUp.JitterMs = jit; _session.SimDown.JitterMs = jit; }
             }
-            if (host && port != FishNetTransport.DefaultPort) _session.StartHost(port);
-            if (connect != null && port != FishNetTransport.DefaultPort && connect.LastIndexOf(':') < 0) _session.Join(connect, port);
         }
 
         private System.Diagnostics.Stopwatch _awakeClock;

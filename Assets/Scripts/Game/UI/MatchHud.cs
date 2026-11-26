@@ -22,6 +22,9 @@ namespace Sculpt.Game.UI
         // Texts shown every frame are rebuilt only when their number changes (a string per frame is garbage per frame).
         private int _timeSecs = -1, _youKills = -1, _themKills = -1;
         private string _timeText = "", _youText = "", _themText = "";
+        private long _endKey = long.MinValue;
+        private int _nextSecs = -1;
+        private string _endLine = "", _nextText = "";
 
         public void Init(LocalPlayer player, NetSession session)
         {
@@ -127,9 +130,12 @@ namespace Sculpt.Game.UI
                     string result = leader == 0 ? "DRAW" : leader == net.PlayerId ? "YOU WIN" : "YOU LOSE";
                     Color c = leader == 0 ? HudDraw.Text : leader == net.PlayerId ? HudDraw.Amber : HudDraw.Red;
                     HudDraw.Label(new Rect(mid.x, mid.y + 10 * s, mid.width, 64 * s), result, Mathf.RoundToInt(54 * s), c, TextAnchor.MiddleCenter, true);
-                    string line = $"{me.Kills} kills, {me.Deaths} deaths" + (hasThem ? $"   vs   {them.Kills} kills, {them.Deaths} deaths" : "");
-                    HudDraw.Label(new Rect(mid.x, mid.y + 76 * s, mid.width, 28 * s), line, Mathf.RoundToInt(19 * s), HudDraw.Text, TextAnchor.MiddleCenter);
-                    HudDraw.Label(new Rect(mid.x, mid.y + 104 * s, mid.width, 26 * s), $"Next match in {SecondsLeft(m)}", Mathf.RoundToInt(16 * s), HudDraw.Dim, TextAnchor.MiddleCenter);
+                    long lineKey = hasThem ? ((long)me.Kills << 48) | ((long)me.Deaths << 32) | ((long)(them.Kills & 0xFFFF) << 16) | (long)(them.Deaths & 0xFFFF) : -1L - (((long)me.Kills << 16) | (long)(me.Deaths & 0xFFFF));
+                    if (lineKey != _endKey) { _endKey = lineKey; _endLine = $"{me.Kills} kills, {me.Deaths} deaths" + (hasThem ? $"   vs   {them.Kills} kills, {them.Deaths} deaths" : ""); }
+                    int next = SecondsLeft(m);
+                    if (next != _nextSecs) { _nextSecs = next; _nextText = $"Next match in {next}"; }
+                    HudDraw.Label(new Rect(mid.x, mid.y + 76 * s, mid.width, 28 * s), _endLine, Mathf.RoundToInt(19 * s), HudDraw.Text, TextAnchor.MiddleCenter);
+                    HudDraw.Label(new Rect(mid.x, mid.y + 104 * s, mid.width, 26 * s), _nextText, Mathf.RoundToInt(16 * s), HudDraw.Dim, TextAnchor.MiddleCenter);
                     break;
                 }
             }
