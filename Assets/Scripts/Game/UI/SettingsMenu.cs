@@ -1088,7 +1088,7 @@ namespace Sculpt.Game.UI
             var map = new Dictionary<string, string>();
             _settings.WriteTo(map);
             _video.WriteTo(map);
-            map[BindsKey] = _input.Player.SaveBindingOverridesAsJson();
+            map[BindsKey] = GameInput.ExportOverrides(_input.Player);
             SlotPrefs p = NetSession.LocalSlotPrefs;
             var c = new char[Items.Slots];
             for (int k = 0; k < Items.Slots; k++) c[k] = (char)('0' + (int)p[k]);
@@ -1128,14 +1128,14 @@ namespace Sculpt.Game.UI
             _settings.BeginnerView = beginner; // the view you are using stays
             if (map.TryGetValue(BindsKey, out string json))
             {
-                string before = _input.Player.SaveBindingOverridesAsJson();
-                try { _input.Player.RemoveAllBindingOverrides(); if (json.Length > 0) _input.Player.LoadBindingOverridesFromJson(json); n++; }
+                string before = GameInput.ExportOverrides(_input.Player);
+                try { if (json.Length > 0) GameInput.ImportOverrides(_input.Player, json); else _input.Player.RemoveAllBindingOverrides(); n++; }
                 catch (Exception e)
                 {
                     // A bad binds part must not leave you with default binds: put yours back.
                     Debug.LogWarning("[SCULPT] Settings code binds ignored: " + e.Message);
                     _input.Player.RemoveAllBindingOverrides();
-                    if (!string.IsNullOrEmpty(before)) _input.Player.LoadBindingOverridesFromJson(before);
+                    if (before.Length > 0) GameInput.ImportOverrides(_input.Player, before);
                 }
             }
             if (map.TryGetValue(SlotsKey, out string slots) && slots.Length == Items.Slots)
