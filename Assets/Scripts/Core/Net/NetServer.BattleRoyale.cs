@@ -250,6 +250,7 @@ namespace Sculpt.Core.Net
             var bag = new Bag();
             int pump = Place(ref bag, p.Prefs, Item.Pump);
             int second = global::Sculpt.Core.Items.IsGun(locker) && locker != Item.Pump ? Place(ref bag, p.Prefs, locker) : -1;
+            pump = bag.SlotOf(Item.Pump); // placing the locker gun may have moved the pump out of its way
             p.State.Hand.Bag = bag;
             p.State.Hand.Slot = (byte)pump;
             p.State.Hand.PrevSlot = (byte)(second >= 0 ? second : (pump + 1) % global::Sculpt.Core.Items.Slots);
