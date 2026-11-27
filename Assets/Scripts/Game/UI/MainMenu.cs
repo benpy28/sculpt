@@ -173,8 +173,11 @@ namespace Sculpt.Game.UI
             if (_session.JoinError.Length > 0 && _session.Mode != NetMode.Client && _error != _session.JoinError)
             {
                 _error = _session.JoinError;
-                _mode = Mode.Duel;
-                _duel = DuelPick.Join;
+                // Back on the card that started it, where the error is shown (it always went to the 1v1 join card,
+                // so a failed Royale join or watch-live showed its reason under the wrong mode).
+                if (GameBootstrap.NextLaunch == GameBootstrap.Launch.Spectate) { _mode = Mode.Replays; _watch = WatchPick.Live; }
+                else if (GameBootstrap.CurrentMap == GameBootstrap.MapChoice.BattleRoyale) { _mode = Mode.Br; _brNet = BrNet.Join; }
+                else { _mode = Mode.Duel; _duel = DuelPick.Join; }
                 Open();
             }
             bool joining = _session.Mode == NetMode.Client && !_session.Client.Joined;

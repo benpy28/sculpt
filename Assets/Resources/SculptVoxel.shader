@@ -5,6 +5,7 @@ Shader "SCULPT/Voxel"
 {
     Properties
     {
+        [HideInInspector] _Scenery ("Scenery (1 = takes shadows, AO, lighting and atmosphere; 0 = players, loot, effects)", Float) = 0
         _Detail ("Rock Detail", Range(0, 0.3)) = 0.09
         _DetailScale ("Detail Scale (per metre)", Range(0.5, 12)) = 3.2
         _Strata ("Strata", Range(0, 0.2)) = 0.015
@@ -39,7 +40,12 @@ Shader "SCULPT/Voxel"
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile_fog
+            // Picture settings (Rendering/LookSettings): sun shadows and ambient occlusion on scenery only.
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
+            #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "SculptLook.hlsl"
             #include "SculptNature.hlsl"
 
             CBUFFER_START(UnityPerMaterial)
@@ -60,6 +66,7 @@ Shader "SCULPT/Voxel"
                 float4 _VeinColor;
                 float _VeinScale;
                 float _VeinStrength;
+                float _Scenery;
             CBUFFER_END
 
             float Hash3(float3 p)
@@ -206,6 +213,8 @@ Shader "SCULPT/Voxel"
                     c += _VeinColor.rgb * (0.05 * shimmer + 0.5 * glint) * reinf;
                 }
 
+                c = SculptLight(c, i.positionWS, normalize(i.normalWS), i.positionCS, _Scenery);
+
                 // Sculpt overlay (local to this player's terrain material; players and enemies use other materials).
                 // Purple means "sculptable" and nothing else: chamfered edges of sculptable rock within range glow faintly,
                 // brighter in sculpt mode, with a ripple on entering; out-of-range rock dims, non-sculptables desaturate.
@@ -223,8 +232,27 @@ Shader "SCULPT/Voxel"
                 c = lerp(c, lerp(c, lum.xxx, 0.35 * (1.0 - sculptable)), _SculptMode);
                 c *= lerp(1.0, lerp(0.84, 1.0, inRange), _SculptMode * sculptable);
                 c = MixFog(c, i.fogFactor);
+                c = SculptAtmosphere(c, i.positionWS, _Scenery);
                 return half4(c, 1.0);
             }
+            ENDHLSL
+        }
+
+        // Sun shadows, scene depth and depth-normals (SculptDepthPasses.hlsl): only drawn when a picture setting needs them.
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags { "LightMode" = "ShadowCaster" }
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex SculptShadowVert
+            #pragma fragment SculptDepthFrag
+            #define SCULPT_LEAF_SWAY
+            #include "SculptDepthPasses.hlsl"
             ENDHLSL
         }
 
@@ -234,27 +262,29 @@ Shader "SCULPT/Voxel"
             Tags { "LightMode" = "DepthOnly" }
             ZWrite On
             ColorMask R
+            Cull Back
 
             HLSLPROGRAM
-            #pragma vertex vert
-            #pragma fragment frag
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #pragma vertex SculptDepthVert
+            #pragma fragment SculptDepthFrag
+            #define SCULPT_LEAF_SWAY
+            #include "SculptDepthPasses.hlsl"
+            ENDHLSL
+        }
 
-            #include "SculptNature.hlsl"
+        Pass
+        {
+            Name "DepthNormals"
+            Tags { "LightMode" = "DepthNormals" }
+            ZWrite On
+            Cull Back
 
-            struct Attributes { float4 positionOS : POSITION; float2 uv1 : TEXCOORD1; };
-            struct Varyings { float4 positionCS : SV_POSITION; };
-
-            Varyings vert(Attributes i)
-            {
-                Varyings o;
-                float3 ws = TransformObjectToWorld(i.positionOS.xyz);
-                if (i.uv1.x > 2.5) ws = NatureLeafSway(ws); // same sway as the colour pass, so depth matches
-                o.positionCS = TransformWorldToHClip(ws);
-                return o;
-            }
-
-            half4 frag(Varyings i) : SV_Target { return 0; }
+            HLSLPROGRAM
+            #pragma vertex SculptDepthVert
+            #pragma fragment SculptDepthNormalsFrag
+            #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
+            #define SCULPT_LEAF_SWAY
+            #include "SculptDepthPasses.hlsl"
             ENDHLSL
         }
     }

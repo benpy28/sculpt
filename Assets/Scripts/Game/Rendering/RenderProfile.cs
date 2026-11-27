@@ -6,10 +6,10 @@ using UnityEngine.Rendering.Universal;
 namespace Sculpt.Game.Rendering
 {
     /// <summary>
-    /// Applies <see cref="VideoSettings"/>: frame pacing (V-Sync, frame cap, the driver's frame queue) and the lean
-    /// render profile. The project's render pipeline assets are still the Unity template's (HDR target, depth and
-    /// colour copies, shadow pass, an ambient occlusion feature), none of which the game's unlit shaders read, so lean
-    /// mode switches all of that off for the game camera: same picture, less work per frame.
+    /// Applies <see cref="VideoSettings"/>: frame pacing (V-Sync, frame cap, the driver's frame queue), the lean
+    /// render profile and the picture settings (<see cref="PictureEffects"/>). The project's render pipeline assets are
+    /// still the Unity template's (HDR target, depth and colour copies, shadow pass, an ambient occlusion feature);
+    /// lean mode switches off what no picture setting in force needs, so the competitive picture costs the least.
     ///
     /// Nothing is written to an asset file. Camera options live on the code-made camera; the few values that sit on
     /// shared pipeline objects (renderer features, render scale, quality settings) are changed in memory and put back
@@ -22,7 +22,7 @@ namespace Sculpt.Game.Rendering
         private int _applied = -1;
         private int _appliedWidth, _appliedHeight;
 
-        private readonly List<ScriptableRendererFeature> _switchedOff = new List<ScriptableRendererFeature>();
+        private PictureEffects _picture;
         private UniversalRenderPipelineAsset _scaledAsset;
         private float _assetScaleBefore;
         private int _assetMsaaBefore;
@@ -46,6 +46,7 @@ namespace Sculpt.Game.Rendering
         private void Update()
         {
             if (_settings == null) return;
+            _picture?.Tick();
             // A change of display (window moved to another monitor) changes what "display - 3" means.
             if (_settings.Version != _applied || Screen.width != _appliedWidth || Screen.height != _appliedHeight) Apply();
         }
@@ -74,39 +75,33 @@ namespace Sculpt.Game.Rendering
             QualitySettings.maxQueuedFrames = s.LowLatency ? 1 : 2;
 
             // ---- Camera ----
+            // Lean skips the pipeline work nothing reads (HDR target, depth and colour copies); a picture setting that
+            // needs one of them (Video > Picture) turns just that back on.
             bool lean = s.LeanRendering;
+            Sculpt.Core.Settings.LookValues look = s.Look;
+            bool taa = look.PostAa == 3;
             if (_camera != null)
             {
                 UniversalAdditionalCameraData data = _camera.GetUniversalAdditionalCameraData();
-                data.requiresDepthOption = lean ? CameraOverrideOption.Off : CameraOverrideOption.UsePipelineSettings;
+                data.requiresDepthOption = look.NeedsDepth ? CameraOverrideOption.On : lean ? CameraOverrideOption.Off : CameraOverrideOption.UsePipelineSettings;
                 data.requiresColorOption = lean ? CameraOverrideOption.Off : CameraOverrideOption.UsePipelineSettings;
-                data.renderShadows = !lean;
-                data.renderPostProcessing = false;
-                data.antialiasing = AntialiasingMode.None;
+                data.renderShadows = look.Shadows > 0;
+                data.renderPostProcessing = look.NeedsPost;
+                data.antialiasing = look.PostAa == 1 ? AntialiasingMode.FastApproximateAntialiasing
+                                  : look.PostAa == 2 ? AntialiasingMode.SubpixelMorphologicalAntiAliasing
+                                  : taa ? AntialiasingMode.TemporalAntiAliasing : AntialiasingMode.None;
+                data.antialiasingQuality = AntialiasingQuality.High;
                 data.stopNaN = false;
-                data.dithering = false;
-                _camera.allowHDR = !lean;
-                _camera.allowMSAA = s.Msaa > 1; // anti-aliasing is its own setting now (lean used to switch it off)
+                data.dithering = look.NeedsPost; // hides banding in the sky gradient once post-processing runs
+                _camera.allowHDR = look.NeedsHdr || !lean;
+                _camera.allowMSAA = s.Msaa > 1 && !taa; // TAA replaces MSAA (URP can't run both)
                 _camera.useOcclusionCulling = false; // nothing is baked; skips the query
             }
 
             // ---- Shared pipeline objects (restored on destroy) ----
             UniversalRenderPipelineAsset asset = UniversalRenderPipeline.asset;
-            RestoreFeatures();
-            if (lean && asset != null)
-            {
-                foreach (ScriptableRendererData rd in asset.rendererDataList)
-                {
-                    if (rd == null) continue;
-                    foreach (ScriptableRendererFeature f in rd.rendererFeatures)
-                    {
-                        // Ambient occlusion: a depth-normals pass plus full-screen passes whose result only lit shaders read.
-                        if (f == null || !f.isActive || f.GetType().Name != "ScreenSpaceAmbientOcclusion") continue;
-                        f.SetActive(false);
-                        _switchedOff.Add(f);
-                    }
-                }
-            }
+            if (_picture == null && _camera != null) _picture = new PictureEffects(_camera);
+            _picture?.Apply(s, asset);
             if (asset != null)
             {
                 if (_scaledAsset != asset)
@@ -118,7 +113,8 @@ namespace Sculpt.Game.Rendering
                 }
                 if (!Mathf.Approximately(asset.renderScale, s.RenderScale)) asset.renderScale = s.RenderScale;
                 // MSAA samples live on the pipeline asset (the camera only allows or refuses it).
-                if (asset.msaaSampleCount != s.Msaa) asset.msaaSampleCount = s.Msaa;
+                int msaa = taa ? 1 : s.Msaa;
+                if (asset.msaaSampleCount != msaa) asset.msaaSampleCount = msaa;
             }
 
             int queue = QualitySettings.maxQueuedFrames;
@@ -127,7 +123,8 @@ namespace Sculpt.Game.Rendering
                       (queue > 0 ? ", frame queue " + queue : ", frame queue n/a") +
                       (lean ? ", lean" : ", full pipeline") +
                       (s.RenderScale < 0.995f ? ", scale " + Mathf.RoundToInt(s.RenderScale * 100f) + "%" : "") +
-                      (s.Msaa > 1 ? ", MSAA " + s.Msaa + "x" : "");
+                      (s.Msaa > 1 && !taa ? ", MSAA " + s.Msaa + "x" : "") +
+                      (_picture != null ? ", " + _picture.Summary : "");
             Debug.Log("[SCULPT] Video: " + Summary + $" ({Screen.width}x{Screen.height} at {refresh:0.#} Hz, {SystemInfo.graphicsDeviceType}).");
         }
 
@@ -144,12 +141,6 @@ namespace Sculpt.Game.Rendering
             }
         }
 
-        private void RestoreFeatures()
-        {
-            foreach (ScriptableRendererFeature f in _switchedOff) if (f != null) f.SetActive(true);
-            _switchedOff.Clear();
-        }
-
         private void RestoreScale()
         {
             if (_scaledAsset != null) { _scaledAsset.renderScale = _assetScaleBefore; _scaledAsset.msaaSampleCount = _assetMsaaBefore; }
@@ -158,7 +149,8 @@ namespace Sculpt.Game.Rendering
 
         private void OnDestroy()
         {
-            RestoreFeatures();
+            _picture?.Restore();
+            _picture = null;
             RestoreScale();
             if (!_saved) return;
             QualitySettings.vSyncCount = _vSyncBefore;

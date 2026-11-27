@@ -5,7 +5,7 @@ using UnityEngine;
 namespace UnityEngine.InputSystem
 {
     public enum InputActionType { Value, Button, PassThrough }
-    public struct InputBinding { public string path; public string effectivePath; public string overridePath; public string name; public bool isComposite; public bool isPartOfComposite; public string groups; public string action; public InputBinding(string p, string a = null, string g = null, string pr = null, string i = null, string n = null) { path = p; effectivePath = p; overridePath = null; name = n; isComposite = false; isPartOfComposite = false; groups = g; action = a; } }
+    public struct InputBinding { public System.Guid id => default; public string path; public string effectivePath; public string overridePath; public string name; public bool isComposite; public bool isPartOfComposite; public string groups; public string action; public InputBinding(string p, string a = null, string g = null, string pr = null, string i = null, string n = null) { path = p; effectivePath = p; overridePath = null; name = n; isComposite = false; isPartOfComposite = false; groups = g; action = a; } }
     public class InputControl { public string path; public string name; public string displayName; public InputDevice device => null; }
     public class InputActionMap : IDisposable
     {

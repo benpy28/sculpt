@@ -23,6 +23,8 @@ namespace Sculpt.Game.UI
 
         private int _aliveKey = -1, _stormKey = -1, _placeKey = -1, _countKey = -1, _outKey = -1;
         private string _aliveText = "", _stormText = "", _placeText = "", _countText = "", _outText = "";
+        private int _titleKey = int.MinValue;
+        private string _titleText;
 
         public void Init(LocalPlayer player, NetSession session)
         {
@@ -39,6 +41,9 @@ namespace Sculpt.Game.UI
         {
             if (_gl != null) Destroy(_gl);
         }
+
+        /// <summary>The minimap's size and its margin from the top right corner, at 1080p (the kill feed starts under it).</summary>
+        public const float MinimapSize = 230f, MinimapMargin = 24f;
 
         public static readonly Color Teammate = new Color(0.45f, 0.75f, 1f);
         private static readonly Color StormEdge = new Color(0.62f, 0.86f, 1f, 0.95f);
@@ -67,7 +72,7 @@ namespace Sculpt.Game.UI
 
             // ---- Shapes: the top panel, the minimap, the middle card.
             float pw = 420 * s, ph = 46 * s, px = w / 2 - pw / 2, py = h - 70 * s - ph;
-            float mm = 230 * s, mx = w - mm - 24 * s, my = h - mm - 24 * s;
+            float mm = MinimapSize * s, mx = w - mm - MinimapMargin * s, my = h - mm - MinimapMargin * s;
             Rect mid = new Rect(w / 2 - 330 * s, h * 0.38f - 70 * s, 660 * s, 140 * s);
             bool card = m.Phase != MatchPhase.Playing || dead;
             _gl.SetPass(0);
@@ -161,8 +166,17 @@ namespace Sculpt.Game.UI
                 }
                 case MatchPhase.Ended:
                 {
-                    bool won = m.WinnerTeam != 0 && m.WinnerTeam == net.Team;
-                    string title = won ? "VICTORY" : m.WinnerTeam == 0 ? "NOBODY SURVIVED" : $"#{Mathf.Max(1, me.Place)}";
+                    // From your own place, not your team number (a sit-out's team number may be a dealt team's).
+                    bool won = m.WinnerTeam != 0 && me.Place == 1;
+                    // Place 0 = you weren't in this match (joined after the deal and sat it out): no place to show
+                    // (it used to read "#1"). The title is rebuilt only when it changes.
+                    int titleKey = won ? -1 : m.WinnerTeam == 0 ? -2 : me.Place;
+                    if (titleKey != _titleKey || _titleText == null)
+                    {
+                        _titleKey = titleKey;
+                        _titleText = won ? "VICTORY" : m.WinnerTeam == 0 ? "NOBODY SURVIVED" : me.Place > 0 ? "#" + me.Place : "MATCH OVER";
+                    }
+                    string title = _titleText;
                     HudDraw.Label(new Rect(mid.x, mid.y + 10 * s, mid.width, 64 * s), title, Mathf.RoundToInt(54 * s), won ? HudDraw.Amber : HudDraw.Text, TextAnchor.MiddleCenter, true);
                     int key = 100000 + me.Kills * 100 + Secs(m.PhaseEndTick);
                     if (key != _placeKey) { _placeKey = key; _placeText = $"{me.Kills} kills   ·   next match in {Secs(m.PhaseEndTick)}"; }

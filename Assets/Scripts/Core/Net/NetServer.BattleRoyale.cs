@@ -97,6 +97,7 @@ namespace Sculpt.Core.Net
             Match.Storm = new StormState { Phase = -1, PhaseCount = config.Radius.Length };
             Movement.Items.MaxGroundItems = Math.Max(Movement.Items.MaxGroundItems, config.MaxGroundItems);
             _matchDirty = true;
+            Stream?.OnBrSeed(Tick, config.Seed); // the deal, chests and circles all come from it: a re-run needs it
         }
 
         /// <summary>Where the battle royale's place in the current match stands for a team (0 while it is still in).</summary>
@@ -253,6 +254,7 @@ namespace Sculpt.Core.Net
             var bag = new Bag();
             int pump = Place(ref bag, p.Prefs, Item.Pump);
             int second = global::Sculpt.Core.Items.IsGun(locker) && locker != Item.Pump ? Place(ref bag, p.Prefs, locker) : -1;
+            pump = bag.SlotOf(Item.Pump); // placing the locker gun may have moved the pump out of its way
             p.State.Hand.Bag = bag;
             p.State.Hand.Slot = (byte)pump;
             p.State.Hand.PrevSlot = (byte)(second >= 0 ? second : (pump + 1) % global::Sculpt.Core.Items.Slots);
@@ -277,6 +279,9 @@ namespace Sculpt.Core.Net
                 WeaponRules.Kill(ref p.State, Tick, Weapons);
                 p.State.RespawnTick = int.MaxValue;
                 p.Body.Position = ParkedBody;
+                // On no team: teams are dealt 1..N, so the number they joined with is usually a team in the match
+                // (they would be sent its players and counted as its teammate). The next deal gives them one.
+                if (p.Team != 0) { p.Team = 0; p.Body.Team = 0; _matchDirty = true; }
             }
         }
 
@@ -363,9 +368,25 @@ namespace Sculpt.Core.Net
         /// <summary>A death in a running battle royale: out for the match, and everything you carried falls where you died.</summary>
         private void OnBrDeath(ServerPlayer victim)
         {
-            if (Br == null || Match.Phase != MatchPhase.Playing || !_brIn.Contains(victim.Id)) return;
+            if (Br == null || !_brIn.Contains(victim.Id)) return;
+            if (Match.Phase == MatchPhase.Countdown)
+            {
+                // Nobody can be hurt in the countdown, but a fall is movement: put them straight back on their pad with
+                // the match loadout (the normal respawn would bring them back mid-match with the 1v1 loadout).
+                victim.ForceRespawn = true;
+                victim.BrLoadout = true;
+                return;
+            }
+            if (Match.Phase != MatchPhase.Playing) return;
             victim.State.RespawnTick = int.MaxValue;
             DropBag(victim);
+        }
+
+        /// <summary>Leaving a running battle royale is going out of it: whatever you carried stays in the match.</summary>
+        private void OnBrLeave(ServerPlayer p)
+        {
+            if (Br == null || Match.Phase != MatchPhase.Playing || !_brIn.Contains(p.Id) || p.State.Dead) return;
+            DropBag(p);
         }
 
         private void DropBag(ServerPlayer p)

@@ -78,7 +78,7 @@ namespace Sculpt.Core
             }
 
             // Late slide-land: crouch pressed within the window after touchdown restores the landing speed.
-            if (s.Mode == MoveMode.Ground && input.CrouchPressed && !s.LandSlideUsed &&
+            if (s.Mode == MoveMode.Ground && input.CrouchPressed && !s.LandSlideUsed && !s.Hand.Using &&
                 s.Tick - s.LandTick <= c.SlideLandWindowTicks && s.LandVelocity.HorizontalLength >= c.SlideLandMinSpeed)
             {
                 double keep = IsChainedHop(c, s, s.LandTick) ? c.SlideHopKeep : 1.0;
@@ -114,7 +114,8 @@ namespace Sculpt.Core
         private static void StepGround(ITerrain g, MovementConfig c, ref MotorState s, in MoveInput input, Vec3d wish, bool jumpBuffered, List<MoveEvent> events)
         {
             // Slide from a sprint.
-            if (input.CrouchPressed && s.Sprinting && s.HorizontalSpeed >= c.SlideMinStartSpeed)
+            // No new slide while using a bandage or first-aid kit (you walk; s.Sprinting is still last tick's here).
+            if (input.CrouchPressed && s.Sprinting && !s.Hand.Using && s.HorizontalSpeed >= c.SlideMinStartSpeed)
             {
                 StartSlide(g, c, ref s, true, events);
                 StepSlide(g, c, ref s, input, wish, jumpBuffered, events);
@@ -410,7 +411,7 @@ namespace Sculpt.Core
             s.Mode = MoveMode.Ground;
             s.Velocity = WithTangentY(vh, s.GroundNormal);
 
-            if (input.CrouchHeld && vh.Length >= c.SlideLandMinSpeed)
+            if (input.CrouchHeld && !s.Hand.Using && vh.Length >= c.SlideLandMinSpeed) // no slide-land while using a heal
             {
                 s.LandSlideUsed = true;
                 s.Mode = MoveMode.Slide;

@@ -107,7 +107,7 @@ namespace Sculpt.Game.UI
                     if (!s.Dead) DrawCrosshair(s, cfg, w / 2f, h / 2f);
                     if (Sculpt.Game.Settings.ClientSettings.Current.HitMarkers) DrawHitMarker(w / 2f, h / 2f);
                     DrawHurt(w, h);
-                    if (s.Dead) HudDraw.RoundRect(w / 2f - 220, h * 0.64f - 110, 440, 120, 12, new Color(0.05f, 0.06f, 0.08f, 0.6f));
+                    if (s.Dead && Respawns(s)) HudDraw.RoundRect(w / 2f - 220, h * 0.64f - 110, 440, 120, 12, new Color(0.05f, 0.06f, 0.08f, 0.6f));
                     DrawHealthBar(s, cfg);
                     DrawAmmo(s, cfg, net.Tick, w);
                     DrawHotbar(s, net.Tick, w);
@@ -185,27 +185,39 @@ namespace Sculpt.Game.UI
             {
                 GroundItem g = net.Items[_player.PickTarget];
                 PickupPlan plan = _player.PickPlan;
-                string key = _player.InteractKeyName;
-                string what = Items.Name(g.Kind, g.Rarity) + (g.Count > 1 ? " x" + g.Count : "");
-                string line;
+                string key = InteractKey();
                 Color col = g.Rarity != Rarity.None ? RarityColours.Of(g.Rarity) : HudDraw.Text;
-                if (plan.Opens) line = $"{key}  Open chest";
-                else if (plan.Result == PickupResult.Swapped && plan.SwapOut == g.Kind) line = $"{key}  Swap your {Items.Name(g.Kind, s.Hand.Bag.RarityOf(plan.Slot))} for {what}";
-                else if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
-                else if (plan.Allowed) line = $"{key}  Pick up {what}";
-                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full"
-                    : g.Kind == Item.Bandage ? "Bandages full" : g.Kind == Item.Medkit ? "First-aid kits full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
-                else { line = what; col = HudDraw.Dim; }
-                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), line, 14, col, TextAnchor.MiddleCenter, true);
+                bool dim = !plan.Opens && !plan.Allowed && plan.Result != PickupResult.Swapped;
+                var pk = (key, g.Kind, g.Rarity, g.Count, plan.Opens, plan.Allowed, plan.Result, plan.SwapOut, s.Hand.Bag.RarityOf(plan.Slot));
+                if (!_pickKeyValid || !pk.Equals(_pickKey))
+                {
+                    _pickKey = pk;
+                    _pickKeyValid = true;
+                    string what = Items.Name(g.Kind, g.Rarity) + (g.Count > 1 ? " x" + g.Count : "");
+                    string line;
+                    if (plan.Opens) line = $"{key}  Open chest";
+                    else if (plan.Result == PickupResult.Swapped && plan.SwapOut == g.Kind) line = $"{key}  Swap your {Items.Name(g.Kind, s.Hand.Bag.RarityOf(plan.Slot))} for {what}";
+                    else if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
+                    else if (plan.Allowed) line = $"{key}  Pick up {what}";
+                    else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full"
+                        : g.Kind == Item.Bandage ? "Bandages full" : g.Kind == Item.Medkit ? "First-aid kits full" : "Have " + Items.Name(g.Kind); }
+                    else line = what;
+                    _pickLine = line;
+                }
+                if (dim) col = HudDraw.Dim;
+                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), _pickLine, 14, col, TextAnchor.MiddleCenter, true);
             }
             else if (!s.Dead && _player.DoorTarget >= 0)
             {
-                string key = _player.InteractKeyName;
-                if (key != _doorKey) { _doorKey = key; _openLine = key + "  Open door"; _shutLine = key + "  Close door"; }
+                string key = InteractKey();
+                if (!ReferenceEquals(key, _doorKey)) { _doorKey = key; _openLine = key + "  Open door"; _shutLine = key + "  Close door"; }
                 HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), _player.DoorTargetOpen ? _shutLine : _openLine, 14, HudDraw.Text, TextAnchor.MiddleCenter, true);
             }
             else if (!s.Dead && _player.DropHold > 0f)
-                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), "Dropping " + Items.Name(s.Hand.HeldItem) + "...", 13, HudDraw.Dim, TextAnchor.MiddleCenter, true);
+            {
+                if (s.Hand.HeldItem != _dropItem || _dropLine == null) { _dropItem = s.Hand.HeldItem; _dropLine = "Dropping " + Items.Name(_dropItem) + "..."; }
+                HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), _dropLine, 13, HudDraw.Dim, TextAnchor.MiddleCenter, true);
+            }
 
             // Damage dealt by the last hit, next to the crosshair.
             if (Sculpt.Game.Settings.ClientSettings.Current.DamageNumbers && Time.time - _view.HitTime < 0.5f)
@@ -214,14 +226,49 @@ namespace Sculpt.Game.UI
 
             if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeed(net, w);
 
-            if (s.Dead && !net.Match.IsBr) // battle royale: no respawn, its own "you're out" panel (BrHud)
+            // The death card, only when you will respawn: a battle royale death (or sitting a match out) never does
+            // (RespawnTick = int.MaxValue) and has its own "you're out" card in BrHud.
+            if (s.Dead && !net.Match.IsBr && Respawns(s))
             {
-                float left = Mathf.Max(0, (s.RespawnTick - net.Tick) / (float)SimTime.TicksPerSecond);
-                string by = _view.KilledBy != 0 && _view.KilledBy != net.PlayerId ? $"by P{_view.KilledBy}  ·  {SourceName(_view.KilledWith)}" : SourceName(_view.KilledWith);
+                int tenths = Mathf.Max(0, Mathf.CeilToInt((s.RespawnTick - net.Tick) * 10f / SimTime.TicksPerSecond));
+                if (tenths != _deathTenths) { _deathTenths = tenths; _deathLeft = $"respawning in {tenths / 10}.{tenths % 10} s"; }
+                if (_view.KilledBy != _deathBy || _view.KilledWith != _deathWith || net.PlayerId != _deathMe)
+                {
+                    _deathBy = _view.KilledBy; _deathWith = _view.KilledWith; _deathMe = net.PlayerId;
+                    _deathByText = _deathBy != 0 && _deathBy != _deathMe ? $"by P{_deathBy}  ·  {SourceName(_deathWith)}" : SourceName(_deathWith);
+                }
                 HudDraw.Label(new Rect(0, h * 0.36f, w, 40), "ELIMINATED", 30, HudDraw.Red, TextAnchor.MiddleCenter, true);
-                HudDraw.Label(new Rect(0, h * 0.36f + 38, w, 22), by, 15, HudDraw.Text, TextAnchor.MiddleCenter);
-                HudDraw.Label(new Rect(0, h * 0.36f + 64, w, 22), $"respawning in {left:0.0} s", 13, HudDraw.Dim, TextAnchor.MiddleCenter);
+                HudDraw.Label(new Rect(0, h * 0.36f + 38, w, 22), _deathByText, 15, HudDraw.Text, TextAnchor.MiddleCenter);
+                HudDraw.Label(new Rect(0, h * 0.36f + 64, w, 22), _deathLeft, 13, HudDraw.Dim, TextAnchor.MiddleCenter);
             }
+        }
+
+        // Death card text, rebuilt only when it changes.
+        private int _deathTenths = -1, _deathBy = int.MinValue, _deathMe;
+        private DamageSource _deathWith;
+        private string _deathLeft = "", _deathByText = "";
+
+        /// <summary>False for a death with no respawn (battle royale: out until the next match).</summary>
+        private static bool Respawns(in MotorState s) => s.RespawnTick != int.MaxValue;
+
+        // Prompt text under the crosshair, rebuilt only when what it says changes. The interact key's name is re-read
+        // at most twice a second (reading a bind's display name builds a dozen strings; a rebind shows within 0.5 s).
+        private string _interactKey;
+        private float _interactKeyAt = -1f;
+        private (string, Item, Rarity, int, bool, bool, PickupResult, Item, Rarity) _pickKey;
+        private bool _pickKeyValid;
+        private string _pickLine = "", _dropLine;
+        private Item _dropItem;
+
+        private string InteractKey()
+        {
+            if (_interactKey == null || Time.unscaledTime >= _interactKeyAt)
+            {
+                string k = _player.InteractKeyName;
+                if (k != _interactKey) _interactKey = k; // same text keeps the same reference, so caches stay valid
+                _interactKeyAt = Time.unscaledTime + 0.5f;
+            }
+            return _interactKey;
         }
 
         private const float Margin = 24f, PanelW = 240f, PanelH = 64f, HealthX = 24f;
@@ -430,7 +477,7 @@ namespace Sculpt.Game.UI
             if (s.Weapon.Reloading && s.Weapon.ReloadGun == held)
             {
                 // Progress of the magazine (or of the next shell for the pump).
-                int total = st.ShellReload ? st.ShellTicks : st.ReloadTicks;
+                int total = cfg.ScaleReload(st.ShellReload ? st.ShellTicks : st.ReloadTicks, s.Hand.Bag.RarityOfGun(held, s.Hand.Slot)); // legendary reloads faster
                 float k = Mathf.Clamp01(1f - (s.Weapon.ReloadTick - tick) / (float)Mathf.Max(1, total));
                 HudDraw.Bar(bx, by, bw, 5, k, HudDraw.Text);
             }
@@ -481,12 +528,23 @@ namespace Sculpt.Game.UI
             return line;
         }
 
+        /// <summary>
+        /// Where the feed starts (GUI y from the top). In a battle royale the minimap fills the top right corner
+        /// (<see cref="BrHud.MinimapSize"/>), so the feed starts under it instead of on it.
+        /// </summary>
+        private static float FeedTop(NetClient net)
+        {
+            if (!net.Match.IsBr || net.IsSpectator) return 16f;
+            float s = Mathf.Max(0.75f, Screen.height / 1080f);
+            return (BrHud.MinimapMargin + BrHud.MinimapSize + 4f) * s + 12f;
+        }
+
         private float FeedWidth(string line) => 22f + line.Length * 7.4f;
 
         /// <summary>Kill feed (top right): one rounded chip per kill, yours outlined in amber. GL part.</summary>
         private void DrawFeedPanels(NetClient net, float w, float h)
         {
-            float y = 16;
+            float y = FeedTop(net);
             for (int i = _view.Feed.Count - 1; i >= 0; i--)
             {
                 var f = _view.Feed[i];
@@ -504,7 +562,7 @@ namespace Sculpt.Game.UI
 
         private void DrawFeed(NetClient net, float w)
         {
-            float y = 16;
+            float y = FeedTop(net);
             for (int i = _view.Feed.Count - 1; i >= 0; i--)
             {
                 var f = _view.Feed[i];

@@ -120,12 +120,13 @@ namespace Sculpt.Core
         public double[] RarityDamage = { 1.0, 0.95, 1.0, 1.065, 1.13, 1.2 };
         public double[] RarityReload = { 1.0, 1.0, 1.0, 1.0, 1.0, 0.95 };
 
-        /// <summary>Player damage of a hit from a gun of this rarity (rounded once, like every hit).</summary>
-        public int ScaleDamage(int damage, Rarity r)
+        /// <summary>Player damage of a hit from a gun of this rarity, from the shot's raw (unrounded) damage, rounded once
+        /// like every hit (<see cref="Round"/>). No rarity = exactly <see cref="ShotVictim.Damage"/>.</summary>
+        public int ScaleDamage(double raw, Rarity r)
         {
             int i = (int)r;
-            if (i <= 0 || RarityDamage == null || i >= RarityDamage.Length) return damage;
-            return (int)Math.Round(damage * RarityDamage[i]);
+            if (i <= 0 || RarityDamage == null || i >= RarityDamage.Length) return Round(raw);
+            return Round(raw * RarityDamage[i]);
         }
 
         /// <summary>A reload time (ticks) for a gun of this rarity.</summary>

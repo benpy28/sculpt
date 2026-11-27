@@ -137,6 +137,9 @@ namespace Sculpt.Core.AntiCheat
         /// <summary>Jump reach: also test from this far above each player's eye, m.</summary>
         public double JumpReach = 1.3;
 
+        /// <summary>Knee point: also test to and from this height above the feet, m (legs seen through a low hole; the bot's sight check uses the same).</summary>
+        public double KneeHeight = 0.35;
+
         /// <summary>Once in sight, an enemy stays sent this long after the last test that saw them, seconds.</summary>
         public double HoldSeconds = 0.5;
 

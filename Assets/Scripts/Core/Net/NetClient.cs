@@ -240,6 +240,9 @@ namespace Sculpt.Core.Net
                             if (c.Tile >= Walls.Count) { DroppedPackets++; continue; }
                             Walls.Tick = tm.Tick;
                             TileCause cause = tm.Join || Muted ? TileCause.Server : c.Cause;
+                            // Your own newer door press stays in view (an answer to an older open or shut would flick
+                            // it back for a round trip); a break always shows.
+                            if (c.To != TileState.Broken && Doors.HasNewerPress(c.Tile, tm.Tick)) { Doors.OnServerChange(Walls, c.Tile, c.To, c.Health, tm.Tick); continue; }
                             if (c.Hp != null && Walls.HasCells(c.Tile))
                                 Walls.WriteCells(c.Tile, c.To == TileState.Broken ? ulong.MaxValue : c.Open, c.Patch, c.Steel, c.Hp, cause, c.By);
                             else Walls.Set(c.Tile, c.To, c.Health, cause, c.By);

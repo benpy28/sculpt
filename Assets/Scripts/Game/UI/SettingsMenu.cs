@@ -116,9 +116,30 @@ namespace Sculpt.Game.UI
                 int n = Choice("Anti-aliasing (MSAA, smooths edges)", Mathf.Max(0, at), MsaaNames);
                 if (MsaaChoices[n] != v.Msaa) { v.Msaa = MsaaChoices[n]; VideoChanged(); }
             });
-            Add(TabVideo, "Rendering", "Lean rendering", "lean pipeline hdr shadows ambient occlusion performance", false, () => { if (Toggle("Lean rendering (recommended, same picture)", ref v.LeanRendering)) VideoChanged(); });
-            Add(TabVideo, "Rendering", "About graphics quality", "shadows lighting textures quality", false, () =>
-                Note("SCULPT's look is unlit and generated, so there are no shadow, lighting or texture quality settings: there is nothing for them to change. Anti-aliasing and render scale are the real picture settings."));
+            Add(TabVideo, "Rendering", "Post anti-aliasing", "aa antialiasing fxaa smaa taa temporal jaggies shimmer", false, () =>
+            {
+                int n = Choice("Post anti-aliasing (smooths shader detail too)", v.Look.PostAa, LookValues.PostAaNames);
+                if (n != v.Look.PostAa) { v.Look.PostAa = n; VideoChanged(); }
+                if (v.Look.PostAa == 3) Note("TAA is the smoothest but replaces MSAA, softens the picture a little and can leave a faint trail behind fast-moving players. SMAA is the sharp choice.");
+            });
+            Add(TabVideo, "Rendering", "Lean rendering", "lean pipeline hdr performance", false, () => { if (Toggle("Lean rendering (recommended, same picture)", ref v.LeanRendering)) VideoChanged(); });
+
+            // ---- Picture (post-processing, shadows, lighting) ----
+            Add(TabVideo, "Picture", "About picture settings", "graphics quality beautiful pretty post processing effects", true, () =>
+                Note("None of these add input delay; they only cost graphics card time. Players, loot and their colours are never shaded, fogged or darkened, and players never cast shadows, so turning these on or off never shows or hides anyone. Competitive turns them all off."));
+            Add(TabVideo, "Picture", "Shadows", "shadows sun shadow quality cascades", true, () => LookChoice("Sun shadows", ref v.Look.Shadows, LookValues.LowHighNames, "Low: hard, 40 m. High: soft, 80 m."));
+            Add(TabVideo, "Picture", "Ambient occlusion", "ambient occlusion ao ssao contact shadows corners", true, () => LookChoice("Ambient occlusion (soft shade in corners)", ref v.Look.Ao, LookValues.LowHighNames, null));
+            Add(TabVideo, "Picture", "Lighting", "lighting sun light sky bounce rich flat", true, () => LookChoice("Lighting", ref v.Look.Lighting, LookValues.LightingNames, "Rich: warm sun on the sunny side, cool sky light in shade, a little bounce from the ground."));
+            Add(TabVideo, "Picture", "Fog", "fog haze atmosphere volumetric atmospheric distance", false, () => LookChoice("Fog", ref v.Look.Fog, LookValues.FogNames, "Atmospheric: height fog that is thicker low down and glows toward the sun. Players are never fogged by it."));
+            Add(TabVideo, "Picture", "Light shafts", "light shafts god rays sun rays volumetric light", false, () => { if (Toggle("Light shafts (rays round the sun)", ref v.Look.Shafts)) VideoChanged(); });
+            Add(TabVideo, "Picture", "Tonemapping", "tonemapping hdr filmic tone mapping", false, () => LookChoice("Tonemapping", ref v.Look.Tonemap, LookValues.TonemapNames, "Filmic rolls off bright highlights softly and keeps every hue true, so team and rarity colours never shift."));
+            Add(TabVideo, "Picture", "Colour grading", "colour color grading saturation contrast vivid natural", false, () => LookChoice("Colour grading", ref v.Look.Grading, LookValues.GradingNames, null));
+            Add(TabVideo, "Picture", "Bloom", "bloom glow bright", false, () => LookChoice("Bloom", ref v.Look.Bloom, LookValues.LowHighNames, "Only things brighter than white glow: the sun, sparks and blasts. Walls and players never do."));
+            Add(TabVideo, "Picture", "Sharpening", "sharpen sharpening cas crisp clarity", false, () => LookSlider("Sharpening", ref v.Look.Sharpen));
+            Add(TabVideo, "Picture", "Vignette", "vignette dark edges corners", false, () => LookSlider("Vignette (darker screen edges)", ref v.Look.Vignette));
+            Add(TabVideo, "Picture", "Film grain", "film grain noise", false, () => LookSlider("Film grain", ref v.Look.Grain));
+            Add(TabVideo, "Picture", "Depth of field", "depth of field dof blur background bokeh", false, () => LookChoice("Depth of field (off by default)", ref v.Look.Dof, LookValues.DofNames, v.Look.Dof > 0 ? "Blurs only past 90 m, so it can soften very distant players. Never near you or your gun." : null));
+            Add(TabVideo, "Picture", "Motion blur", "motion blur camera blur", false, () => LookChoice("Motion blur (off by default)", ref v.Look.MotionBlur, LookValues.LowHighNames, v.Look.MotionBlur > 0 ? "Blurs the view while you turn (your gun too). Most competitive players keep it off." : null));
 
             // ---- Latency and overlays ----
             Add(TabLatency, "Latency", "Low latency mode", "reflex low latency frame queue input lag delay nvidia amd anti lag", true, () =>
@@ -427,6 +448,7 @@ namespace Sculpt.Game.UI
             {
                 _settings.ResetGroup(group);
                 _video.ResetGroup(group);
+                if (group == SettingsGroup.Controls) ApplySlotPrefs(SlotPrefs.Default); // the auto-sort row is on this page too
                 _sensText = _dpiText = _cmText = null;
                 _dirty = true;
             }
@@ -462,6 +484,8 @@ namespace Sculpt.Game.UI
         private void DrawSearch()
         {
             List<string> q = SettingsSearch.QueryWords(_search);
+            // A bind changed from the results can clash: the Swap prompt lives in the binds header, which the search may hide.
+            if (_clashA != null) { DrawClash(); GUILayout.Space(6); }
             int lastTab = -1, found = 0;
             foreach (Entry e in _entries)
             {
@@ -537,6 +561,20 @@ namespace Sculpt.Game.UI
 
         private void Note(string text) => GUILayout.Label(text, _note, GUILayout.MaxWidth(880));
 
+        private void LookChoice(string name, ref int value, string[] names, string note)
+        {
+            int n = Choice(name, Mathf.Clamp(value, 0, names.Length - 1), names);
+            if (n != value) { value = n; VideoChanged(); }
+            if (note != null) Note(note);
+        }
+
+        private void LookSlider(string name, ref float value)
+        {
+            float n = Slider(name, value, 0f, 1f, Mathf.RoundToInt(value * 100f) + "%");
+            n = Mathf.Round(n * 20f) / 20f; // 5% steps
+            if (!Mathf.Approximately(n, value)) { value = n; VideoChanged(); }
+        }
+
         private string _sensText, _dpiText, _cmText;
 
         /// <summary>A slider with a box you can type the exact number into (Enter or leaving the box applies it).</summary>
@@ -586,8 +624,8 @@ namespace Sculpt.Game.UI
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             Note(now == VideoPreset.Quality
-                ? "Quality: 4x anti-aliasing and a frame limit just under your display's refresh for an even pace. Low latency stays on."
-                : "Competitive: highest frame rate and lowest latency. V-Sync off, no frame limit, one queued frame, no anti-aliasing.");
+                ? "Quality: 4x anti-aliasing, a frame limit just under your display's refresh for an even pace, and the full picture: soft shadows, ambient occlusion, rich lighting, atmospheric fog, light shafts, filmic tonemapping, natural grading, bloom, light sharpening and vignette. Low latency stays on."
+                : "Competitive: highest frame rate and lowest latency, and the clean picture. V-Sync off, no frame limit, one queued frame, no anti-aliasing, no post-processing, shadows or ambient occlusion.");
         }
 
         private static readonly FullScreenMode[] Modes = { FullScreenMode.ExclusiveFullScreen, FullScreenMode.FullScreenWindow, FullScreenMode.Windowed };
@@ -825,6 +863,13 @@ namespace Sculpt.Game.UI
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Reset all binds", _button, GUILayout.Width(150))) ResetBinds();
             GUILayout.EndHorizontal();
+            if (_search.Trim().Length == 0) DrawClash(); // search results draw it at their top
+            GUILayout.Space(6);
+        }
+
+        /// <summary>The "also bound to" warning with Swap / Keep both (on the binds page and over search results).</summary>
+        private void DrawClash()
+        {
             if (_clashA != null)
             {
                 string key = _clashA.GetBindingDisplayString(_clashAIndex);
@@ -835,7 +880,6 @@ namespace Sculpt.Game.UI
                 if (GUILayout.Button("Keep both", _button, GUILayout.Width(110))) _clashA = null;
                 GUILayout.EndHorizontal();
             }
-            GUILayout.Space(6);
         }
 
         /// <summary>After a bind changed: is its key also bound to another action that can be live at the same time?</summary>
@@ -846,6 +890,8 @@ namespace Sculpt.Game.UI
             if (string.IsNullOrEmpty(path)) return;
             GameInput.Context ca = _input.ContextOf(a);
             foreach (InputActionMap map in new[] { _input.Player, _input.Dev })
+            {
+                if (map == _input.Dev && !GameInput.DevBuild) continue; // dev keys are off (and not shown) in a release build
                 foreach (InputAction other in map.actions)
                 {
                     if (other == a || other == _input.Look) continue; // a second bind on the same action is fine
@@ -858,6 +904,7 @@ namespace Sculpt.Game.UI
                         return;
                     }
                 }
+            }
         }
 
         private void SwapClash()
@@ -1030,10 +1077,15 @@ namespace Sculpt.Game.UI
             AudioClip[] steps = MovementAudio.Steps;
             if (steps == null || steps.Length == 0) return;
             // Not routed (nothing in the way matters for a test), but the head shadow is: apply it by hand.
-            Sculpt.Core.Audio.SoundPaths.HeadShadow(ear.forward.ToCore(), (at - ear.position).normalized.ToCore(), SoundRouter.Config, out double db, out double hz);
-            db *= _settings.HeadShadow;
+            // Level and top end both, exactly as a routed sound gets them (the dulling is most of the cue).
+            var clear = new Sculpt.Core.Audio.SoundRoute
+            {
+                Way = Sculpt.Core.Audio.SoundWay.Direct, ArrivesFrom = (at - ear.position).normalized.ToCore(), CutoffHz = SoundRouter.Config.OpenCutoffHz,
+            };
+            Sculpt.Core.Audio.SoundPaths.Hear(clear, ear.forward.ToCore(), _settings.HeadShadow, SoundRouter.Config, out double db, out double hz, out _);
             float gain = Mathf.Pow(10f, (float)db / 20f);
-            Synth.Play(steps[UnityEngine.Random.Range(0, steps.Length)], at, 0.9f * gain, 1f, true, 1.5f, 30f, route: false, bus: SoundBus.Movement);
+            Synth.Play(steps[UnityEngine.Random.Range(0, steps.Length)], at, 0.9f * gain, 1f, true, 1.5f, 30f, route: false, bus: SoundBus.Movement,
+                       cutoffHz: SoundMix.Cutoff((float)hz, (float)SoundRouter.Config.OpenCutoffHz));
         }
 
         // ---------------------------------------------------------------- Accessibility
@@ -1076,7 +1128,7 @@ namespace Sculpt.Game.UI
             var map = new Dictionary<string, string>();
             _settings.WriteTo(map);
             _video.WriteTo(map);
-            map[BindsKey] = _input.Player.SaveBindingOverridesAsJson();
+            map[BindsKey] = GameInput.ExportOverrides(_input.Player);
             SlotPrefs p = NetSession.LocalSlotPrefs;
             var c = new char[Items.Slots];
             for (int k = 0; k < Items.Slots; k++) c[k] = (char)('0' + (int)p[k]);
@@ -1116,8 +1168,15 @@ namespace Sculpt.Game.UI
             _settings.BeginnerView = beginner; // the view you are using stays
             if (map.TryGetValue(BindsKey, out string json))
             {
-                try { _input.Player.RemoveAllBindingOverrides(); if (json.Length > 0) _input.Player.LoadBindingOverridesFromJson(json); n++; }
-                catch (Exception e) { Debug.LogWarning("[SCULPT] Settings code binds ignored: " + e.Message); }
+                string before = GameInput.ExportOverrides(_input.Player);
+                try { if (json.Length > 0) GameInput.ImportOverrides(_input.Player, json); else _input.Player.RemoveAllBindingOverrides(); n++; }
+                catch (Exception e)
+                {
+                    // A bad binds part must not leave you with default binds: put yours back.
+                    Debug.LogWarning("[SCULPT] Settings code binds ignored: " + e.Message);
+                    _input.Player.RemoveAllBindingOverrides();
+                    if (before.Length > 0) GameInput.ImportOverrides(_input.Player, before);
+                }
             }
             if (map.TryGetValue(SlotsKey, out string slots) && slots.Length == Items.Slots)
             {

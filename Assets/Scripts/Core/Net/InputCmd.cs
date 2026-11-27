@@ -231,10 +231,15 @@ namespace Sculpt.Core.Net
             return c;
         }
 
-        /// <summary>The command the server assumes when one is missing: keep holding, but no new presses.</summary>
+        /// <summary>
+        /// The command the server assumes when one is missing: keep holding, but no new presses. The client's view of
+        /// others moves on a tick per tick, so the view tick keeps the same lag (a frozen one would rewind shots on
+        /// guessed ticks further back than anything the client drew).
+        /// </summary>
         public InputCmd AsRepeat(int tick)
         {
             InputCmd c = this;
+            c.ViewTick = ViewTick + (tick - Tick);
             c.Tick = tick;
             c.Move.JumpPressed = false;
             c.Move.CrouchPressed = false;

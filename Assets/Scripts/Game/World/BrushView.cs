@@ -261,8 +261,8 @@ namespace Sculpt.Game.World
                 go.AddComponent<MeshFilter>().sharedMesh = mesh;
                 var r = go.AddComponent<MeshRenderer>();
                 r.sharedMaterial = _mat;
-                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                r.receiveShadows = false;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; // scenery casts sun shadows when that setting is on (players never do)
+                r.receiveShadows = true;
                 _tileMeshes[key] = mesh;
                 _blocks.Add(go);
             }
@@ -417,6 +417,7 @@ namespace Sculpt.Game.World
                 return;
             }
             _mat = new Material(shader) { name = "Greybox (runtime)" };
+            _mat.SetFloat("_Scenery", 1f); // takes the picture settings (shadows, AO, lighting, atmosphere)
             _brushWorld = world;
             _linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
             _surface = Greybox;
@@ -451,6 +452,7 @@ namespace Sculpt.Game.World
             if (hills.V.Count > 0 && voxel != null)
             {
                 _groundMat = new Material(voxel) { name = "Hills (runtime)" };
+                _groundMat.SetFloat("_Scenery", 1f);
                 var mesh = new Mesh { name = "Hills", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
                 mesh.SetVertices(hills.V);
                 mesh.SetNormals(hills.N);
@@ -463,8 +465,8 @@ namespace Sculpt.Game.World
                 go.AddComponent<MeshFilter>().sharedMesh = mesh;
                 var r = go.AddComponent<MeshRenderer>();
                 r.sharedMaterial = _groundMat;
-                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                r.receiveShadows = false;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; // scenery casts sun shadows when that setting is on (players never do)
+                r.receiveShadows = true;
                 _blocks.Add(go);
             }
             foreach (var kv in byBlock)
@@ -480,8 +482,8 @@ namespace Sculpt.Game.World
                 go.AddComponent<MeshFilter>().sharedMesh = mesh;
                 var r = go.AddComponent<MeshRenderer>();
                 r.sharedMaterial = _mat;
-                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                r.receiveShadows = false;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; // scenery casts sun shadows when that setting is on (players never do)
+                r.receiveShadows = true;
                 _blocks.Add(go);
             }
         }

@@ -227,6 +227,98 @@ namespace Sculpt.Core.Tests.Settings
         }
 
         [Test]
+        public void Competitive_HasTheCleanPicture()
+        {
+            LookValues l = DisplayPresets.Of(VideoPreset.Competitive).Look;
+            Assert.That(l.NeedsPost, Is.False, "no post-processing pass at all");
+            Assert.That(l.NeedsDepth, Is.False);
+            Assert.That(l.NeedsHdr, Is.False);
+            Assert.That(l.Ao, Is.EqualTo(0));
+            Assert.That(l.Shadows, Is.EqualTo(0));
+            Assert.That(l.Lighting, Is.EqualTo(0));
+            Assert.That(l.Shafts, Is.False);
+            Assert.That(l.Sharpen, Is.EqualTo(0f));
+            Assert.That(l.Fog, Is.EqualTo(1), "the light haze the game always had");
+            Assert.That(l.SameAs(default(LookValues)), Is.False, "default struct is fog off, not the clean look");
+            Assert.That(l.SameAs(LookValues.Clean), Is.True);
+        }
+
+        [Test]
+        public void Quality_KeepsDepthOfFieldMotionBlurAndGrainOff()
+        {
+            LookValues l = DisplayPresets.Of(VideoPreset.Quality).Look;
+            Assert.That(l.Dof, Is.EqualTo(0));
+            Assert.That(l.MotionBlur, Is.EqualTo(0));
+            Assert.That(l.Grain, Is.EqualTo(0f));
+            Assert.That(l.Shadows, Is.EqualTo(2));
+            Assert.That(l.Ao, Is.EqualTo(2));
+            Assert.That(l.NeedsPost, Is.True);
+            Assert.That(l.PostAa, Is.Not.EqualTo(3), "TAA would switch the preset's MSAA off");
+        }
+
+        [Test]
+        public void ChangingAnyPictureSetting_MakesItCustom()
+        {
+            for (int field = 0; field < 14; field++)
+            {
+                VideoValues v = DisplayPresets.Of(VideoPreset.Competitive);
+                LookValues l = v.Look;
+                switch (field)
+                {
+                    case 0: l.PostAa = 1; break;
+                    case 1: l.Tonemap = 1; break;
+                    case 2: l.Grading = 2; break;
+                    case 3: l.Bloom = 1; break;
+                    case 4: l.Ao = 1; break;
+                    case 5: l.Shadows = 1; break;
+                    case 6: l.Lighting = 1; break;
+                    case 7: l.Fog = 2; break;
+                    case 8: l.Shafts = true; break;
+                    case 9: l.Dof = 1; break;
+                    case 10: l.MotionBlur = 1; break;
+                    case 11: l.Vignette = 0.3f; break;
+                    case 12: l.Grain = 0.3f; break;
+                    case 13: l.Sharpen = 0.3f; break;
+                }
+                v.Look = l;
+                Assert.That(DisplayPresets.Detect(v), Is.EqualTo(VideoPreset.Custom), "field " + field);
+            }
+        }
+
+        [Test]
+        public void LookClamp_FixesBadValues()
+        {
+            var l = new LookValues { PostAa = 9, Tonemap = -2, Grading = 5, Bloom = 7, Ao = -1, Shadows = 3, Lighting = 4, Fog = 9, Dof = 2, MotionBlur = 5, Vignette = float.NaN, Grain = 4f, Sharpen = -1f }.Clamped();
+            Assert.That(l.PostAa, Is.EqualTo(3));
+            Assert.That(l.Tonemap, Is.EqualTo(0));
+            Assert.That(l.Grading, Is.EqualTo(2));
+            Assert.That(l.Bloom, Is.EqualTo(2));
+            Assert.That(l.Ao, Is.EqualTo(0));
+            Assert.That(l.Shadows, Is.EqualTo(2));
+            Assert.That(l.Lighting, Is.EqualTo(1));
+            Assert.That(l.Fog, Is.EqualTo(2));
+            Assert.That(l.Dof, Is.EqualTo(1));
+            Assert.That(l.MotionBlur, Is.EqualTo(2));
+            Assert.That(l.Vignette, Is.EqualTo(0f));
+            Assert.That(l.Grain, Is.EqualTo(1f));
+            Assert.That(l.Sharpen, Is.EqualTo(0f));
+            // Names cover every legal value.
+            Assert.That(LookValues.PostAaNames.Length, Is.EqualTo(4));
+            Assert.That(LookValues.FogNames.Length, Is.EqualTo(3));
+        }
+
+        [Test]
+        public void Needs_FollowTheEffects()
+        {
+            Assert.That(new LookValues { Vignette = 0.2f }.NeedsPost, Is.True);
+            Assert.That(new LookValues { Sharpen = 0.5f, Shafts = true, Ao = 2, Shadows = 2 }.NeedsPost, Is.False, "our own passes and shader effects don't need URP's post pass");
+            Assert.That(new LookValues { PostAa = 3 }.NeedsDepth, Is.True);
+            Assert.That(new LookValues { PostAa = 2 }.NeedsDepth, Is.False);
+            Assert.That(new LookValues { Shafts = true }.NeedsHdr, Is.True);
+            Assert.That(new LookValues { Grading = 2 }.NeedsHdr, Is.False);
+        }
+
+        [Test]
         public void ThePresetsDiffer() =>
             Assert.That(DisplayPresets.Detect(DisplayPresets.Of(VideoPreset.Quality)), Is.Not.EqualTo(VideoPreset.Competitive));
     }
