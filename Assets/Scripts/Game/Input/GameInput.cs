@@ -164,15 +164,70 @@ namespace Sculpt.Game.Input
         {
             string json = PlayerPrefs.GetString(key, "");
             if (string.IsNullOrEmpty(json)) return;
-            try { map.LoadBindingOverridesFromJson(json); }
+            try { ImportOverrides(map, json); }
             catch (Exception e) { Debug.LogWarning("[SCULPT] Ignoring bad bind overrides: " + e.Message); }
         }
 
         public void SaveOverrides()
         {
-            PlayerPrefs.SetString(OverridesKey, Player.SaveBindingOverridesAsJson());
-            PlayerPrefs.SetString(DevOverridesKey, Dev.SaveBindingOverridesAsJson());
+            PlayerPrefs.SetString(OverridesKey, ExportOverrides(Player));
+            PlayerPrefs.SetString(DevOverridesKey, ExportOverrides(Dev));
             PlayerPrefs.Save();
+        }
+
+        // The Input System's override JSON names each binding by its id. Actions built from code get new random binding
+        // ids every run, so saved overrides (and settings codes from another PC) never found their binding again and
+        // every bind went back to default on restart. Saved JSON names a binding by action name and index instead
+        // (Core BindIds); ids are swapped in and out here. Same field names as the Input System's own JSON.
+        [Serializable] private sealed class OverrideJson { public string action, id, path, interactions, processors; }
+        [Serializable] private sealed class OverrideListJson { public System.Collections.Generic.List<OverrideJson> bindings = new System.Collections.Generic.List<OverrideJson>(); }
+
+        /// <summary>The map's bind overrides as JSON that loads again in another run or on another PC.</summary>
+        public static string ExportOverrides(InputActionMap map)
+        {
+            string json = map.SaveBindingOverridesAsJson();
+            if (string.IsNullOrEmpty(json)) return "";
+            OverrideListJson list = JsonUtility.FromJson<OverrideListJson>(json);
+            if (list == null || list.bindings == null) return json;
+            foreach (OverrideJson e in list.bindings)
+                foreach (InputAction a in map.actions)
+                {
+                    int i = IndexOfId(a, e.id);
+                    if (i >= 0) { e.id = Sculpt.Core.Settings.BindIds.Key(a.name, i); break; }
+                }
+            return JsonUtility.ToJson(list);
+        }
+
+        /// <summary>Replaces the map's bind overrides with the ones in <paramref name="json"/> (from <see cref="ExportOverrides"/>;
+        /// old id-named entries still load within the run that wrote them). Throws on JSON that isn't overrides.</summary>
+        public static void ImportOverrides(InputActionMap map, string json)
+        {
+            OverrideListJson list = JsonUtility.FromJson<OverrideListJson>(json);
+            if (list == null || list.bindings == null) throw new FormatException("not bind overrides");
+            var keep = new System.Collections.Generic.List<OverrideJson>();
+            foreach (OverrideJson e in list.bindings)
+            {
+                if (e == null) continue;
+                if (Sculpt.Core.Settings.BindIds.TryParse(e.id, out string name, out int index))
+                {
+                    InputAction a = null;
+                    foreach (InputAction x in map.actions) if (x.name == name) { a = x; break; }
+                    if (a == null || index >= a.bindings.Count || a.bindings[index].isComposite) continue; // a bind this build doesn't have
+                    e.id = a.bindings[index].id.ToString();
+                }
+                keep.Add(e);
+            }
+            list.bindings = keep;
+            map.RemoveAllBindingOverrides();
+            if (keep.Count > 0) map.LoadBindingOverridesFromJson(JsonUtility.ToJson(list));
+        }
+
+        private static int IndexOfId(InputAction a, string id)
+        {
+            if (string.IsNullOrEmpty(id)) return -1;
+            for (int i = 0; i < a.bindings.Count; i++)
+                if (string.Equals(a.bindings[i].id.ToString(), id, StringComparison.OrdinalIgnoreCase)) return i;
+            return -1;
         }
 
         public void Dispose()

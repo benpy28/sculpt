@@ -107,6 +107,9 @@ namespace Sculpt.Core.Net
         /// <summary>Pings fired since the server started (tests, dev HUD).</summary>
         public int PingsFired { get; private set; }
 
+        /// <summary>Enemy pairs the ping is tracking (tests).</summary>
+        public int PingPairCount => _pingPairs.Count;
+
         private static long PairKey(int a, int b) => a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;
 
         private PingPair PairOf(int a, int b)
@@ -124,6 +127,25 @@ namespace Sculpt.Core.Net
         public bool IsRevealed(int viewerId, int targetId)
         {
             return _pingPairs.TryGetValue(PairKey(viewerId, targetId), out PingPair p) && p.RevealEnd > Tick;
+        }
+
+        private readonly List<long> _pingGone = new List<long>(4);
+
+        /// <summary>A player left: any reveal of them or to them ends now (the other player is told), and their pairs go.</summary>
+        private void ForgetPing(ServerPlayer gone)
+        {
+            if (_pingPairs.Count == 0) return;
+            _pingGone.Clear();
+            foreach (KeyValuePair<long, PingPair> kv in _pingPairs)
+            {
+                PingPair p = kv.Value;
+                if (p.A != gone.Id && p.B != gone.Id) continue;
+                _pingGone.Add(kv.Key);
+                if (p.RevealEnd <= Tick) continue;
+                ServerPlayer other = FindById(p.A == gone.Id ? p.B : p.A);
+                if (other != null) SendReveal(other, gone, Tick);
+            }
+            foreach (long k in _pingGone) _pingPairs.Remove(k);
         }
 
         /// <summary>Damage dealt between two enemies is contact (called from <see cref="Hurt"/>).</summary>

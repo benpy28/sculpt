@@ -50,7 +50,7 @@ namespace Sculpt.Core.Replay
     /// <summary>Record kinds inside a segment's raw bytes (each is: kind byte, varint length, body). Unknown kinds are skipped.</summary>
     public static class ReplayRecord
     {
-        public const byte Key = 1, Frame = 2, Inputs = 3, Hash = 4, Join = 5, Leave = 6, Flag = 7, Locker = 8, Prefs = 9;
+        public const byte Key = 1, Frame = 2, Inputs = 3, Hash = 4, Join = 5, Leave = 6, Flag = 7, Locker = 8, Prefs = 9, BrSeed = 10;
     }
 
     /// <summary>
@@ -98,6 +98,7 @@ namespace Sculpt.Core.Replay
         {
             if (_open != null || _finished) throw new InvalidOperationException("Stream already started.");
             StartSegment(s, s.Tick + 1);
+            if (s.Br != null) OnBrSeed(s.Tick, s.Br.Seed);
         }
 
         internal void BeginTick(int tick)
@@ -168,6 +169,15 @@ namespace Sculpt.Core.Replay
             _rec.VarU((ulong)playerId);
             for (int k = 0; k < Items.Slots; k++) _rec.U8((byte)prefs[k]);
             _pending.Add(Bytes(ReplayRecord.Prefs, _rec));
+        }
+
+        /// <summary>The battle royale's seed (team deal, chest rolls, circles): a re-run of the inputs needs the same one.</summary>
+        internal void OnBrSeed(int tick, int seed)
+        {
+            _rec.Clear();
+            _rec.VarU((ulong)Math.Max(0, tick));
+            _rec.I32(seed);
+            _pending.Add(Bytes(ReplayRecord.BrSeed, _rec));
         }
 
         internal void OnLeave(int tick, int playerId)
@@ -321,8 +331,9 @@ namespace Sculpt.Core.Replay
         [ThreadStatic] private static ByteWriter _hashW;
 
         /// <summary>
-        /// FNV-1a over every player's exact simulated state (id order as the server keeps them) and every wall tile.
-        /// The same inputs on the same build must give the same hash on every tick.
+        /// FNV-1a over every player's exact simulated state (id order as the server keeps them: motor state, scores,
+        /// kill credit, sculpt bar), the match (phase, winner, storm), every ground item and every wall tile (with each
+        /// cell's health once it has changed). The same inputs on the same build must give the same hash on every tick.
         /// </summary>
         public static ulong StateHash(NetServer s)
         {
@@ -334,6 +345,22 @@ namespace Sculpt.Core.Replay
                 w.I32(p.Id);
                 w.I32(p.Team);
                 Protocol.WriteMotor(w, p.State);
+                w.I32(p.Kills); w.I32(p.Deaths); w.I32(p.MatchKills); w.I32(p.MatchDeaths);
+                w.I32(p.LastHurtBy); w.I32(p.LastHurtTick);
+                SculptBar bar = s.BarOf(p.Id);
+                w.I32(bar.Value); w.I32(bar.LastSpendTick);
+            }
+            MatchState m = s.Match;
+            w.U8((byte)m.Phase); w.I32(m.PhaseStartTick); w.I32(m.PhaseEndTick);
+            w.I32(m.WinnerTeam); w.I32(m.AliveTeams); w.I32(m.AlivePlayers);
+            StormState st = m.Storm;
+            w.I32(st.Phase); w.I32(st.ShrinkStart); w.I32(st.ShrinkEnd); w.I32(st.Dps);
+            w.F64(st.FromX); w.F64(st.FromZ); w.F64(st.FromRadius); w.F64(st.ToX); w.F64(st.ToZ); w.F64(st.ToRadius);
+            w.I32(s.Items.NextId);
+            foreach (GroundItem g in s.Items.All)
+            {
+                w.I32(g.Id); w.U8((byte)g.Kind); w.I32(g.Count); w.I32(g.AmmoUsed); w.U8((byte)g.Rarity);
+                w.Vec(g.Position); w.I32(g.DroppedBy); w.I32(g.DroppedTick);
             }
             ulong h = 14695981039346656037UL;
             byte[] b = w.Buffer;
@@ -346,6 +373,8 @@ namespace Sculpt.Core.Replay
                     h ^= (ulong)(uint)((int)t.State | (t.Health << 4)); h *= 1099511628211UL;
                     h ^= t.Open; h *= 1099511628211UL;
                     h ^= t.Patch ^ (t.Steel << 1); h *= 1099511628211UL;
+                    if (t.Changed && t.State != TileState.Broken && walls.HasCells(i))
+                        for (int c = 0; c < Brush.CellCount; c++) { h ^= (ulong)walls.CellHealth(i, c); h *= 1099511628211UL; }
                 }
             return h;
         }

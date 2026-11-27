@@ -92,18 +92,20 @@ namespace Sculpt.Game.Audio
         /// <param name="sourceRadius">How deep in a solid the sound sits (doors and wall tiles sound from their middle).</param>
         public static void Play(AudioClip clip, Vector3 at, float volume = 1f, float pitch = 1f, bool spatial = true,
                                 float minDistance = 2f, float maxDistance = 45f, bool logarithmic = false, int priority = 128, float delay = 0f,
-                                bool route = true, float sourceRadius = 0.05f, SoundBus bus = SoundBus.World, SoundCaption caption = SoundCaption.None)
+                                bool route = true, float sourceRadius = 0.05f, SoundBus bus = SoundBus.World, SoundCaption caption = SoundCaption.None,
+                                float cutoffHz = 22000f)
         {
             if (clip == null) return;
-            float cutoff = 22000f;
+            float cutoff = cutoffHz; // an unrouted sound may bring its own low-pass (a routed one gets the route's)
+            bool muffled = false;
             volume *= SoundMix.Gain(bus);
             if (spatial && route)
             {
-                if (!SoundRouter.Place(ref at, maxDistance, sourceRadius, out float gain, out cutoff)) return;
+                if (!SoundRouter.Place(ref at, maxDistance, sourceRadius, out float gain, out cutoff, out muffled)) return;
                 volume *= gain;
             }
             if (volume <= 0.0001f) return; // muted bus: no voice used, and no caption for a sound you turned off
-            if (caption != SoundCaption.None && spatial) SoundCaptions.Post(caption, at, cutoff < (float)SoundRouter.Config.OpenCutoffHz - 1f, volume);
+            if (caption != SoundCaption.None && spatial) SoundCaptions.Post(caption, at, muffled, volume);
             AudioSource s = Voice();
             s.spread = spatial ? SoundMix.Spread : 0f;
             SoundRouter.ApplyCutoff(_filters[_voice], spatial ? cutoff : 22000f);

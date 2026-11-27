@@ -28,7 +28,8 @@ namespace Sculpt.Game.UI
         // Text rebuilt only when what it says changes.
         private readonly System.Collections.Generic.List<MatchScore> _top = new System.Collections.Generic.List<MatchScore>();
         private string _topText = "", _timeText = "", _whoText = "", _hpText = "", _itemText = "", _scoreText = "", _clockText = "", _hint;
-        private int _topKey = -1, _timeKey = -1, _whoKey = -1, _hpKey = -1, _itemKey = -1, _scoreKey = -1, _clockKey = -1;
+        private long _whoKey = -1;
+        private int _topKey = -1, _timeKey = -1, _hpKey = -1, _itemKey = -1, _scoreKey = -1, _clockKey = -1;
 
         public void Init(LocalPlayer player, NetSession session, SpectatorCamera cam, GameInput input)
         {
@@ -168,7 +169,9 @@ namespace Sculpt.Game.UI
             // The watched player.
             if (hasTarget)
             {
-                int whoKey = info.Id * 64 + info.Team * 8 + (int)_cam.Mode * 2 + (info.Bot ? 1 : 0);
+                // Packed with room for every field (a battle royale has teams up to 32: "Team * 8" ran into the id bits,
+                // so P1 on team 9 and P2 on team 1 had the same key and the name didn't change when you switched).
+                long whoKey = ((long)info.Id << 24) | ((long)(info.Team & 0xFFFF) << 8) | ((long)_cam.Mode << 1) | (info.Bot ? 1L : 0L);
                 if (whoKey != _whoKey)
                 {
                     _whoKey = whoKey;

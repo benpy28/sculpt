@@ -81,7 +81,7 @@ namespace Sculpt.Core.Audio
         // Persistent caches, cleared near any change of the world (Invalidate).
         private readonly Dictionary<long, bool>[] _faces = { new Dictionary<long, bool>(), new Dictionary<long, bool>(), new Dictionary<long, bool>() };
         private readonly Dictionary<long, bool> _chunkEmpty = new Dictionary<long, bool>();
-        private readonly Dictionary<(long, long, int), CachedRoute> _routes = new Dictionary<(long, long, int), CachedRoute>();
+        private readonly Dictionary<(long, long, long), CachedRoute> _routes = new Dictionary<(long, long, long), CachedRoute>();
 
         // Search scratch (reused, never shrunk).
         private readonly List<Vec3d> _chain = new List<Vec3d>();
@@ -139,8 +139,10 @@ namespace Sculpt.Core.Audio
             if (dist < 1e-6) { r.Way = SoundWay.Direct; r.Apparent = source; r.ArrivesFrom = new Vec3d(0, 0, 1); return r; }
 
             double rc = Config.RouteCacheCell;
-            (long, long, int) key = (KeyOf(Cell(listener.X), Cell(listener.Y), Cell(listener.Z)),
-                                     KeyOf(Cell(source.X), Cell(source.Y), Cell(source.Z)), (int)Math.Ceiling(range * 8 + sourceRadius * 64));
+            // Range to 1/8 m and source radius to 1/64 m, each in its own half of the third key (never folded together).
+            (long, long, long) key = (KeyOf(Cell(listener.X), Cell(listener.Y), Cell(listener.Z)),
+                                      KeyOf(Cell(source.X), Cell(source.Y), Cell(source.Z)),
+                                      ((long)Math.Ceiling(range * 8) << 32) | (uint)(int)Math.Ceiling(sourceRadius * 64));
             if (now >= 0 && _routes.TryGetValue(key, out CachedRoute c) && now - c.Time <= Config.RouteCacheSeconds && now >= c.Time)
                 return Reposition(c.Route, listener, source);
 
@@ -180,8 +182,10 @@ namespace Sculpt.Core.Audio
             double dist = d.Length;
             Vec3d dir = d / dist;
             var r = new SoundRoute { DirectDistance = dist, CutoffHz = Config.OpenCutoffHz };
+            // The ears get the same small slack as a sound in the air, so a route is the same both ways round.
+            double ls = Math.Min(slack, EarSlack);
 
-            if (Clear(listener, source, slack))
+            if (ClearBoth(listener, source, ls, slack))
             {
                 r.Way = SoundWay.Direct;
                 r.Apparent = source;
@@ -191,7 +195,7 @@ namespace Sculpt.Core.Audio
             }
 
             // Through the walls on the straight line.
-            r.ThroughPossible = Through(listener, dir, Math.Max(0, dist - slack), out int walls, out double solid);
+            r.ThroughPossible = Through(listener + dir * ls, dir, Math.Max(0, dist - slack - ls), out int walls, out double solid);
             r.Walls = walls;
             r.SolidMetres = solid;
             r.ThroughDb = -(Config.WallLossDb * walls + Config.SolidLossDbPerMetre * solid);
@@ -201,7 +205,7 @@ namespace Sculpt.Core.Audio
             double aroundLen = 0;
             Vec3d firstCorner = source;
             int bends = 0;
-            r.AroundFound = allowSearch && Around(listener, source, range, slack, out aroundLen, out firstCorner, out bends);
+            r.AroundFound = allowSearch && Around(listener, source, range, ls, slack, out aroundLen, out firstCorner, out bends);
             if (r.AroundFound)
             {
                 r.AroundDistance = aroundLen;
@@ -277,6 +281,23 @@ namespace Sculpt.Core.Audio
             cutoffHz = c.OpenCutoffHz + (c.BehindCutoffHz - c.OpenCutoffHz) * behind;
         }
 
+        /// <summary>
+        /// How a routed sound is played at the ears: the route's gain and top end, plus the head shadow scaled by the
+        /// player's front/back cue setting (<paramref name="shadowStrength"/>, 1 = as designed). <paramref name="muffled"/>
+        /// says whether the route itself dulled it (through walls, or round a corner), never the head shadow: a sound with
+        /// a clear line from behind you is not muffled, only darker. Pure.
+        /// </summary>
+        public static void Hear(in SoundRoute r, Vec3d forward, double shadowStrength, SoundConfig c, out double gainDb, out double cutoffHz, out bool muffled)
+        {
+            HeadShadow(forward, r.ArrivesFrom, c, out double shadowDb, out double shadowHz);
+            double open = c.OpenCutoffHz;
+            shadowDb *= shadowStrength;
+            shadowHz = Math.Max(500, Math.Min(open, open - (open - shadowHz) * shadowStrength));
+            gainDb = r.GainDb + shadowDb;
+            cutoffHz = Math.Min(r.CutoffHz, shadowHz);
+            muffled = r.Way == SoundWay.Through || (r.Way == SoundWay.Around && r.CutoffHz < open);
+        }
+
         /// <summary>Relative loudness used to compare ways: linear gain over distance (inverse distance law).</summary>
         public static double Loud(double gainDb, double distance, double reference) => Math.Pow(10, gainDb / 20) / Math.Max(distance, reference);
 
@@ -302,8 +323,14 @@ namespace Sculpt.Core.Audio
                 {
                     s += step;
                     if (t + s >= left) { s = left - t; break; } // the source is inside or right behind the solid
-                    if (!Inside(p + dir * (t + s))) break;
-                    if (solid + s > Config.MaxSolidMetres) return false;
+                    if (!Inside(p + dir * (t + s)))
+                    {
+                        // Out: the solid ended somewhere in the last step. Find its far face exactly (a short ray back).
+                        TerrainHit back = World.Raycast(p + dir * (t + s), -dir, step);
+                        if (back.Hit) s -= back.Distance;
+                        break;
+                    }
+                    if (solid + s - step > Config.MaxSolidMetres) return false;
                 }
                 solid += s;
                 if (solid > Config.MaxSolidMetres) return false;
@@ -332,7 +359,7 @@ namespace Sculpt.Core.Audio
         /// sealed room on either side runs out of cells quickly, so "no way round" costs little. The meeting cell joins
         /// the two halves; the chain is then pulled tight into straight legs.
         /// </summary>
-        private bool Around(Vec3d listener, Vec3d source, double range, double slack, out double length, out Vec3d firstCorner, out int bends)
+        private bool Around(Vec3d listener, Vec3d source, double range, double listenerSlack, double slack, out double length, out Vec3d firstCorner, out int bends)
         {
             length = 0;
             firstCorner = source;
@@ -346,15 +373,19 @@ namespace Sculpt.Core.Audio
             a.Target = source;
             b.Target = listener;
             int expansions = 0, budget = Config.MaxNewFaceTests;
-            Seed(a, listener, 0);
+            Seed(a, listener, listenerSlack);
             Seed(b, source, slack);
             long meet = long.MinValue;
+            // Symmetry: the search, its ties and the pull-tight run in an order fixed by the two points, not by which one
+            // is listening, so A hears B exactly as B hears A.
+            bool listenerFirst = Before(listener, source);
+            Side first = listenerFirst ? a : b, second = listenerFirst ? b : a;
             if (a.Open.Count > 0 && b.Open.Count > 0)
             {
                 while (a.Open.Count > 0 && b.Open.Count > 0 && expansions < Config.MaxExpansions)
                 {
                     // Grow the smaller frontier: a sealed side empties fast and ends the search.
-                    Side s = a.Open.Count <= b.Open.Count ? a : b;
+                    Side s = first.Open.Count <= second.Open.Count ? first : second;
                     Side o = s == a ? b : a;
                     long k = Expand(s, o, bound, ref budget);
                     expansions++;
@@ -380,24 +411,87 @@ namespace Sculpt.Core.Audio
             }
             _chain.Add(source);
 
-            int last = _chain.Count - 1, at = 0;
-            bool first = true;
-            while (at < last)
+            // Pulled tight: first from the end that comes first (see above), then back from the other end over the
+            // corners left, and so on until no corner goes. A single greedy pull leaves the far end of the route loose
+            // (and which end that is would depend on who listens). Every line is cast from the listener's side toward the
+            // source's side, with the source's slack at the source.
+            List<Vec3d> pts = _chain;
+            bool fromStart = listenerFirst;
+            for (int pass = 0; pass < 6; pass++)
             {
-                int j = at + 1;
-                while (j + 1 <= last && Clear(_chain[at], _chain[j + 1], j + 1 == last ? slack : 0)) j++;
-                length += (_chain[j] - _chain[at]).Length;
-                if (j != last)
-                {
-                    bends++;
-                    if (first) firstCorner = _chain[j];
-                }
-                first = false;
-                at = j;
+                List<Vec3d> next = pts == _chain ? _pulled : (pts == _pulled ? _pulled2 : _pulled);
+                PullOnce(pts, next, fromStart, listenerSlack, slack, listenerFirst);
+                bool same = next.Count == pts.Count;
+                pts = next;
+                fromStart = !fromStart;
+                if (same && pass > 0) break;
             }
-            if (bends == 0) firstCorner = source;
+            for (int i = 1; i < pts.Count; i++) length += (pts[i] - pts[i - 1]).Length;
+            bends = pts.Count - 2;
+            firstCorner = bends > 0 ? pts[1] : source;
             return length < range;
         }
+
+        private readonly List<Vec3d> _pulled = new List<Vec3d>(), _pulled2 = new List<Vec3d>();
+
+        /// <summary>One greedy pull of <paramref name="p"/> (listener first, source last) into <paramref name="into"/>:
+        /// from one end, each point is joined straight to the farthest point it can see.</summary>
+        private void PullOnce(List<Vec3d> p, List<Vec3d> into, bool fromStart, double listenerSlack, double slack, bool listenerFirst)
+        {
+            into.Clear();
+            int last = p.Count - 1;
+            if (fromStart)
+            {
+                int at = 0;
+                into.Add(p[0]);
+                while (at < last)
+                {
+                    int j = at + 1;
+                    while (j + 1 <= last && Link(p[at], p[j + 1], at == 0 ? listenerSlack : 0, j + 1 == last ? slack : 0, listenerFirst)) j++;
+                    into.Add(p[j]);
+                    at = j;
+                }
+            }
+            else
+            {
+                int at = last;
+                into.Add(p[last]);
+                while (at > 0)
+                {
+                    int j = at - 1;
+                    while (j - 1 >= 0 && Link(p[j - 1], p[at], j - 1 == 0 ? listenerSlack : 0, at == last ? slack : 0, listenerFirst)) j--;
+                    into.Add(p[j]);
+                    at = j;
+                }
+                into.Reverse();
+            }
+        }
+
+        /// <summary>Clear line between a point on the listener's side and one on the source's side (solid allowed within
+        /// each end's slack), always cast from the end that comes first, so the answer can't depend on which way round the
+        /// route is asked for.</summary>
+        private bool Link(Vec3d nearListener, Vec3d nearSource, double listenerSlack, double sourceSlack, bool listenerFirst) =>
+            listenerFirst ? ClearBoth(nearListener, nearSource, listenerSlack, sourceSlack) : ClearBoth(nearSource, nearListener, sourceSlack, listenerSlack);
+
+        /// <summary>Clear straight line from <paramref name="a"/> to <paramref name="b"/>, except within
+        /// <paramref name="slackA"/> of a and <paramref name="slackB"/> of b.</summary>
+        private bool ClearBoth(Vec3d a, Vec3d b, double slackA, double slackB)
+        {
+            if (slackA <= 0) return Clear(a, b, slackB);
+            Vec3d d = b - a;
+            double len = d.Length;
+            if (len <= slackA + slackB) return true;
+            Vec3d dir = d / len;
+            double rest = len - slackA;
+            TerrainHit h = World.Raycast(a + dir * slackA, dir, rest);
+            return !h.Hit || h.Distance >= rest - slackB;
+        }
+
+        /// <summary>How far into a solid the ears may be and still hear straight out (as for a sound in the air).</summary>
+        private const double EarSlack = 0.05;
+
+        /// <summary>A fixed order on points (x, then y, then z), so a route doesn't depend on which end is listening.</summary>
+        private static bool Before(Vec3d p, Vec3d q) => p.X != q.X ? p.X < q.X : p.Y != q.Y ? p.Y < q.Y : p.Z <= q.Z;
 
         /// <summary>Starts a side at the up to eight cell centres round <paramref name="p"/> that it can see.</summary>
         private void Seed(Side s, Vec3d p, double slack)

@@ -85,6 +85,7 @@ namespace Sculpt.Core.Replay
             var leaves = new List<KeyValuePair<int, int>>();
             var lockers = new List<(int Tick, int Id, Item Gun)>();
             var prefs = new List<(int Tick, int Id, SlotPrefs Prefs)>();
+            int? brSeed = null;
             for (int i = 0; i < file.Segments.Count; i++)
             {
                 byte[] raw = file.SegmentBytes(i);
@@ -129,6 +130,10 @@ namespace Sculpt.Core.Replay
                             prefs.Add((pt, pid, sp));
                             break;
                         }
+                        case ReplayRecord.BrSeed:
+                            r.VarU();
+                            brSeed = r.I32();
+                            break;
                         case ReplayRecord.Leave:
                             leaves.Add(new KeyValuePair<int, int>((int)r.VarU(), (int)r.VarU()));
                             break;
@@ -148,6 +153,12 @@ namespace Sculpt.Core.Replay
             int start = file.FirstTick - 1;
             if (s.Tick != start) { check.Problem = $"the fresh server starts at tick {s.Tick}, the recording at {start}"; return check; }
             if (s.Players.Count != 0) { check.Problem = "the fresh server already has players"; return check; }
+            if (brSeed.HasValue)
+            {
+                // The recording server's own seed (the Game picks a new one per run), not whatever the fresh server got.
+                if (s.Br == null) { check.Problem = "the recording is a battle royale, the fresh server isn't"; return check; }
+                s.Br.Seed = brSeed.Value;
+            }
             int ji = 0, li = 0, ki = 0, pi = 0;
             var byId = new Dictionary<int, ServerPlayer>();
             for (int t = file.FirstTick; t <= file.LastTick; t++)
