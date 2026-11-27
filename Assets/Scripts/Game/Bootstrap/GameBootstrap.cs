@@ -303,7 +303,7 @@ namespace Sculpt.Game.Bootstrap
                 cover = new GroundCover(_grid, paved);
             }
             Mark("cover");
-            _world.Init(_grid, sculptConfig, mapInfo, cover);
+            _world.Init(_grid, sculptConfig, mapInfo, cover, brInfo != null ? BrNature.KindAt : (Func<Int3, byte>)null); // the battle royale plains
             Mark("world init");
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);

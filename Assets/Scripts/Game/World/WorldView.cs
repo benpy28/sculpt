@@ -64,15 +64,20 @@ namespace Sculpt.Game.World
         }
 
         private GrassField _grass;
+        private bool _fixedGround;
         private LocalPlayer _localPlayer;
         private NetSession _session;
         private readonly List<Vector3> _actors = new List<Vector3>();
         private readonly List<int> _remoteIds = new List<int>();
 
         /// <summary>map: optional, for trees (anchors drawn as bark and leaves).</summary>
-        public void Init(SubGrid grid, SculptConfig sculpt, MapInfo map = null, GroundCover cover = null)
+        /// <param name="decorOf">Optional: how props on the ground are drawn (the battle royale plains), see
+        /// <see cref="ChunkMesher.DecorOf"/>. With it the ground is never edited in play, so chunks are drawn in groups
+        /// even though the props give them their own sub-cells.</param>
+        public void Init(SubGrid grid, SculptConfig sculpt, MapInfo map = null, GroundCover cover = null, System.Func<Int3, byte> decorOf = null)
         {
-            _mesher = new ChunkMesher { Cover = cover };
+            _mesher = new ChunkMesher { Cover = cover, DecorOf = decorOf };
+            _fixedGround = decorOf != null;
             if (map != null && map.Trees.Count > 0)
             {
                 _mesher.Decor = new Dictionary<Int3, byte>();
@@ -110,7 +115,7 @@ namespace Sculpt.Game.World
             {
                 if (_chunkObjects != null) foreach (var go in _chunkObjects) Destroy(go);
                 if (_meshes != null) foreach (var m in _meshes) Destroy(m);
-                _group = grid.AllocatedChunks == 0 ? 4 : 1;
+                _group = grid.AllocatedChunks == 0 || _fixedGround ? 4 : 1;
                 _groupsX = (grid.ChunksX + _group - 1) / _group;
                 _groupsZ = (grid.ChunksZ + _group - 1) / _group;
                 int groups = _groupsX * _groupsZ * (_group == 1 ? grid.ChunksY : 1);
@@ -142,7 +147,9 @@ namespace Sculpt.Game.World
             grid.MarkAllDirty();
             var sw = System.Diagnostics.Stopwatch.StartNew();
             RebuildDirty();
-            Debug.Log($"[SCULPT] Ground meshed: {grid.ChunkCount} chunks in {sw.ElapsedMilliseconds} ms.");
+            long tris = 0, verts = 0;
+            if (_meshes != null) foreach (Mesh m in _meshes) if (m != null) { verts += m.vertexCount; tris += m.GetIndexCount(0) / 3; }
+            Debug.Log($"[SCULPT] Ground meshed: {grid.ChunkCount} chunks in {sw.ElapsedMilliseconds} ms, {tris / 1000} thousand triangles, {verts / 1000} thousand vertices (about {verts * 64 / (1024 * 1024)} MB).");
             if (Debug.isDebugBuild && System.Array.Exists(System.Environment.GetCommandLineArgs(), a => a == "-meshcheck"))
             {
                 int bad = 0, done = 0;
@@ -207,6 +214,12 @@ namespace Sculpt.Game.World
                 _grass?.Rebuild(i);
             }
             float sub = (float)SubGrid.SubSize;
+            if (_dirtyGroups.Count >= 64)
+            {
+                // A whole map at load (or a reload): fill the groups on every core, upload here.
+                BuildGroupsInParallel(sub);
+                return _dirty.Count;
+            }
             foreach (int gi in _dirtyGroups)
             {
                 Int3 g0 = new Int3((gi % _groupsX) * _group, 0, (gi / _groupsX) * _group);
@@ -225,6 +238,56 @@ namespace Sculpt.Game.World
                 _mesher.BuildGroup(_grid, _groupChunks, _groupOffsets, _meshes[gi]);
             }
             return _dirty.Count;
+        }
+
+        private void BuildGroupsInParallel(float sub)
+        {
+            var groups = new List<int>(_dirtyGroups);
+            int workers = Mathf.Max(1, System.Environment.ProcessorCount - 1);
+            var twins = new ChunkMesher[workers];
+            for (int w = 0; w < workers; w++) twins[w] = _mesher.Twin();
+            const int Batch = 256;
+            var filled = new ChunkMesher.Filled[Batch];
+            for (int start = 0; start < groups.Count; start += Batch)
+            {
+                int count = Mathf.Min(Batch, groups.Count - start);
+                int next = -1;
+                var tasks = new System.Threading.Tasks.Task[workers];
+                for (int w = 0; w < workers; w++)
+                {
+                    ChunkMesher m = twins[w];
+                    tasks[w] = System.Threading.Tasks.Task.Run(() =>
+                    {
+                        var chunks = new List<Int3>();
+                        var offsets = new List<Vector3>();
+                        int k;
+                        while ((k = System.Threading.Interlocked.Increment(ref next)) < count)
+                        {
+                            int gi = groups[start + k];
+                            Int3 g0 = new Int3((gi % _groupsX) * _group, 0, (gi / _groupsX) * _group);
+                            Vector3 origin = _grid.ChunkOrigin(g0).ToUnity() * sub;
+                            chunks.Clear();
+                            offsets.Clear();
+                            for (int cy = 0; cy < _grid.ChunksY; cy++)
+                                for (int dz = 0; dz < _group; dz++)
+                                    for (int dx = 0; dx < _group; dx++)
+                                    {
+                                        var cc = new Int3(g0.X + dx, cy, g0.Z + dz);
+                                        if (cc.X >= _grid.ChunksX || cc.Z >= _grid.ChunksZ) continue;
+                                        chunks.Add(cc);
+                                        offsets.Add(_grid.ChunkOrigin(cc).ToUnity() * sub - origin);
+                                    }
+                            filled[k] = m.FillGroup(_grid, chunks, offsets);
+                        }
+                    });
+                }
+                System.Threading.Tasks.Task.WaitAll(tasks);
+                for (int k = 0; k < count; k++)
+                {
+                    ChunkMesher.Upload(filled[k], _meshes[groups[start + k]]);
+                    filled[k] = null;
+                }
+            }
         }
 
         /// <summary>The team tint is baked into vertex colours; re-mesh tinted pieces a few times a second while it fades.</summary>
