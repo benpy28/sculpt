@@ -39,6 +39,8 @@ namespace Sculpt.Core
             public double X, Z;
             /// <summary>Footprint radius (metres): nothing else within it.</summary>
             public double Radius;
+            /// <summary>Its sub-cells: <see cref="Plan.Cells"/>[CellStart .. CellStart + CellCount).</summary>
+            public int CellStart, CellCount;
         }
 
         public sealed class Plan
@@ -149,7 +151,12 @@ namespace Sculpt.Core
                 return true;
             }
 
-            void Add(string kind, double x, double z, double r) => placed.Add(new Prop { Kind = kind, X = x, Z = z, Radius = r });
+            int cellsDone = 0;
+            void Add(string kind, double x, double z, double r)
+            {
+                placed.Add(new Prop { Kind = kind, X = x, Z = z, Radius = r, CellStart = cellsDone, CellCount = plan.Cells.Count - cellsDone });
+                cellsDone = plan.Cells.Count;
+            }
 
             double uMin = 20, uMax = BrMap.RimStart - 4;
             double RandU() => uMin + rng.Unit() * (uMax - uMin);
@@ -200,7 +207,7 @@ namespace Sculpt.Core
             {
                 double u = RandU(), v = rng.Unit() * u;
                 double x = c + u, z = c + v;
-                if (!Free(x, z, 3.2)) continue;
+                if (!Free(x, z, 5.0)) continue;
                 int count = 1 + rng.Range(0, 3);
                 int s0 = rng.Next();
                 for (int i = 0; i < count; i++)
@@ -208,7 +215,7 @@ namespace Sculpt.Core
                     double a = Hash01(s0, i, 1) * Math.PI * 2, d = i == 0 ? 0 : 1.6 + Hash01(s0, i, 2) * 0.8;
                     Rock(plan, x + Math.Cos(a) * d, z + Math.Sin(a) * d, Hash(s0, i, 3));
                 }
-                Add("rocks", x, z, 3.2);
+                Add("rocks", x, z, 5.0);
                 k++;
             }
             // Bushes along the way: single, low, solid.
@@ -221,20 +228,28 @@ namespace Sculpt.Core
                 Add("bush", c + u, c + v, 1.6);
                 k++;
             }
-            plan.Props.AddRange(placed);
-            // One list, no repeats (lobes overlap).
-            var seen = new HashSet<long>();
+            // One list, no repeats within a prop (lobes overlap; props never touch each other), wood winning over leaves.
             var unique = new List<Cell>(plan.Cells.Count);
-            foreach (Cell cell in plan.Cells)
+            var at = new Dictionary<long, int>();
+            for (int k = 0; k < placed.Count; k++)
             {
-                long key = ((long)cell.X << 32) | ((long)(cell.Y + 1024) << 16) | (uint)cell.Z;
-                if (seen.Add(key)) unique.Add(cell);
-                else if (cell.Kind == KindWood) // wood wins over leaves where they meet
-                    for (int i = unique.Count - 1; i >= 0; i--)
-                        if (unique[i].X == cell.X && unique[i].Y == cell.Y && unique[i].Z == cell.Z) { var w = unique[i]; w.Kind = KindWood; unique[i] = w; break; }
+                Prop p = placed[k];
+                at.Clear();
+                int start = unique.Count;
+                for (int i = p.CellStart; i < p.CellStart + p.CellCount; i++)
+                {
+                    Cell cell = plan.Cells[i];
+                    long key = ((long)cell.X << 32) | ((long)(cell.Y + 1024) << 16) | (uint)cell.Z;
+                    if (at.TryGetValue(key, out int j)) { if (cell.Kind == KindWood) { Cell w = unique[j]; w.Kind = KindWood; unique[j] = w; } }
+                    else { at[key] = unique.Count; unique.Add(cell); }
+                }
+                p.CellStart = start;
+                p.CellCount = unique.Count - start;
+                placed[k] = p;
             }
             plan.Cells.Clear();
             plan.Cells.AddRange(unique);
+            plan.Props.AddRange(placed);
             return plan;
         }
 

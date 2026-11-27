@@ -406,6 +406,9 @@ namespace Sculpt.Core.Net
             if (serverTick < _clockHoldUntilServerTick) { Dilation = 0; return; }
 
             int err = lead - Config.TargetLeadTicks;
+            // The report saturates at 127 ticks: then we are at least as far ahead as our own tick is past the server's
+            // (taking the round trip as nothing errs toward behind, which the next report corrects at once).
+            if (lead >= sbyte.MaxValue) err = Math.Max(err, Tick - serverTick - Config.TargetLeadTicks);
             // Late inputs (lead below zero) cost a correction on every snapshot, so jump straight to the target
             // however small the error; slewing at a few percent would take seconds (ISSUE-5).
             if (Math.Abs(err) > Config.ClockSnapTicks || lead < 0)
@@ -416,7 +419,8 @@ namespace Sculpt.Core.Net
                 ClockSnaps++;
                 // The server's window still holds leads from before the snap. Commands sent after it reach the server
                 // about one round trip after serverTick; wait until those fill the whole window.
-                int rtt = Math.Max(0, Tick - serverTick) + Math.Max(0, -err);
+                // (Our tick less the lead we just gave back: far ahead, the old figure held the clock for seconds.)
+                int rtt = Math.Max(0, Tick - serverTick - Math.Max(0, err)) + Math.Max(0, -err);
                 _clockHoldUntilServerTick = serverTick + rtt + Config.LeadWindowTicks + rtt + 4;
                 return;
             }

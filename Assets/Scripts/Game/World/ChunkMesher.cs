@@ -67,6 +67,13 @@ namespace Sculpt.Game.World
         /// </summary>
         public System.Func<Int3, byte> DecorOf;
 
+        /// <summary>Leave out faces of anchor sub-cells (the battle royale's props are drawn as their own meshes, one per
+        /// prop of the design eighth shared by its eight twins: in the ground's chunks they were 6 million triangles).</summary>
+        public bool SkipAnchors;
+        /// <summary>Draw only faces of anchor sub-cells (a prop's own mesh; its ground is in the scratch grid only so the
+        /// faces where it meets the ground come out the same).</summary>
+        public bool AnchorsOnly;
+
         public static readonly Color Boulder = new Color(0.64f, 0.62f, 0.57f);
 
         /// <summary>Optional: natural ground drawn as concrete instead of meadow (building ground floors). Visual only.</summary>
@@ -226,7 +233,20 @@ namespace Sculpt.Game.World
             // air there is nothing to draw in them, and only the grid-top layer (if this chunk has it) is left. On the
             // flat duel ground that leaves one layer in sixteen; loading the map got about a second faster.
             int y0 = 0;
-            if (NoSurface(g, o))
+            if (SkipAnchors && FlatFastPath && g.MinY < 0)
+            {
+                // The battle royale: flat ground with props on it (drawn elsewhere). Only the ground's top is drawn here:
+                // it is the bottom dual layer of the chunks just over the ground, as flat runs round the props' feet.
+                if (o.Y > 0 || o.Y + n <= 0) return; // all air and props above, all solid below
+                var below = new Int3(chunkCoord.X, chunkCoord.Y - 1, chunkCoord.Z);
+                Vector3 keep = _offset;
+                _offset = keep - new Vector3(0, n * s, 0);
+                bool flat = FlatTop(g, below, g.ChunkOrigin(below), holes: true);
+                _offset = keep;
+                if (flat) return;
+                ny = 1; // the map's edge: the kernel, ground layer only
+            }
+            else if (NoSurface(g, o))
             {
                 if (ny == n) return;
                 if (FlatFastPath && FlatTop(g, chunkCoord, o)) return;
@@ -272,20 +292,24 @@ namespace Sculpt.Game.World
         /// colour): the same picture with a sixteenth of the vertices, and far faster to build (the 614 m map has 16
         /// thousand ground chunks). False: not plain here, use the kernel.
         /// </summary>
-        private bool FlatTop(SubGrid g, Int3 chunk, Int3 o)
+        private bool FlatTop(SubGrid g, Int3 chunk, Int3 o, bool holes = false)
         {
             const int n = SubGrid.ChunkSize;
             if (chunk.X <= 0 || chunk.Z <= 0 || chunk.X >= g.ChunksX - 1 || chunk.Z >= g.ChunksZ - 1) return false; // the edge has walls
             if (g.ChunkSolidity(chunk.X, chunk.Y, chunk.Z) != 1 || Hidden != null && Hidden.Count > 0 || OnlyId != 0 || Decor != null) return false;
             const float h = (float)TerrainShape.H, sz = (float)SubGrid.SubSize;
+            const float s = (float)SubGrid.SubSize;
             int vy = o.Y + n;
-            int cfg0 = TerrainShape.ConfigAt(g, o.X, vy, o.Z);
+            // With holes (props standing on the ground): the plain ground's own config, whatever stands at the corner.
+            const int Plain = 1 | 2 | 16 | 32; // the four sub-cells under the lattice vertex solid, the four over it empty
+            int cfg0 = holes ? Plain : TerrainShape.ConfigAt(g, o.X, vy, o.Z);
             TerrainShape.Poly poly = TerrainShape.Get(cfg0);
             if (poly == null) return false;
             TerrainShape.Face top = null;
             foreach (var f in poly.Faces)
             {
-                if (!TerrainShape.IsFaceVisible(g, o.X, vy, o.Z, poly, f)) continue;
+                if (!holes && !TerrainShape.IsFaceVisible(g, o.X, vy, o.Z, poly, f)) continue;
+                if (holes && f.Normal.Y < 0.999) continue;
                 if (top != null || f.Normal.Y < 0.999) return false;
                 top = f;
             }
@@ -298,6 +322,7 @@ namespace Sculpt.Game.World
             for (int z = 0; z < n; z++)
             {
                 int runStart = 0;
+                bool inRun = false;
                 Color runColor = default;
                 Vector2 runUv1 = default;
                 float runSculpt = 0;
@@ -306,10 +331,28 @@ namespace Sculpt.Game.World
                     Color c = default;
                     Vector2 uv1 = default;
                     float sculpt = 0;
+                    bool hole = false;
                     if (x < n)
                     {
                         int vx = o.X + x, vz = o.Z + z;
-                        if (TerrainShape.ConfigAt(g, vx, vy, vz) != cfg0) return Abandon();
+                        int cfg = TerrainShape.ConfigAt(g, vx, vy, vz);
+                        if (cfg != cfg0)
+                        {
+                            if (!holes) return Abandon();
+                            // Something stands here (a trunk, a boulder): this square is the kernel's, the run ends.
+                            hole = true;
+                            TerrainShape.Poly hp = TerrainShape.Get(cfg);
+                            if (hp != null)
+                            {
+                                var cellMin = new Vector3(x * s - h, n * s - h, z * s - h);
+                                foreach (var f in hp.Faces)
+                                    if (TerrainShape.IsFaceVisible(g, vx, vy, vz, hp, f)) EmitFace(g, f, cellMin, vx, vy, vz, cfg);
+                            }
+                        }
+                    }
+                    if (!hole && x < n)
+                    {
+                        int vx = o.X + x, vz = o.Z + z;
                         Vec3d centroid = new Vec3d(vx * SubGrid.SubSize, vy * SubGrid.SubSize, vz * SubGrid.SubSize);
                         Int3 owner = TerrainGeometry.NearestOccupied(cfg0, vx, vy, vz, centroid);
                         ushort id = g.Get(owner);
@@ -322,9 +365,9 @@ namespace Sculpt.Game.World
                         if (SubId.IsPiece(id)) return Abandon(); // seams and crystal: the kernel's way
                         // Ground depth: the top sits right above the owner here (nothing above y 0 on plain ground).
                         uv1 = new Vector2(kind, 0f);
-                        if (x > 0 && c == runColor && uv1 == runUv1 && sculpt == runSculpt) continue;
+                        if (inRun && c == runColor && uv1 == runUv1 && sculpt == runSculpt) continue;
                     }
-                    if (x > 0)
+                    if (inRun)
                     {
                         // The run's squares: x from runStart to x - 1, each 2h wide round its lattice vertex.
                         float x0 = runStart * sz - h + lx0, x1 = (x - 1) * sz - h + lx1, z0 = z * sz - h + lz0, z1 = z * sz - h + lz1;
@@ -344,6 +387,7 @@ namespace Sculpt.Game.World
                         _tris.Add(start); _tris.Add(start + 2); _tris.Add(start + 3);
                     }
                     runStart = x;
+                    inRun = !hole && x < n;
                     runColor = c;
                     runUv1 = uv1;
                     runSculpt = sculpt;
@@ -454,6 +498,7 @@ namespace Sculpt.Game.World
             if (Hidden != null && Hidden.Count > 0 && Hidden.Contains(owner)) return;
             ushort ownerId = g.Get(owner);
             if (OnlyId != 0 && ownerId != OnlyId) return;
+            if (SkipAnchors && ownerId == SubId.Anchor || AnchorsOnly && ownerId != SubId.Anchor) return;
             float kind = KindStone;
             bool boulder = false;
             if (OnlyId == 0)

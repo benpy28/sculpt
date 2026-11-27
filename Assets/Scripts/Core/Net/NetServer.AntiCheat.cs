@@ -581,18 +581,26 @@ namespace Sculpt.Core.Net
         private bool _sightTried;
 
         /// <summary>
+        /// Builds the sight grid now if it isn't built yet (it is otherwise built on first use). A threaded local server
+        /// calls this before its first tick: on the 921 m battle royale map the build takes seconds, and a server that
+        /// stalls that long mid-run loses the ticks while its client's clock runs on.
+        /// </summary>
+        public void PrepareSight()
+        {
+            if (_sightTried) return;
+            _sightTried = true;
+            var g = new Audio.SoundGrid(Grid);
+            if (g.Supported) { g.Build(); _sight = g; }
+        }
+
+        /// <summary>
         /// The sight tests walk an air grid (the same one sound is routed on: 0.5 m cells read straight from the shapes)
         /// instead of casting rays: about fifty times cheaper, and it only ever errs toward "can see". Built on first use,
         /// and redone where a tile changed this tick.
         /// </summary>
         private void UpdateSightGrid()
         {
-            if (!_sightTried)
-            {
-                _sightTried = true;
-                var g = new Audio.SoundGrid(Grid);
-                if (g.Supported) { g.Build(); _sight = g; }
-            }
+            PrepareSight();
             if (_sight == null || Walls == null) return;
             foreach (TileChange c in Walls.Changes) _sight.Rebuild(Walls.BoundsOf(c.Tile));
         }

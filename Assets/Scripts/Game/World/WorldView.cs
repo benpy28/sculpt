@@ -65,6 +65,9 @@ namespace Sculpt.Game.World
 
         private GrassField _grass;
         private bool _fixedGround;
+
+        /// <summary>The terrain material (props drawn apart from the chunks share it).</summary>
+        public Material TerrainMaterial => _material;
         private LocalPlayer _localPlayer;
         private NetSession _session;
         private readonly List<Vector3> _actors = new List<Vector3>();
@@ -76,7 +79,7 @@ namespace Sculpt.Game.World
         /// even though the props give them their own sub-cells.</param>
         public void Init(SubGrid grid, SculptConfig sculpt, MapInfo map = null, GroundCover cover = null, System.Func<Int3, byte> decorOf = null)
         {
-            _mesher = new ChunkMesher { Cover = cover, DecorOf = decorOf };
+            _mesher = new ChunkMesher { Cover = cover, DecorOf = decorOf, SkipAnchors = decorOf != null }; // props: PropsView
             _fixedGround = decorOf != null;
             if (map != null && map.Trees.Count > 0)
             {

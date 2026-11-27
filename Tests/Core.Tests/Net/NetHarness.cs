@@ -36,6 +36,8 @@ namespace Sculpt.Core.Tests.Net
         public readonly Func<ITerrain> MakeGrid;
         public readonly Vec3d Spawn;
         public double NowMs { get; private set; }
+        /// <summary>The server stops ticking until then and skips the ticks it missed (a local server thread that stalled).</summary>
+        public double StallServerUntilMs = double.MinValue;
         private double _nextServerTickMs;
         private readonly Dictionary<int, Peer> _byConn = new Dictionary<int, Peer>();
         private int _nextConn = 1;
@@ -110,6 +112,7 @@ namespace Sculpt.Core.Tests.Net
                     Peer peer = p;
                     p.Up.Deliver(NowMs, d => Server.Receive(peer.ConnectionId, d, 0, d.Length));
                 }
+                if (NowMs < StallServerUntilMs) _nextServerTickMs = StallServerUntilMs; // stalled: those ticks are lost, like the threaded server's
                 while (NowMs >= _nextServerTickMs)
                 {
                     Server.Step(ServerEvents);

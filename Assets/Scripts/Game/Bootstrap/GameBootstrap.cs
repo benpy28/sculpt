@@ -307,6 +307,7 @@ namespace Sculpt.Game.Bootstrap
             Mark("world init");
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
+            if (brInfo != null) new GameObject("Plains").AddComponent<Sculpt.Game.World.PropsView>().Build(_world.TerrainMaterial); // trees, boulders, bushes
             Mark("ground");
             if (brushes != null)
             {

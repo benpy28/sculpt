@@ -90,6 +90,32 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
+        public void EachPropsSubCellsLieInItsFootprint_AndPropsShareNone()
+        {
+            BrNature.Plan plan = BrNature.GetPlan();
+            double s = SubGrid.SubSize;
+            int next = 0;
+            var owner = new Dictionary<long, int>();
+            for (int k = 0; k < plan.Props.Count; k++)
+            {
+                BrNature.Prop p = plan.Props[k];
+                Assert.That(p.CellStart, Is.EqualTo(next), "props' cells follow one another");
+                Assert.That(p.CellCount, Is.GreaterThan(20));
+                next += p.CellCount;
+                for (int i = p.CellStart; i < p.CellStart + p.CellCount; i++)
+                {
+                    BrNature.Cell c = plan.Cells[i];
+                    double dx = (c.X + 0.5) * s - p.X, dz = (c.Z + 0.5) * s - p.Z;
+                    Assert.That(Math.Sqrt(dx * dx + dz * dz), Is.LessThanOrEqualTo(p.Radius), $"{p.Kind} at {p.X:0.0},{p.Z:0.0} reaches past its footprint");
+                    long key = ((long)c.X << 32) | ((long)(c.Y + 1024) << 16) | (uint)c.Z;
+                    Assert.That(owner.ContainsKey(key), Is.False, "two props share a sub-cell");
+                    owner[key] = k;
+                }
+            }
+            Assert.That(next, Is.EqualTo(plan.Cells.Count));
+        }
+
+        [Test]
         public void CanopiesStartAboveJumpReach()
         {
             // Leaves under the canopy height belong to bushes only (low and solid); every tree's leaves start 3.3 m up.
