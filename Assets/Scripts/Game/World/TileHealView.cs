@@ -79,7 +79,7 @@ namespace Sculpt.Game.World
             if (net != _bound) { ClearHums(); _jobs.Clear(); _target.Rev = -1; _redUntil = -1f; _bound = net; }
             _lines.Begin(_rig.Camera.transform.position);
             _alive.Clear();
-            if (net.Joined && net.Heals != null && _player.Heals)
+            if (net.Playing && net.Heals != null && _player.Heals)
             {
                 DrainEvents(net);
                 DrawTarget(net);
@@ -147,6 +147,7 @@ namespace Sculpt.Game.World
             {
                 s = RoutedLoop.Create("Heal Hum", transform, SculptAudio.HumRaise, 3f, 40f);
                 s.Source.time = Random.Range(0f, s.Source.clip.length * 0.9f);
+                s.Caption = SoundCaption.WallHealing;
                 _hums[player] = s;
             }
             // Routed: heard through the doorway or hole it comes from, or muffled through the wall.

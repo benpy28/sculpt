@@ -130,7 +130,7 @@ namespace Sculpt.Core
             if (pressed && !s.Hand.InSculptMode && hasGun) w.BufferedPressTick = tick; // a sculpt click or a throw is never a buffered shot
 
             if (s.Dead) { w.Reloading = false; return; }
-            Reload(ref s, tick, st, reloadPressed);
+            Reload(ref s, tick, st, reloadPressed, mc.Weapons);
             if (!s.Hand.CanFire || !s.CanShoot) return;
 
             long now = ToMilli(tick);
@@ -180,7 +180,7 @@ namespace Sculpt.Core
         /// cancels it (a magazine reload loses its progress; shells already loaded stay in). Sprinting, sliding and
         /// jumping don't stop it.
         /// </summary>
-        public static void Reload(ref MotorState s, int tick, WeaponStats st, bool pressed)
+        public static void Reload(ref MotorState s, int tick, WeaponStats st, bool pressed, WeaponsConfig wc = null)
         {
             ref WeaponState w = ref s.Weapon;
             if (!s.Hand.HasGun) { w.Reloading = false; return; }
@@ -192,7 +192,7 @@ namespace Sculpt.Core
                 if (st.ShellReload)
                 {
                     w.SetUsed(held, w.UsedOf(held) - 1);
-                    if (w.UsedOf(held) > 0) w.ReloadTick = tick + st.ShellTicks;
+                    if (w.UsedOf(held) > 0) w.ReloadTick = tick + Scaled(st.ShellTicks, s, held, wc);
                     else w.Reloading = false;
                 }
                 else
@@ -210,8 +210,12 @@ namespace Sculpt.Core
             if (empty && !pressed && ToMilli(tick) < w.NextOf(held)) return;
             w.Reloading = true;
             w.ReloadGun = held;
-            w.ReloadTick = tick + (st.ShellReload ? st.ShellStartTicks + st.ShellTicks : st.ReloadTicks);
+            w.ReloadTick = tick + Scaled(st.ShellReload ? st.ShellStartTicks + st.ShellTicks : st.ReloadTicks, s, held, wc);
         }
+
+        /// <summary>A reload time scaled by the held gun's rarity (legendary reloads 5% faster).</summary>
+        private static int Scaled(int ticks, in MotorState s, Weapon held, WeaponsConfig wc) =>
+            wc == null ? ticks : wc.ScaleReload(ticks, s.Hand.Bag.RarityOfGun(held, s.Hand.Slot));
 
         /// <summary>Spread cone half-angle (degrees) for a shot fired now, from the movement state.</summary>
         public static double Spread(in MotorState s, MovementConfig mc, WeaponStats st)

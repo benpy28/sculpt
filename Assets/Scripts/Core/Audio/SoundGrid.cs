@@ -27,7 +27,10 @@ namespace Sculpt.Core.Audio
         public readonly double CellSize;
         /// <summary>Everything below this height is solid for sound (metres).</summary>
         public readonly double FloorY;
-        private readonly int _floorCell;
+        private int _floorCell;
+        /// <summary>Sub-cell grids that are plain flat ground (solid below one height, air above): no need to rasterise
+        /// them, the floor cell covers them exactly (a 614 m map has millions of ground columns).</summary>
+        private readonly List<SubGrid> _flat = new List<SubGrid>();
         private readonly List<BrushWorld> _brushes = new List<BrushWorld>();
         private readonly List<SubGrid> _subs = new List<SubGrid>();
         private readonly Dictionary<long, ushort[]> _chunks = new Dictionary<long, ushort[]>();
@@ -42,12 +45,15 @@ namespace Sculpt.Core.Audio
         /// <summary>Lines set blocked by the last build or rebuild (stats).</summary>
         public long LinesMarked { get; private set; }
 
-        public SoundGrid(ITerrain world, double cellSize = 0.5, double floorY = -3.0)
+        /// <param name="flatGroundAsFloor">Plain flat ground is covered by the floor instead of marked cell by cell (the
+        /// same result, tested; false only to check that).</param>
+        public SoundGrid(ITerrain world, double cellSize = 0.5, double floorY = -3.0, bool flatGroundAsFloor = true)
         {
             CellSize = cellSize;
             FloorY = floorY;
             _floorCell = (int)Math.Floor(floorY / cellSize);
             Supported = Collect(world);
+            if (Supported && flatGroundAsFloor) FindFlatGround();
         }
 
         private bool Collect(ITerrain t)
@@ -83,6 +89,51 @@ namespace Sculpt.Core.Audio
 
         public int Chunks => _chunks.Count;
 
+        /// <summary>
+        /// Can a line from <paramref name="a"/> to <paramref name="b"/> get through? Walks the cells it crosses and stops
+        /// at the first face no line can pass. Errs toward open: a face counts as open while any of its four lines is,
+        /// so an opening a quarter cell across lets it through even if the real line would just miss it. Used by the
+        /// server's interest management as a cheap, generous line of sight (never blocks a line a ray would pass).
+        /// </summary>
+        public bool LineOpen(Vec3d a, Vec3d b)
+        {
+            double cs = CellSize;
+            double ax = a.X / cs, ay = a.Y / cs, az = a.Z / cs;
+            double dx = b.X / cs - ax, dy = b.Y / cs - ay, dz = b.Z / cs - az;
+            int x = (int)Math.Floor(ax), y = (int)Math.Floor(ay), z = (int)Math.Floor(az);
+            int ex = (int)Math.Floor(ax + dx), ey = (int)Math.Floor(ay + dy), ez = (int)Math.Floor(az + dz);
+            int sx = dx > 0 ? 1 : dx < 0 ? -1 : 0, sy = dy > 0 ? 1 : dy < 0 ? -1 : 0, sz = dz > 0 ? 1 : dz < 0 ? -1 : 0;
+            double tdx = sx != 0 ? Math.Abs(1 / dx) : double.PositiveInfinity;
+            double tdy = sy != 0 ? Math.Abs(1 / dy) : double.PositiveInfinity;
+            double tdz = sz != 0 ? Math.Abs(1 / dz) : double.PositiveInfinity;
+            double tx = sx > 0 ? (x + 1 - ax) * tdx : sx < 0 ? (ax - x) * tdx : double.PositiveInfinity;
+            double ty = sy > 0 ? (y + 1 - ay) * tdy : sy < 0 ? (ay - y) * tdy : double.PositiveInfinity;
+            double tz = sz > 0 ? (z + 1 - az) * tdz : sz < 0 ? (az - z) * tdz : double.PositiveInfinity;
+            int guard = Math.Abs(ex - x) + Math.Abs(ey - y) + Math.Abs(ez - z) + 3;
+            while ((x != ex || y != ey || z != ez) && guard-- > 0)
+            {
+                if (tx <= ty && tx <= tz)
+                {
+                    if (tx > 1) break;
+                    if (!Open(sx > 0 ? x : x - 1, y, z, 0)) return false;
+                    x += sx; tx += tdx;
+                }
+                else if (ty <= tz)
+                {
+                    if (ty > 1) break;
+                    if (!Open(x, sy > 0 ? y : y - 1, z, 1)) return false;
+                    y += sy; ty += tdy;
+                }
+                else
+                {
+                    if (tz > 1) break;
+                    if (!Open(x, y, sz > 0 ? z : z - 1, 2)) return false;
+                    z += sz; tz += tdz;
+                }
+            }
+            return true;
+        }
+
         // ------------------------------------------------------------------ building
 
         /// <summary>Works out the whole world (at load).</summary>
@@ -94,7 +145,37 @@ namespace Sculpt.Core.Audio
             var all = new CellBox(int.MinValue / 4, _floorCell, int.MinValue / 4, int.MaxValue / 4, int.MaxValue / 4, int.MaxValue / 4);
             foreach (BrushWorld w in _brushes)
                 for (int i = 0; i < w.Count; i++) Rasterize(w[i], all);
-            foreach (SubGrid g in _subs) RasterizeSubs(g, all, null);
+            foreach (SubGrid g in _subs)
+                if (!_flat.Contains(g)) RasterizeSubs(g, all, null);
+        }
+
+        /// <summary>
+        /// Plain flat ground (every chunk uniform, solid layers below air layers, its top on this grid's cell lattice):
+        /// marking it cell by cell gives exactly what a floor at its top gives, so it is not marked at all. Only when it
+        /// is the only sub-cell grid, so the floor is right everywhere it matters.
+        /// </summary>
+        private void FindFlatGround()
+        {
+            _flat.Clear();
+            if (_subs.Count != 1) return;
+            SubGrid g = _subs[0];
+            if (g.AllocatedChunks != 0) return;
+            int n = SubGrid.ChunkSize, top = int.MinValue;
+            for (int cy = g.MinY; cy < g.MaxYExclusive; cy += n)
+            {
+                bool solid = g.IsSolid(0, cy, 0);
+                for (int cx = 0; cx < g.SizeX; cx += n)
+                    for (int cz = 0; cz < g.SizeZ; cz += n)
+                        if (g.IsSolid(cx, cy, cz) != solid) return;
+                if (solid) { if (top != int.MinValue) return; } // solid above air: not plain ground
+                else if (top == int.MinValue) top = cy;
+            }
+            if (top == int.MinValue) top = g.MaxYExclusive;
+            double topY = top * SubGrid.SubSize;
+            double cells = topY / CellSize;
+            if (Math.Abs(cells - Math.Round(cells)) > 1e-9 || topY < FloorY) return;
+            _floorCell = (int)Math.Round(cells);
+            _flat.Add(g);
         }
 
         /// <summary>Works out again every face that a change inside <paramref name="region"/> can touch (a tile broke,
@@ -121,7 +202,8 @@ namespace Sculpt.Core.Audio
                 w.BrushesNear(reach, _near);
                 for (int i = 0; i < _near.Count; i++) Rasterize(w[_near[i]], box);
             }
-            foreach (SubGrid g in _subs) RasterizeSubs(g, box, reach);
+            foreach (SubGrid g in _subs)
+                if (!_flat.Contains(g)) RasterizeSubs(g, box, reach);
         }
 
         private readonly struct CellBox
@@ -223,11 +305,17 @@ namespace Sculpt.Core.Audio
         private void Mark(int x, int y, int z, int bit)
         {
             long k = Key(x >> ChunkBits, y >> ChunkBits, z >> ChunkBits);
-            if (!_chunks.TryGetValue(k, out ushort[] c))
+            ushort[] c;
+            if (k == _lastKey && _last != null) c = _last;
+            else
             {
-                c = new ushort[ChunkSize * ChunkSize * ChunkSize];
-                _chunks[k] = c;
-                if (k == _lastKey) _last = c;
+                if (!_chunks.TryGetValue(k, out c))
+                {
+                    c = new ushort[ChunkSize * ChunkSize * ChunkSize];
+                    _chunks[k] = c;
+                }
+                _lastKey = k; // the same cache Blocked reads (key to chunk, kept in step)
+                _last = c;
             }
             int i = Index(x, y, z);
             if ((c[i] & bit) == 0) LinesMarked++;

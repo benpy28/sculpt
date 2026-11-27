@@ -18,6 +18,9 @@ namespace Sculpt.Game.Player
             new Color(0.95f, 0.45f, 0.15f), // team 2: orange
         };
 
+        /// <summary>A player not to draw (the one a spectator watches through their own eyes). 0 = none.</summary>
+        public static int HiddenPlayer;
+
         private NetSession _session;
         private MovementConfig _cfg;
         private Material _material;
@@ -72,8 +75,9 @@ namespace Sculpt.Game.Player
                 }
                 if (a.Team != v.Team) SetTeam(a, v.Team);
                 // The dead are gone from view (and from hit checks) until they respawn.
-                if (a.Root.activeSelf == v.Dead) a.Root.SetActive(!v.Dead);
-                if (v.Dead) continue;
+                bool show = !v.Dead && id != HiddenPlayer;
+                if (a.Root.activeSelf != show) a.Root.SetActive(show);
+                if (!show) continue;
 
                 float h = (float)(v.Crouched ? _cfg.CrouchHeight : _cfg.StandHeight);
                 float eye = (float)(v.Crouched ? _cfg.CrouchEye : _cfg.StandEye);

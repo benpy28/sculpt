@@ -30,6 +30,9 @@ namespace Sculpt.Game.Audio
 
         public static bool Active => _paths != null && _listener != null;
 
+        /// <summary>The ears sounds are routed to (the camera), or null.</summary>
+        public static Transform Listener => _listener;
+
         /// <summary>Routes sounds through <paramref name="world"/> to <paramref name="listener"/> (the camera's ears).
         /// Call again whenever the client world is replaced. Null switches routing off.</summary>
         public static void Bind(ITerrain world, Transform listener)
@@ -42,7 +45,11 @@ namespace Sculpt.Game.Audio
         }
 
         /// <summary>Something in <paramref name="region"/> changed shape (a tile broke, healed or lost cells; a door moved).</summary>
-        public static void Invalidate(Aabb region) => _paths?.Invalidate(region);
+        public static void Invalidate(Aabb region) { using (MkInvalidate.Auto()) _paths?.Invalidate(region); }
+
+        // Named sections for -benchmarkmarkers and the Unity profiler (the busy-fight cost of routing).
+        private static readonly Unity.Profiling.ProfilerMarker MkPlace = new Unity.Profiling.ProfilerMarker("SCULPT.SoundRoute"),
+            MkInvalidate = new Unity.Profiling.ProfilerMarker("SCULPT.SoundInvalidate");
 
         /// <summary>
         /// Moves <paramref name="at"/> to where the sound should be played and gives the extra gain and the low-pass
@@ -55,6 +62,7 @@ namespace Sculpt.Game.Audio
             gain = 1f;
             cutoff = (float)Config.OpenCutoffHz;
             if (!Active) return true;
+            using var mk = MkPlace.Auto();
             if (_frame != Time.frameCount) { _frame = Time.frameCount; _searches = 0; }
             Vec3d ear = _listener.position.ToCore();
             long before = _paths.Searches;
@@ -63,8 +71,13 @@ namespace Sculpt.Game.Audio
             LastRoute = r;
             if (!r.Audible) return false;
             SoundPaths.HeadShadow(_listener.forward.ToCore(), r.ArrivesFrom, Config, out double shadowDb, out double shadowHz);
+            // Settings > Audio > front/back cue: scales how much a sound behind you is dulled (1 = as designed).
+            double hs = Sculpt.Game.Settings.ClientSettings.Current.HeadShadow;
+            double open = Config.OpenCutoffHz;
+            shadowDb *= hs;
+            shadowHz = Math.Max(500, Math.Min(open, open - (open - shadowHz) * hs));
             gain = (float)Math.Pow(10, (r.GainDb + shadowDb) / 20);
-            cutoff = (float)Math.Min(r.CutoffHz, shadowHz);
+            cutoff = SoundMix.Cutoff((float)Math.Min(r.CutoffHz, shadowHz), (float)open);
             at = r.Apparent.ToUnity();
             return true;
         }

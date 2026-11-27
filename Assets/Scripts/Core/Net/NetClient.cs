@@ -30,7 +30,7 @@ namespace Sculpt.Core.Net
     ///   rewinds to the server state and replays the newer commands. The sim snaps; only the drawn position is smoothed.
     /// - Draws other players interpolated a few ticks in the past.
     /// </summary>
-    public sealed class NetClient
+    public sealed partial class NetClient
     {
         public delegate void SendFn(byte[] data, bool reliable);
 
@@ -102,6 +102,9 @@ namespace Sculpt.Core.Net
         /// <summary>Smoothed estimate of the server's tick right now (for timers).</summary>
         public double ServerTimeEstimate => _serverTime;
         public int SnapshotsReceived { get; private set; }
+        /// <summary>Snapshot bytes received (accepted ones), and deltas whose base this client did not have (should stay 0).</summary>
+        public long SnapshotBytes { get; private set; }
+        public int SnapshotBaseMisses { get; private set; }
         public int DroppedPackets { get; private set; }
         public bool LastInputWasRealOnServer { get; private set; } = true;
 
@@ -114,6 +117,7 @@ namespace Sculpt.Core.Net
         private readonly List<CombatEvent> _combatScratch = new List<CombatEvent>();
         private readonly List<TileChange> _tileScratch = new List<TileChange>();
         private readonly List<GroundItem> _itemScratch = new List<GroundItem>();
+        private readonly List<int> _itemGone = new List<int>();
 
         /// <summary>This client's copy of the items on the ground (only the server's Items messages change it).</summary>
         public readonly GroundItems Items = new GroundItems();
@@ -126,6 +130,8 @@ namespace Sculpt.Core.Net
         private readonly ByteWriter _w = new ByteWriter(512);
         private readonly List<InputCmd> _sendCmds = new List<InputCmd>(Protocol.MaxCmdsPerPacket);
         private readonly List<PlayerSnap> _snapOthers = new List<PlayerSnap>();
+        private readonly SnapshotCodec _snapCodec = new SnapshotCodec();
+        private SnapshotBaselines _baselines;
         private readonly List<InputCmd> _readScratch = new List<InputCmd>();
         private readonly List<PieceOp> _worldOps = new List<PieceOp>();
         private readonly List<WorldEvent> _worldEvents = new List<WorldEvent>();
@@ -180,12 +186,38 @@ namespace Sculpt.Core.Net
 
         public void Receive(byte[] data, int offset, int count)
         {
+            global::Sculpt.Core.Diagnostics.Prof.Begin(global::Sculpt.Core.Diagnostics.Prof.Section.ClientReceive);
+            MsgType type = count > 0 ? Protocol.PeekType(data, offset, count) : MsgType.Welcome;
+            var part = type == MsgType.Snapshot ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientSnapshot
+                : type == MsgType.Tiles ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientTiles
+                : type == MsgType.Items ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientItems
+                : type == MsgType.Match ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientMatch
+                : global::Sculpt.Core.Diagnostics.Prof.Section.ClientOther;
+            global::Sculpt.Core.Diagnostics.Prof.Begin(part);
+            try { ReceiveInner(data, offset, count); }
+            finally
+            {
+                global::Sculpt.Core.Diagnostics.Prof.End(part);
+                global::Sculpt.Core.Diagnostics.Prof.End(global::Sculpt.Core.Diagnostics.Prof.Section.ClientReceive);
+            }
+        }
+
+        private void ReceiveInner(byte[] data, int offset, int count)
+        {
             try
             {
                 var r = new ByteReader(data, offset, count);
                 switch (Protocol.PeekType(data, offset, count))
                 {
                     case MsgType.Welcome: OnWelcome(Protocol.ReadWelcome(ref r)); break;
+                    case MsgType.SpecFrame:
+                        if (Joined && !IsSpectator) return; // players never watch; a replay's key frame brings its own welcome
+                        OnSpecFrame(data, offset, count);
+                        break;
+                    case MsgType.SpecSnap:
+                        if (!Joined || !IsSpectator) return;
+                        OnSpecSnap(ref r);
+                        break;
                     case MsgType.World:
                         if (!Joined || Sculpt == null) return;
                         Sculpt.OnWorld(WorldProtocol.Read(ref r, _worldOps, _worldEvents));
@@ -194,6 +226,7 @@ namespace Sculpt.Core.Net
                     {
                         if (!Joined) return;
                         CombatMsg cm = CombatProtocol.Read(ref r, _combatScratch);
+                        if (Muted) break; // a replay seek: what already happened is not shown again
                         foreach (CombatEvent e in cm.Events) Combat.Add(new KeyValuePair<int, CombatEvent>(cm.Tick, e));
                         if (Combat.Count > 4096) Combat.RemoveRange(0, 2048); // nobody is draining (tests)
                         break;
@@ -206,7 +239,7 @@ namespace Sculpt.Core.Net
                         {
                             if (c.Tile >= Walls.Count) { DroppedPackets++; continue; }
                             Walls.Tick = tm.Tick;
-                            TileCause cause = tm.Join ? TileCause.Server : c.Cause;
+                            TileCause cause = tm.Join || Muted ? TileCause.Server : c.Cause;
                             if (c.Hp != null && Walls.HasCells(c.Tile))
                                 Walls.WriteCells(c.Tile, c.To == TileState.Broken ? ulong.MaxValue : c.Open, c.Patch, c.Steel, c.Hp, cause, c.By);
                             else Walls.Set(c.Tile, c.To, c.Health, cause, c.By);
@@ -224,22 +257,36 @@ namespace Sculpt.Core.Net
                     case MsgType.Items:
                     {
                         if (!Joined) return;
-                        ItemsMsg im = ItemsProtocol.Read(ref r, _itemScratch);
-                        Items.ReplaceAll(im.Items);
+                        ItemsMsg im = ItemsProtocol.Read(ref r, _itemScratch, _itemGone);
+                        ItemsProtocol.Apply(Items, im);
                         break;
                     }
                     case MsgType.Match:
                         if (!Joined) return;
                         MatchProtocol.Read(ref r, Match);
+                        // Battle royale deals teams out at every match start; the scores carry yours.
+                        if (Match.IsBr)
+                            foreach (MatchScore sc in Match.Scores)
+                                if (sc.PlayerId == PlayerId && sc.Team > 0 && sc.Team != Team)
+                                {
+                                    Team = sc.Team;
+                                    Sculpt?.SetLocalTeam(Team);
+                                }
                         break;
                     case MsgType.Reveal:
                         if (!Joined) return;
                         OnReveal(ref r);
                         break;
                     case MsgType.Snapshot:
-                        if (!Joined) return;
-                        OnSnapshot(Protocol.ReadSnapshot(ref r, _snapOthers));
+                    {
+                        if (!Joined || IsSpectator) return;
+                        if (SnapshotCodec.PeekTick(data, offset, count) <= LastSnapshotTick) return; // late or duplicate: never touch the baselines
+                        if (_baselines == null || _baselines.Size != Config.SnapshotBaselineTicks) _baselines = new SnapshotBaselines(Math.Max(2, Config.SnapshotBaselineTicks));
+                        if (!_snapCodec.TryRead(ref r, _snapOthers, _baselines, out SnapshotMsg sm)) { SnapshotBaseMisses++; return; }
+                        SnapshotBytes += count;
+                        OnSnapshot(sm);
                         break;
+                    }
                     default: DroppedPackets++; break;
                 }
             }
@@ -247,6 +294,23 @@ namespace Sculpt.Core.Net
             {
                 DroppedPackets++;
             }
+        }
+
+        /// <summary>The player's slot auto-sort and battle royale locker gun. Sent to the server after the welcome and
+        /// again whenever <see cref="SetPrefs"/> changes them.</summary>
+        public PrefsMsg Prefs = new PrefsMsg { Slots = SlotPrefs.Default };
+
+        public void SetPrefs(in PrefsMsg prefs)
+        {
+            Prefs = prefs;
+            if (Joined && !IsSpectator) SendPrefs();
+        }
+
+        private void SendPrefs()
+        {
+            var w = new ByteWriter(16);
+            Protocol.Write(w, Prefs);
+            _send(w.ToArray(), true);
         }
 
         private void OnWelcome(in WelcomeMsg m)
@@ -257,6 +321,9 @@ namespace Sculpt.Core.Net
                 throw new NetFormatException($"Protocol {m.ProtocolVersion}, expected {Protocol.Version}.");
             }
             Joined = true;
+            IsSpectator = m.IsSpectator;
+            SpectatorDelayTicks = m.SpectatorDelayTicks;
+            ResetSpectator();
             Match.Phase = MatchPhase.Off;
             Match.Scores.Clear();
             PlayerId = m.PlayerId;
@@ -266,6 +333,7 @@ namespace Sculpt.Core.Net
             // First guess at the lead; the server's feedback corrects it within a round trip.
             Tick = m.ServerTick + Config.TargetLeadTicks + 6 * SimTime.Per60;
             _pred = MotorState.At(m.Spawn);
+            if (!IsSpectator) SendPrefs();
             _prevPred = _pred;
             _accum = 0;
             ClearHistory();
@@ -273,6 +341,7 @@ namespace Sculpt.Core.Net
             _serverTime = m.ServerTick;
             _serverTimeValid = true;
             LastSnapshotTick = int.MinValue;
+            _baselines?.Clear();
             Sculpt?.Reset(m.PlayerId, m.Team, m.Spawn, Tick);
             Heals?.Clear();
             _healPending = false;
@@ -406,7 +475,7 @@ namespace Sculpt.Core.Net
         /// <summary>How many prediction ticks to run this frame (dilated clock, catch-up capped).</summary>
         public int BeginFrame(double dt)
         {
-            if (!Joined) return 0;
+            if (!Joined || IsSpectator) return 0; // spectators predict nothing
             _accum += dt * (1.0 + Dilation);
             int n = (int)Math.Floor(_accum / TickSeconds);
             if (n <= 0) return 0;
@@ -424,7 +493,8 @@ namespace Sculpt.Core.Net
             double k = Math.Exp(-dt / Config.CorrectionSmoothSeconds);
             Vec3d o = CorrectionOffset * k;
             CorrectionOffset = o.LengthSquared < 1e-10 ? Vec3d.Zero : o;
-            if (_serverTimeValid) _serverTime += dt * SimTime.TicksPerSecond;
+            if (_serverTimeValid && !ExternalClock) _serverTime += dt * SimTime.TicksPerSecond;
+            if (IsSpectator && !ExternalClock) Tick = (int)Math.Floor(_serverTime);
         }
 
         /// <summary>Dev only: the next predicted tick carries a warp to the dev warp point (F6 showcase).</summary>

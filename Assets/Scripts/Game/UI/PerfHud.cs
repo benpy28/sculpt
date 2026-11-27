@@ -52,14 +52,38 @@ namespace Sculpt.Game.UI
                 _settings.Changed();
                 _settings.Save();
             }
-            if (!_settings.ShowFps && !_settings.ShowLatency) return;
+            if (!_settings.ShowFps && !_settings.ShowLatency && !_settings.ShowNetStats) return;
             if (Time.unscaledTime < _nextText) return;
             _nextText = Time.unscaledTime + 0.25f;
             BuildText();
         }
 
+        private long _netBytesBefore;
+        private float _netAt;
+        private string _net = "";
+
+        /// <summary>Settings > Latency > network stats: one line read from the client's own counters (nothing is sent).</summary>
+        private void BuildNetText()
+        {
+            Sculpt.Core.Net.NetClient c = _perf.Session?.Client;
+            if (c == null || !c.Joined) { _net = "NET  not connected"; return; }
+            float now = Time.unscaledTime;
+            float dt = now - _netAt;
+            double kbit = dt > 0.05f && _netAt > 0 ? (c.SnapshotBytes - _netBytesBefore) * 8.0 / 1000.0 / dt : 0;
+            _netBytesBefore = c.SnapshotBytes;
+            _netAt = now;
+            double pingMs = c.RttTicks * 1000.0 / SimTime.TicksPerSecond;
+            _sb.Clear().Append("NET  ping ").Append(pingMs.ToString("0")).Append(" ms   snapshots ").Append(kbit.ToString("0")).Append(" kbit/s   corrections ")
+               .Append(c.Corrections);
+            if (c.LastServerLead != Sculpt.Core.Net.Protocol.NoLead) _sb.Append("   input lead ").Append(c.LastServerLead).Append(" ticks");
+            _sb.Append("   dropped ").Append(c.DroppedPackets);
+            if (c.SnapshotBaseMisses > 0) _sb.Append("   base misses ").Append(c.SnapshotBaseMisses);
+            _net = _sb.ToString();
+        }
+
         private void BuildText()
         {
+            if (_settings.ShowNetStats) BuildNetText();
             FrameStats f = _perf.Frames;
             _fps = _sb.Clear().Append(f.AverageFps.ToString("0")).Append(" fps   ").Append(f.AverageMs.ToString("0.0")).Append(" ms   1% low ")
                 .Append(f.LowFps(0.01).ToString("0")).ToString();
@@ -107,6 +131,8 @@ namespace Sculpt.Game.UI
         private void OnGUI()
         {
             if (_settings == null || Event.current.type != EventType.Repaint) return;
+            if (_settings.ShowNetStats)
+                HudDraw.Label(new Rect(Screen.width - 654f, _settings.ShowFps && !_settings.ShowLatency ? 70f : 52f, 640f, 18f), _net, 13, HudDraw.Text, TextAnchor.MiddleRight);
             if (!_settings.ShowFps && !_settings.ShowLatency) return;
             if (_gl == null)
             {

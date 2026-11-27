@@ -61,12 +61,13 @@ namespace Sculpt.Game.UI
 
         private void OnGUI()
         {
-            if (_player == null || !_player.Net.Joined) return;
+            if (_player == null || !_player.Net.Playing) return;
             if (Event.current.type != EventType.Repaint) return; // draw-only: nothing here reacts to input events
             float w = Screen.width, h = Screen.height;
             float stripW = Mathf.Min(520f, w * 0.42f), stripH = 30f, top = 10f;
             float cx = w / 2f;
             float yaw = Mathf.Repeat(_player.Yaw, 360f);
+            bool compass = Sculpt.Game.Settings.ClientSettings.Current.Compass;
 
             {
                 _gl.SetPass(0);
@@ -75,10 +76,11 @@ namespace Sculpt.Game.UI
                 {
                     HudDraw.LoadPixels();
                     if (_speedLines > 0.01f) DrawSpeedLines(w, h);
-                    DrawCompassTicks(cx, h - top, stripW, stripH, yaw);
+                    if (compass) DrawCompassTicks(cx, h - top, stripW, stripH, yaw);
                 }
                 finally { GL.PopMatrix(); } // an exception must never leave the matrix stack pushed
             }
+            if (!compass) return; // Settings > HUD > Compass
 
             // Letters and heading.
             for (int deg = 0; deg < 360; deg += 45)

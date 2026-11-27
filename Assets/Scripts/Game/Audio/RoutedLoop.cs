@@ -16,6 +16,10 @@ namespace Sculpt.Game.Audio
         /// <summary>The owner's volume before routing.</summary>
         public float Volume;
         public float Pitch = 1f;
+        /// <summary>Which volume slider this loop follows.</summary>
+        public SoundBus Bus = SoundBus.World;
+        /// <summary>Caption while it is heard (refreshed while it plays), or None.</summary>
+        public SoundCaption Caption;
 
         public AudioSource Source { get; private set; }
         private AudioLowPassFilter _filter;
@@ -55,7 +59,10 @@ namespace Sculpt.Game.Audio
             _gain += (_gainTarget - _gain) * k;
             _cutoff += (_cutoffTarget - _cutoff) * k;
             transform.position = At + _offset;
-            Source.volume = Volume * _gain;
+            Source.volume = Volume * _gain * SoundMix.Gain(Bus);
+            Source.spread = SoundMix.Spread;
+            if (Caption != SoundCaption.None && _audible && Source.volume > 0.02f)
+                SoundCaptions.Post(Caption, transform.position, _cutoff < (float)SoundRouter.Config.OpenCutoffHz - 1f, Source.volume);
             Source.pitch = Pitch;
             SoundRouter.ApplyCutoff(_filter, _cutoff);
         }

@@ -50,7 +50,7 @@ if __name__ == "__main__":
     ov = json.loads(sys.argv[3]) if len(sys.argv) > 3 else {}
     tag = sys.argv[4] if len(sys.argv) > 4 else aim
     jobs = [(i, j, D, aim, aim, n, ov) for D in DISTS for i in range(len(STRATS)) for j in range(i, len(STRATS))]
-    with Pool(14) as p:
+    with Pool() as p:
         res = p.map(job, jobs, chunksize=8)
     M = {D: [[0.5] * len(STRATS) for _ in STRATS] for D in DISTS}
     for i, j, D, v in res:

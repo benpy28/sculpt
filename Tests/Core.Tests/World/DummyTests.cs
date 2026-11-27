@@ -144,6 +144,10 @@ namespace Sculpt.Core.Tests
             var watcher = h.AddClient(new Vec3d(9, 0, 2), team: 1);
             ServerPlayer d2 = h.Server.AddDummy(new PracticeDummy(Post, 0, room2), team: 2);
             h.RunSeconds(0.5);
+            // Sealed in its room, quiet and out of sight: interest management doesn't send it (anti-cheat, 2026-11-26).
+            Assert.That(watcher.Client.TryGetRemote(d2.Id, out _), Is.False);
+            h.Server.Config.AntiCheat.Interest.Enabled = false;
+            h.RunSeconds(0.5);
             Assert.That(watcher.Client.TryGetRemote(d2.Id, out RemoteView v), Is.True);
             Assert.That(v.Team, Is.EqualTo(2));
             Assert.That(v.Position.X, Is.EqualTo(Post.X).Within(0.05));

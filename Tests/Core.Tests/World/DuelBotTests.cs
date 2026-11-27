@@ -201,6 +201,23 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
+        public void ABotOutOfAFight_HealsWithWhatItCarries()
+        {
+            var h = Duel();
+            ServerPlayer bot = h.Server.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Normal), seed: 3), 1, Spawn(1), SpawnYaw(1));
+            h.RunSeconds(0.5);
+            bot.State.Damage = 90;
+            bot.State.Hand.Bag.S4 = Item.Medkit;
+            bot.State.Hand.Bag.N4 = 1;
+            bot.State.Hand.Bag.S3 = Item.Bandage;
+            bot.State.Hand.Bag.N3 = 2;
+            h.RunSeconds(10);
+            TestContext.WriteLine($"damage {bot.State.Damage}, kits {bot.State.Hand.Bag.CountIn(4)}, bandages {bot.State.Hand.Bag.CountIn(3)}");
+            Assert.That(bot.State.Damage, Is.LessThan(90), "it healed");
+            Assert.That(bot.State.Hand.Bag[4], Is.EqualTo(Item.None), "badly hurt: the first-aid kit first");
+        }
+
+        [Test]
         public void HardBeatsEasy_MostOfTheTime()
         {
             var m = new BotMatch(BotLevel.Hard, BotLevel.Easy);

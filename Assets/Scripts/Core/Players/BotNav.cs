@@ -51,24 +51,37 @@ namespace Sculpt.Core
             _columns = new List<int>[nx * nz];
         }
 
-        /// <summary>Probes the terrain inside the square [minX, minX + sizeX] x [minZ, minZ + sizeZ] between floorY and topY.</summary>
-        public static BotNav Build(ITerrain t, double minX, double minZ, double sizeX, double sizeZ, double cell = 0.75, double topY = 20, double floorY = -3)
+        /// <summary>
+        /// Probes the terrain inside the square [minX, minX + sizeX] x [minZ, minZ + sizeZ] between floorY and topY.
+        /// <paramref name="groundTop"/>: the height of solid ground that runs at least 4 m down everywhere (flat base
+        /// ground): a column that reaches it has nothing further below, so the probe stops there (the same grid, built
+        /// much faster). The probing runs on all cores; the result is the same as one core would build, in the same order.
+        /// </summary>
+        public static BotNav Build(ITerrain t, double minX, double minZ, double sizeX, double sizeZ, double cell = 0.75, double topY = 20, double floorY = -3,
+                                   double? groundTop = null)
         {
             int nx = (int)Math.Floor(sizeX / cell), nz = (int)Math.Floor(sizeZ / cell);
             var n = new BotNav(cell, minX, minZ, nx, nz);
-            var floors = new List<double>(4);
-            for (int cz = 0; cz < nz; cz++)
+            var rows = new List<(int cx, double y)>[nz];
+            System.Threading.Tasks.Parallel.For(0, nz, cz =>
+            {
+                var floors = new List<double>(4);
+                var found = new List<(int, double)>(nx);
                 for (int cx = 0; cx < nx; cx++)
                 {
                     double x = minX + (cx + 0.5) * cell, z = minZ + (cz + 0.5) * cell;
-                    FindFloors(t, x, z, topY, floorY, floors);
+                    FindFloors(t, x, z, topY, floorY, floors, groundTop);
                     foreach (double y in floors)
-                    {
-                        if (t.BoxOverlapsSolid(StandBox(x, z, y))) continue;
-                        var list = n._columns[cz * nx + cx] ??= new List<int>(2);
-                        list.Add(n._nodes.Count);
-                        n._nodes.Add(new Node { Cx = cx, Cz = cz, Y = y });
-                    }
+                        if (!t.BoxOverlapsSolid(StandBox(x, z, y))) found.Add((cx, y));
+                }
+                rows[cz] = found;
+            });
+            for (int cz = 0; cz < nz; cz++)
+                foreach ((int cx, double y) in rows[cz])
+                {
+                    var list = n._columns[cz * nx + cx] ??= new List<int>(2);
+                    list.Add(n._nodes.Count);
+                    n._nodes.Add(new Node { Cx = cx, Cz = cz, Y = y });
                 }
             n.Connect(t);
             return n;
@@ -78,7 +91,7 @@ namespace Sculpt.Core
             new Aabb(new Vec3d(x - Half, y + Lift, z - Half), new Vec3d(x + Half, y + Head, z + Half));
 
         /// <summary>Every floor-like surface in a column, top down.</summary>
-        private static void FindFloors(ITerrain t, double x, double z, double top, double bottom, List<double> into)
+        private static void FindFloors(ITerrain t, double x, double z, double top, double bottom, List<double> into, double? groundTop = null)
         {
             into.Clear();
             double y = top;
@@ -87,6 +100,7 @@ namespace Sculpt.Core
                 TerrainHit h = t.Raycast(new Vec3d(x, y, z), new Vec3d(0, -1, 0), y - bottom);
                 if (!h.Hit) return;
                 if (h.Normal.Y >= MinFloorNormalY) into.Add(h.Point.Y);
+                if (groundTop.HasValue && h.Point.Y <= groundTop.Value + 1e-6) return; // the ground: solid all the way down
                 // Step down through the solid to the air under it (if any).
                 double s = h.Point.Y - 0.05;
                 int k = 0;
@@ -99,15 +113,54 @@ namespace Sculpt.Core
         private static readonly int[] Dx = { 1, -1, 0, 0, 1, 1, -1, -1 };
         private static readonly int[] Dz = { 0, 0, 1, -1, 1, -1, 1, -1 };
 
+        private sealed class EdgeBlock
+        {
+            public readonly List<int> To = new List<int>(4096), Count = new List<int>(1024), Open = new List<int>(1024);
+            public readonly List<float> Cost = new List<float>(4096);
+            public readonly List<Link> Kind = new List<Link>(4096);
+        }
+
+        /// <summary>Edges for every node: worked out in blocks on all cores, then joined in node order.</summary>
         private void Connect(ITerrain t)
         {
-            var tmpTo = new List<int>(16);
-            var tmpCost = new List<float>(16);
-            var tmpKind = new List<Link>(16);
-            for (int i = 0; i < _nodes.Count; i++)
+            const int BlockSize = 1024;
+            int blocks = (_nodes.Count + BlockSize - 1) / BlockSize;
+            var results = new EdgeBlock[blocks];
+            System.Threading.Tasks.Parallel.For(0, blocks, k =>
+            {
+                var r = new EdgeBlock();
+                int end = Math.Min(_nodes.Count, (k + 1) * BlockSize);
+                for (int i = k * BlockSize; i < end; i++) ConnectNode(t, i, r);
+                results[k] = r;
+            });
+            int at = 0;
+            for (int k = 0; k < blocks; k++)
+            {
+                EdgeBlock r = results[k];
+                int e = 0;
+                for (int q = 0; q < r.Count.Count; q++, at++)
+                {
+                    Node a = _nodes[at];
+                    a.First = _to.Count + e;
+                    a.Count = r.Count[q];
+                    a.Open = r.Open[q];
+                    _nodes[at] = a;
+                    e += r.Count[q];
+                }
+                _to.AddRange(r.To);
+                _cost.AddRange(r.Cost);
+                _kind.AddRange(r.Kind);
+            }
+        }
+
+        private void ConnectNode(ITerrain t, int i, EdgeBlock into)
+        {
+            var tmpTo = into.To;
+            var tmpCost = into.Cost;
+            var tmpKind = into.Kind;
+            int before = tmpTo.Count;
             {
                 Node a = _nodes[i];
-                tmpTo.Clear(); tmpCost.Clear(); tmpKind.Clear();
                 int open = 0;
                 double ax = MinX + (a.Cx + 0.5) * Cell, az = MinZ + (a.Cz + 0.5) * Cell;
                 for (int d = 0; d < 8; d++)
@@ -143,13 +196,8 @@ namespace Sculpt.Core
                         tmpCost.Add((float)c);
                     }
                 }
-                a.First = _to.Count;
-                a.Count = tmpTo.Count;
-                a.Open = open;
-                _to.AddRange(tmpTo);
-                _cost.AddRange(tmpCost);
-                _kind.AddRange(tmpKind);
-                _nodes[i] = a;
+                into.Count.Add(tmpTo.Count - before);
+                into.Open.Add(open);
             }
         }
 

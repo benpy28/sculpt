@@ -32,6 +32,7 @@ namespace Sculpt.Game.UI
 
         private static string Slash(int n) => n < 0 || n >= SlashCache.Length ? "/ " + n : SlashCache[n] ?? (SlashCache[n] = "/ " + n);
         private static readonly string[] C4Cache = new string[16], GlCache = new string[16];
+        private static readonly string[] BandCache = new string[16], KitCache = new string[16];
         private static string Counted(string[] cache, string prefix, int n) => n < 0 || n >= cache.Length ? prefix + n : cache[n] ?? (cache[n] = prefix + n);
         private static readonly System.Collections.Generic.Dictionary<Item, string> UpperCache = new System.Collections.Generic.Dictionary<Item, string>();
         private static string UpperName(Item it) { if (!UpperCache.TryGetValue(it, out string u)) UpperCache[it] = u = Items.Name(it).ToUpperInvariant(); return u; }
@@ -71,6 +72,26 @@ namespace Sculpt.Game.UI
             if (!net.Joined) return;
             // Draw-only HUD: nothing here reacts to mouse or key events, so only the repaint call does any work.
             if (Event.current.type != EventType.Repaint) return;
+            if (net.IsSpectator)
+            {
+                // Watching: only the kill feed (the watch HUD shows the watched player).
+                float sw = Screen.width, sh = Screen.height;
+                _gl.SetPass(0);
+                GL.PushMatrix();
+                try
+                {
+                    HudDraw.LoadPixels();
+                    HudDraw.BeginBatch();
+                    if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeedPanels(net, sw, sh);
+                }
+                finally
+                {
+                    HudDraw.EndBatch();
+                    GL.PopMatrix();
+                }
+                if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeed(net, sw);
+                return;
+            }
 
             MotorState s = _player.State;
             WeaponsConfig cfg = _player.Config.Weapons;
@@ -84,13 +105,13 @@ namespace Sculpt.Game.UI
                     HudDraw.LoadPixels();
                     HudDraw.BeginBatch(); // every shape below goes out as one draw
                     if (!s.Dead) DrawCrosshair(s, cfg, w / 2f, h / 2f);
-                    DrawHitMarker(w / 2f, h / 2f);
+                    if (Sculpt.Game.Settings.ClientSettings.Current.HitMarkers) DrawHitMarker(w / 2f, h / 2f);
                     DrawHurt(w, h);
                     if (s.Dead) HudDraw.RoundRect(w / 2f - 220, h * 0.64f - 110, 440, 120, 12, new Color(0.05f, 0.06f, 0.08f, 0.6f));
                     DrawHealthBar(s, cfg);
                     DrawAmmo(s, cfg, net.Tick, w);
                     DrawHotbar(s, net.Tick, w);
-                    DrawFeedPanels(net, w, h);
+                    if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeedPanels(net, w, h);
                 }
                 finally
                 {
@@ -120,6 +141,7 @@ namespace Sculpt.Game.UI
                 string hint = null;
                 if (heldItem == Item.C4 && out_ > 0) hint = DetonateHint(count == 0, out_);
                 else if (heldItem == Item.Launcher && net.Tick < s.LauncherReadyTick) hint = "LOADING";
+                else if (Items.IsHeal(heldItem)) hint = s.Hand.Using ? "HEALING" : s.Damage <= 0 ? "FULL HEALTH" : heldItem == Item.Medkit ? "FIRE  +100" : "FIRE  +25";
                 if (hint != null) HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 14, 200, 20), hint, 11, heldItem == Item.C4 ? HudDraw.Amber : HudDraw.Dim, TextAnchor.MiddleLeft, true);
             }
             else if (!s.Dead && s.Hand.HasGun)
@@ -130,7 +152,8 @@ namespace Sculpt.Game.UI
                 float px = w - Margin - PanelW;
                 bool reloading = s.Weapon.Reloading && s.Weapon.ReloadGun == held;
                 Color ammoCol = ammo == 0 ? HudDraw.Red : ammo <= st.MagSize / 4 ? HudDraw.Amber : HudDraw.Text;
-                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), NamesUpper[(int)held], 13, HudDraw.Dim, TextAnchor.MiddleLeft, true);
+                Rarity heldRar = s.Hand.Bag.RarityOf(s.Hand.Slot);
+                HudDraw.Label(HudDraw.ToGui(px + 16, Margin + 36, 150, 22), NamesUpper[(int)held], 13, heldRar != Rarity.None ? RarityColours.Of(heldRar) : HudDraw.Dim, TextAnchor.MiddleLeft, true);
                 HudDraw.Label(HudDraw.ToGui(px + PanelW - 96, Margin + 16, 50, 40), HudDraw.Num(ammo), 30, ammoCol, TextAnchor.MiddleRight, true);
                 HudDraw.Label(HudDraw.ToGui(px + PanelW - 44, Margin + 18, 40, 30), Slash(st.MagSize), 13, HudDraw.Dim, TextAnchor.MiddleLeft);
                 string hint = reloading ? "RELOADING" : ammo == 0 ? "EMPTY" : ammo <= st.MagSize / 4 ? "R  RELOAD" : null;
@@ -145,11 +168,15 @@ namespace Sculpt.Game.UI
                 Item it = s.Hand.Bag[i];
                 bool held = i == s.Hand.Slot && it != Item.None;
                 Color tc = it == Item.None ? HudDraw.A(HudDraw.Dim, 0.5f) : held ? HudDraw.Text : HudDraw.Dim;
+                Rarity rar = s.Hand.Bag.RarityOf(i);
+                if (it != Item.None && rar != Rarity.None) tc = HudDraw.A(RarityColours.Of(rar), held ? 1f : 0.7f); // battle royale: the slot reads its rarity
                 HudDraw.Label(HudDraw.ToGui(r.x + 7, r.y + r.height - 15, 20, 12), HudDraw.Num(i + 1), 10, HudDraw.A(tc, 0.8f), TextAnchor.MiddleLeft, true);
                 int n = s.Hand.Bag.Count(i);
                 string name = it == Item.None ? "—" : it == Item.Grenade ? Counted(NadeCache, "Nade x", n)
                     : it == Item.C4 ? (n == 0 ? "Det." : Counted(C4Cache, "C4 x", n))
-                    : it == Item.Launcher ? Counted(GlCache, "GL x", n) : Items.Name(it);
+                    : it == Item.Launcher ? Counted(GlCache, "GL x", n)
+                    : it == Item.Bandage ? Counted(BandCache, "Band. x", n)
+                    : it == Item.Medkit ? Counted(KitCache, "Kit x", n) : Items.Name(it);
                 HudDraw.Label(HudDraw.ToGui(r.x, r.y + 3, r.width, r.height - 8), name, 12, tc, TextAnchor.MiddleCenter, held);
             }
 
@@ -159,12 +186,15 @@ namespace Sculpt.Game.UI
                 GroundItem g = net.Items[_player.PickTarget];
                 PickupPlan plan = _player.PickPlan;
                 string key = _player.InteractKeyName;
-                string what = Items.Name(g.Kind) + (g.Count > 1 ? " x" + g.Count : "");
+                string what = Items.Name(g.Kind, g.Rarity) + (g.Count > 1 ? " x" + g.Count : "");
                 string line;
-                Color col = HudDraw.Text;
-                if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
+                Color col = g.Rarity != Rarity.None ? RarityColours.Of(g.Rarity) : HudDraw.Text;
+                if (plan.Opens) line = $"{key}  Open chest";
+                else if (plan.Result == PickupResult.Swapped && plan.SwapOut == g.Kind) line = $"{key}  Swap your {Items.Name(g.Kind, s.Hand.Bag.RarityOf(plan.Slot))} for {what}";
+                else if (plan.Result == PickupResult.Swapped) line = $"{key}  Swap {Items.Name(plan.SwapOut)} for {what}";
                 else if (plan.Allowed) line = $"{key}  Pick up {what}";
-                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
+                else if (plan.Result == PickupResult.AlreadyHave) { line = g.Kind == Item.Grenade ? "Grenades full" : g.Kind == Item.C4 ? "C4 full" : g.Kind == Item.Launcher ? "Launcher rounds full"
+                    : g.Kind == Item.Bandage ? "Bandages full" : g.Kind == Item.Medkit ? "First-aid kits full" : "Have " + Items.Name(g.Kind); col = HudDraw.Dim; }
                 else { line = what; col = HudDraw.Dim; }
                 HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), line, 14, col, TextAnchor.MiddleCenter, true);
             }
@@ -178,13 +208,13 @@ namespace Sculpt.Game.UI
                 HudDraw.Label(new Rect(0, h / 2f + 46, w, 22), "Dropping " + Items.Name(s.Hand.HeldItem) + "...", 13, HudDraw.Dim, TextAnchor.MiddleCenter, true);
 
             // Damage dealt by the last hit, next to the crosshair.
-            if (Time.time - _view.HitTime < 0.5f)
+            if (Sculpt.Game.Settings.ClientSettings.Current.DamageNumbers && Time.time - _view.HitTime < 0.5f)
                 HudDraw.Label(new Rect(w / 2f + 20, h / 2f + 8, 80, 20), HudDraw.Num(_view.LastHitDamage), 14,
                      Time.time - _view.HeadHitTime < 0.5f ? HudDraw.Amber : HudDraw.Text, TextAnchor.MiddleLeft, true);
 
-            DrawFeed(net, w);
+            if (Sculpt.Game.Settings.ClientSettings.Current.KillFeed) DrawFeed(net, w);
 
-            if (s.Dead)
+            if (s.Dead && !net.Match.IsBr) // battle royale: no respawn, its own "you're out" panel (BrHud)
             {
                 float left = Mathf.Max(0, (s.RespawnTick - net.Tick) / (float)SimTime.TicksPerSecond);
                 string by = _view.KilledBy != 0 && _view.KilledBy != net.PlayerId ? $"by P{_view.KilledBy}  ·  {SourceName(_view.KilledWith)}" : SourceName(_view.KilledWith);
@@ -222,21 +252,22 @@ namespace Sculpt.Game.UI
         private void DrawCrosshair(in MotorState s, WeaponsConfig cfg, float cx, float cy)
         {
             HandState hand = s.Hand;
+            Color tint = Sculpt.Game.Settings.ClientSettings.Current.CrosshairColour; // Settings > Crosshair (colour only for now)
             if (hand.InSculptMode)
             {
-                Cross(cx, cy, 3f, 5f, 1.5f, new Color(1, 1, 1, 0.9f));
+                Cross(cx, cy, 3f, 5f, 1.5f, HudDraw.A(tint, 0.9f));
                 return;
             }
             if (!hand.HasGun)
             {
                 // A grenade or empty hands: a plain dot (the throw arc arrives with grenades).
-                Dot(cx, cy, 2f, hand.ItemReady ? new Color(1, 1, 1, 0.95f) : new Color(1, 1, 1, 0.4f));
+                Dot(cx, cy, 2f, HudDraw.A(tint, hand.ItemReady ? 0.95f : 0.4f));
                 return;
             }
             WeaponStats st = cfg.Of(hand.Held);
             double spread = WeaponRules.Spread(s, _player.Config, st);
             bool ready = hand.CanFire && s.CanShoot;
-            Color c = ready ? new Color(1, 1, 1, 0.95f) : new Color(1, 1, 1, 0.4f);
+            Color c = HudDraw.A(tint, ready ? 0.95f : 0.4f);
             if (st.Pellets > 1)
             {
                 // Pump: the pellet ring at its real size, plus a centre dot.
@@ -246,7 +277,7 @@ namespace Sculpt.Game.UI
                 // Cycle: the ring fills back in as the pump comes ready.
                 long next = s.Weapon.NextPump, now = _session.Client.Tick * 1000L;
                 float k = Mathf.Clamp01(1f - (next - now) / (float)st.FireIntervalMilliTicks);
-                if (k < 1f) Arc(cx, cy, r + 5f, 2f, 0, 360 * k, new Color(1, 1, 1, 0.6f));
+                if (k < 1f) Arc(cx, cy, r + 5f, 2f, 0, 360 * k, HudDraw.A(tint, 0.6f));
                 return;
             }
             float gap = Mathf.Max(3f, Px(spread));
@@ -375,6 +406,14 @@ namespace Sculpt.Game.UI
                 float pw = (PanelW - 32 - 6 * (carry - 1)) / carry;
                 for (int i = 0; i < carry; i++)
                     HudDraw.RoundRect(gx + i * (pw + 6), gy, pw, 5, 1.5f, i < have ? HudDraw.A(HudDraw.Text, 0.9f) : new Color(1, 1, 1, 0.12f));
+                if (s.Hand.Using)
+                {
+                    // A bandage or first-aid kit in use: how far through it is (it takes effect at the end).
+                    HudDraw.Bar(gx, gy + 8, PanelW - 32, 3, (float)HealItemRules.Progress(s.Hand, tick), HudDraw.Text);
+                    float cx = w / 2f, cy = Screen.height / 2f - 70;
+                    HudDraw.RoundRect(cx - 60, cy, 120, 6, 2, new Color(0, 0, 0, 0.45f));
+                    HudDraw.RoundRect(cx - 60, cy, 120 * (float)HealItemRules.Progress(s.Hand, tick), 6, 2, HudDraw.A(HudDraw.Text, 0.9f));
+                }
                 if (s.Hand.HeldItem == Item.Launcher && tick < s.LauncherReadyTick)
                 {
                     // The next round loading: a thin bar under the pips.

@@ -20,6 +20,18 @@ namespace Sculpt.Core.Net
         Items = 9,     // server -> client, reliable: the whole list of items on the ground, whenever it changes (and on join)
         Match = 10,    // server -> client, reliable: match phase, timer and scores, whenever they change (and on join)
         Reveal = 11,   // server -> client, reliable: an enemy shown through walls by the anti-hiding ping (only to those two players, only when it starts or is cancelled)
+        Hello = 12,    // client -> server, reliable, first packet after connecting: version, and play or watch (Replay/SpecProtocol)
+        SpecFrame = 13, // server -> spectator, reliable: one tick's spectator packets bundled (also what a replay file stores)
+        SpecSnap = 14, // inside spectator frames only: every player, delta-coded (Replay/SpecProtocol)
+        Prefs = 15,    // client -> server, reliable, after the welcome and whenever they change: slot auto-sort and the battle royale locker gun
+    }
+
+    /// <summary>A player's own choices the server needs (protocol 35): where pickups go, and the locker gun.</summary>
+    public struct PrefsMsg
+    {
+        public SlotPrefs Slots;
+        /// <summary>Battle royale locker gun (None = the server's default).</summary>
+        public Item Locker;
     }
 
     public struct WelcomeMsg
@@ -30,11 +42,16 @@ namespace Sculpt.Core.Net
         public int ServerTick;
         public Vec3d Spawn;
         public double SpawnYaw;
+        /// <summary>Spectators only: how far behind the live match they watch, in ticks (0 for players).</summary>
+        public int SpectatorDelayTicks;
+
+        /// <summary>Player id 0 is never a player: a welcome with it makes the client a spectator.</summary>
+        public bool IsSpectator => PlayerId == 0;
     }
 
     public struct InputsMsg
     {
-        /// <summary>Newest server snapshot tick the client has received (for future delta compression).</summary>
+        /// <summary>Newest server snapshot tick the client has received and kept: the server codes the next snapshots against it.</summary>
         public int AckSnapshotTick;
         /// <summary>Oldest first, consecutive ticks.</summary>
         public List<InputCmd> Cmds;
@@ -79,7 +96,7 @@ namespace Sculpt.Core.Net
 
     public static class Protocol
     {
-        public const byte Version = 29; // 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
+        public const byte Version = 36; // 36 main merge 2026-11-26 (settings, inventory, home screen, BR, Unity verify fixes, BR lag/614 m map/IP join, anti-cheat fixes); 35 inventory rework (any item in any slot, duplicate guns, bandages and first-aid kits, slot swaps in the command, the Prefs message, held item in 4 bits); 34 battle royale first playable (bag and ground item rarity, chests, the BR match and circle in the Match message, item deltas); 33 anti-cheat groundwork (interest management: snapshots only carry enemies you could see or hear soon; dev respawn refused unless allowed); 32 delta snapshots (coded against the newest snapshot the client acked; other players quantized like the spectator stream); 31 balance pass 2 (SMG head 1.5x, no crouch accuracy bonus: rules differ between builds); 30 replays and spectators (Hello, spectator frames, welcome gains the spectator delay); 29 integrate2 round 3 (balance 28 + ping 25 + doors + guns + home screen); 28 balance pass; 25 anti-hiding ping; 24 the second friend-demo merge (120 Hz + walls by cell + movement/feel + duel map v2); 23 feel pass; 20 friend demo merge; 19 C4/launcher; 18 blast holes; 16 latency
         public const int NoLead = sbyte.MinValue;
         public const int NoHold = ushort.MaxValue;
         public const int MaxCmdsPerPacket = 32;
@@ -102,20 +119,45 @@ namespace Sculpt.Core.Net
             w.I32(m.ServerTick);
             w.Vec(m.Spawn);
             w.F64(m.SpawnYaw);
+            w.I32(m.SpectatorDelayTicks);
+        }
+
+        public static void Write(ByteWriter w, in PrefsMsg m)
+        {
+            w.U8((byte)MsgType.Prefs);
+            for (int k = 0; k < Items.Slots; k++) w.U8((byte)m.Slots[k]);
+            w.U8((byte)m.Locker);
+        }
+
+        public static PrefsMsg ReadPrefs(ref ByteReader r)
+        {
+            Expect(ref r, MsgType.Prefs);
+            var m = new PrefsMsg();
+            for (int k = 0; k < Items.Slots; k++)
+            {
+                byte v = r.U8();
+                if (v > (byte)SlotPrefs.Last) throw new NetFormatException("Bad slot preference.");
+                m.Slots[k] = (SlotPref)v;
+            }
+            byte l = r.U8();
+            if (l != 0 && !Items.IsGun((Item)l)) throw new NetFormatException("Bad locker gun.");
+            m.Locker = (Item)l;
+            return m;
         }
 
         public static WelcomeMsg ReadWelcome(ref ByteReader r)
         {
             Expect(ref r, MsgType.Welcome);
-            return new WelcomeMsg
-            {
-                ProtocolVersion = r.U8(),
-                PlayerId = r.I32(),
-                Team = r.I32(),
-                ServerTick = r.I32(),
-                Spawn = r.Vec(),
-                SpawnYaw = r.F64(),
-            };
+            var m = new WelcomeMsg { ProtocolVersion = r.U8() };
+            // Another build's welcome may be laid out differently: the version alone tells the client what is wrong.
+            if (m.ProtocolVersion != Version) return m;
+            m.PlayerId = r.I32();
+            m.Team = r.I32();
+            m.ServerTick = r.I32();
+            m.Spawn = r.Vec();
+            m.SpawnYaw = r.F64();
+            m.SpectatorDelayTicks = r.I32();
+            return m;
         }
 
         // ---------------------------------------------------------------- Inputs
@@ -148,76 +190,13 @@ namespace Sculpt.Core.Net
 
         // ---------------------------------------------------------------- Snapshot
 
-        public static void Write(ByteWriter w, in SnapshotMsg m)
-        {
-            w.U8((byte)MsgType.Snapshot);
-            w.I32(m.ServerTick);
-            w.Bool(m.HasSelf);
-            if (m.HasSelf)
-            {
-                w.Bool(m.SelfInputWasReal);
-                int lead = m.SelfLead < sbyte.MinValue ? sbyte.MinValue : (m.SelfLead > sbyte.MaxValue ? sbyte.MaxValue : m.SelfLead);
-                w.I8((sbyte)lead);
-                WriteMotor(w, m.Self);
-                w.U16((ushort)Math.Max(0, Math.Min(ushort.MaxValue, m.SelfBar)));
-                w.U16((ushort)(m.SelfHoldTenthMs < 0 || m.SelfHoldTenthMs >= NoHold ? NoHold : m.SelfHoldTenthMs));
-            }
-            int n = m.Others?.Count ?? 0;
-            if (n > MaxPlayersPerSnapshot) throw new System.ArgumentException("Too many players.");
-            w.U8((byte)n);
-            for (int i = 0; i < n; i++)
-            {
-                PlayerSnap p = m.Others[i];
-                w.U16((ushort)p.Id);
-                w.U8((byte)p.Team);
-                w.VecF(p.Position);
-                w.VecF(p.Velocity);
-                w.F32(p.Yaw);
-                w.F32(p.Pitch);
-                w.U8((byte)p.Mode);
-                w.U8((byte)((p.Crouched ? 1 : 0) | (p.Dead ? 2 : 0) | (((byte)p.Held & 7) << 2) | ((byte)p.Hand << 5)));
-            }
-        }
+        /// <summary>Writes a full snapshot (no delta base). The server uses <see cref="SnapshotCodec"/> per client.</summary>
+        public static void Write(ByteWriter w, in SnapshotMsg m) => new SnapshotCodec().Write(w, m, null, -1);
 
+        /// <summary>Reads a full snapshot. A delta (which needs the receiver's baselines) throws.</summary>
         public static SnapshotMsg ReadSnapshot(ref ByteReader r, List<PlayerSnap> othersInto)
         {
-            Expect(ref r, MsgType.Snapshot);
-            var m = new SnapshotMsg { ServerTick = r.I32(), Others = othersInto };
-            othersInto.Clear();
-            m.HasSelf = r.Bool();
-            if (m.HasSelf)
-            {
-                m.SelfInputWasReal = r.Bool();
-                m.SelfLead = r.I8();
-                m.Self = ReadMotor(ref r);
-                m.SelfBar = r.U16();
-                m.SelfHoldTenthMs = r.U16();
-            }
-            int n = r.U8();
-            if (n > MaxPlayersPerSnapshot) throw new NetFormatException("Too many players.");
-            for (int i = 0; i < n; i++)
-            {
-                var p = new PlayerSnap
-                {
-                    Id = r.U16(),
-                    Team = r.U8(),
-                    Position = r.VecF(),
-                    Velocity = r.VecF(),
-                    Yaw = r.F32(),
-                    Pitch = r.F32(),
-                    Mode = ReadMode(ref r),
-                };
-                byte pf = r.U8();
-                p.Crouched = (pf & 1) != 0;
-                p.Dead = (pf & 2) != 0;
-                int held = (pf >> 2) & 7;
-                if (held > (int)Items.Last) throw new NetFormatException("Bad item.");
-                p.Held = (Item)held;
-                int hm = pf >> 5;
-                if (hm > (int)HandMode.Disarmed) throw new NetFormatException("Bad hand mode.");
-                p.Hand = (HandMode)hm;
-                othersInto.Add(p);
-            }
+            if (!new SnapshotCodec().TryRead(ref r, othersInto, null, out SnapshotMsg m)) throw new NetFormatException("Delta snapshot without baselines.");
             return m;
         }
 
@@ -261,9 +240,11 @@ namespace Sculpt.Core.Net
             w.U8((byte)s.Hand.Mode);
             w.U8((byte)((s.Hand.Slot & 7) | ((s.Hand.PrevSlot & 7) << 3) | (s.Hand.HeldReady ? 0x40 : 0) | (s.Hand.ExitQueued ? 0x80 : 0)));
             Bag bag = s.Hand.Bag;
-            for (int k = 0; k < Items.Slots; k++) { w.U8((byte)bag[k]); w.U8(bag.Count(k)); }
+            for (int k = 0; k < Items.Slots; k++) { w.U8((byte)((byte)bag[k] | ((byte)bag.RarityOf(k) << 4))); w.U8(bag.Count(k)); }
             w.I32(s.Hand.ReadyTick);
             w.I32(s.Hand.SculptLockUntil);
+            w.I32(s.Hand.UseUntil);
+            w.I32(s.Hand.UseStart);
             WeaponState g = s.Weapon;
             w.I64(g.NextPump); w.I64(g.NextSmg); w.I64(g.NextAr); w.I64(g.NextPistol);
             w.I32(g.LastShotTick); w.I32(g.Streak); w.I32(g.ShotCount);
@@ -366,12 +347,15 @@ namespace Sculpt.Core.Net
             for (int k = 0; k < Items.Slots; k++)
             {
                 byte it = r.U8();
-                if (it > (byte)Items.Last) throw new NetFormatException("Bad item.");
-                s.Hand.Bag[k] = (Item)it;
+                if ((it & 0x0F) > (byte)Items.Last || (it & 0x0F) == (byte)Item.Chest || (it >> 4) > (byte)Rarities.Last) throw new NetFormatException("Bad item.");
+                s.Hand.Bag[k] = (Item)(it & 0x0F);
+                s.Hand.Bag.SetRarity(k, (Rarity)(it >> 4));
                 s.Hand.Bag.SetCount(k, r.U8());
             }
             s.Hand.ReadyTick = r.I32();
             s.Hand.SculptLockUntil = r.I32();
+            s.Hand.UseUntil = r.I32();
+            s.Hand.UseStart = r.I32();
             var g = new WeaponState
             {
                 NextPump = r.I64(), NextSmg = r.I64(), NextAr = r.I64(), NextPistol = r.I64(),

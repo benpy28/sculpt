@@ -37,6 +37,19 @@ namespace Sculpt.Game.Settings
         public bool ShowFps;
         /// <summary>The per-click latency breakdown and frame-time panel.</summary>
         public bool ShowLatency;
+        /// <summary>A small network readout: ping, corrections, snapshot data rate, server input lead.</summary>
+        public bool ShowNetStats;
+        /// <summary>MSAA samples for the game camera: 1 = off (default, competitive), 2, 4 or 8. Smooths polygon edges.</summary>
+        public int Msaa = 1;
+
+        /// <summary>The preset these values are exactly (or Custom).</summary>
+        public Sculpt.Core.Settings.VideoPreset Preset => Sculpt.Core.Settings.DisplayPresets.Detect(Values);
+
+        public Sculpt.Core.Settings.VideoValues Values
+        {
+            get => new Sculpt.Core.Settings.VideoValues { VSync = VSync, FpsCap = FpsCap, LowLatency = LowLatency, LeanRendering = LeanRendering, RenderScale = RenderScale, Msaa = Msaa };
+            set { VSync = value.VSync; FpsCap = value.FpsCap; LowLatency = value.LowLatency; LeanRendering = value.LeanRendering; RenderScale = value.RenderScale; Msaa = Sculpt.Core.Settings.DisplayPresets.NormMsaa(value.Msaa); Clamped(); Changed(); }
+        }
 
         /// <summary>Bumped by <see cref="Changed"/>; whoever applies settings compares it with the version it last applied.</summary>
         public int Version { get; private set; } = 1;
@@ -58,36 +71,36 @@ namespace Sculpt.Game.Settings
             if (FpsCap < CapBelowRefresh) FpsCap = CapUnlimited;
             if (FpsCap > 1000) FpsCap = 1000;
             if (FpsCap > 0 && FpsCap < 30) FpsCap = 30;
+            Msaa = Sculpt.Core.Settings.DisplayPresets.NormMsaa(Msaa);
             return this;
         }
 
+        private static readonly PrefTable<VideoSettings> Table = new PrefTable<VideoSettings>()
+            .Bool(SettingsGroup.Video, "sculpt.video.vsync", false, v => v.VSync, (v, b) => v.VSync = b)
+            .Int(SettingsGroup.Video, "sculpt.video.fpscap", CapUnlimited, CapBelowRefresh, 1000, v => v.FpsCap, (v, i) => v.FpsCap = i)
+            .Bool(SettingsGroup.Latency, "sculpt.video.lowlatency", true, v => v.LowLatency, (v, b) => v.LowLatency = b)
+            .Bool(SettingsGroup.Video, "sculpt.video.lean", true, v => v.LeanRendering, (v, b) => v.LeanRendering = b)
+            .Float(SettingsGroup.Video, "sculpt.video.renderscale", 1f, MinRenderScale, MaxRenderScale, v => v.RenderScale, (v, f) => v.RenderScale = f)
+            .Int(SettingsGroup.Video, "sculpt.video.msaa", 1, 1, 8, v => v.Msaa, (v, i) => v.Msaa = i)
+            .Bool(SettingsGroup.Latency, "sculpt.video.showfps", false, v => v.ShowFps, (v, b) => v.ShowFps = b)
+            .Bool(SettingsGroup.Latency, "sculpt.video.showlatency", false, v => v.ShowLatency, (v, b) => v.ShowLatency = b)
+            .Bool(SettingsGroup.Latency, "sculpt.video.shownet", false, v => v.ShowNetStats, (v, b) => v.ShowNetStats = b);
+
         public static VideoSettings Load()
         {
-            var v = new VideoSettings
-            {
-                VSync = PlayerPrefs.GetInt("sculpt.video.vsync", 0) == 1,
-                FpsCap = PlayerPrefs.GetInt("sculpt.video.fpscap", CapUnlimited),
-                LowLatency = PlayerPrefs.GetInt("sculpt.video.lowlatency", 1) == 1,
-                LeanRendering = PlayerPrefs.GetInt("sculpt.video.lean", 1) == 1,
-                RenderScale = PlayerPrefs.GetFloat("sculpt.video.renderscale", 1f),
-                ShowFps = PlayerPrefs.GetInt("sculpt.video.showfps", 0) == 1,
-                ShowLatency = PlayerPrefs.GetInt("sculpt.video.showlatency", 0) == 1,
-            }.Clamped();
+            var v = new VideoSettings();
+            Table.Load(v);
+            v.Clamped();
             v.ApplyCommandLine(Environment.GetCommandLineArgs());
             return v;
         }
 
-        public void Save()
-        {
-            PlayerPrefs.SetInt("sculpt.video.vsync", VSync ? 1 : 0);
-            PlayerPrefs.SetInt("sculpt.video.fpscap", FpsCap);
-            PlayerPrefs.SetInt("sculpt.video.lowlatency", LowLatency ? 1 : 0);
-            PlayerPrefs.SetInt("sculpt.video.lean", LeanRendering ? 1 : 0);
-            PlayerPrefs.SetFloat("sculpt.video.renderscale", RenderScale);
-            PlayerPrefs.SetInt("sculpt.video.showfps", ShowFps ? 1 : 0);
-            PlayerPrefs.SetInt("sculpt.video.showlatency", ShowLatency ? 1 : 0);
-            PlayerPrefs.Save();
-        }
+        public void Save() => Table.Save(this);
+
+        public void ResetGroup(string group) { Table.Defaults(this, group); Clamped(); Changed(); }
+        public void ResetAll() { Table.Defaults(this); Clamped(); Changed(); }
+        public void WriteTo(System.Collections.Generic.IDictionary<string, string> into) => Table.Write(this, into);
+        public int ReadFrom(System.Collections.Generic.IReadOnlyDictionary<string, string> from) { int n = Table.Read(this, from); Clamped(); Changed(); return n; }
 
         /// <summary>
         /// One-run overrides, never saved (benchmarks and A/B tests): -vsync 0|1, -fpscap N (0 = unlimited, -1 = display - 3),

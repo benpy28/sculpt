@@ -46,6 +46,7 @@ namespace Sculpt.Core.Net
         /// <summary>Start of each tick: move the match along.</summary>
         private void StepMatch()
         {
+            if (Br != null) { StepBr(); return; }
             if (!MatchConfig.Enabled)
             {
                 if (Match.Phase != MatchPhase.Off) SetPhase(MatchPhase.Off, 0);
@@ -127,8 +128,7 @@ namespace Sculpt.Core.Net
             FillScores();
             _w.Clear();
             MatchProtocol.Write(_w, Match, Tick);
-            byte[] data = _w.ToArray();
-            foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
+            Broadcast(_w.ToArray());
         }
 
         private void FillScores()
@@ -136,16 +136,18 @@ namespace Sculpt.Core.Net
             Match.Scores.Clear();
             foreach (ServerPlayer p in _players)
                 if (CountsForMatch(p))
-                    Match.Scores.Add(new MatchScore { PlayerId = p.Id, Team = p.Team, Kills = p.MatchKills, Deaths = p.MatchDeaths });
+                    Match.Scores.Add(new MatchScore { PlayerId = p.Id, Team = p.Team, Kills = p.MatchKills, Deaths = p.MatchDeaths, Place = Br != null && _brIn.Contains(p.Id) ? PlaceOf(p.Team) : 0 });
             Match.Version++;
         }
 
-        private void SendMatchTo(ServerPlayer p)
+        private void SendMatchTo(ServerPlayer p) => Send(p.ConnectionId, MatchBytes(), true);
+
+        private byte[] MatchBytes()
         {
             FillScores();
             _w.Clear();
             MatchProtocol.Write(_w, Match, Tick);
-            Send(p.ConnectionId, _w.ToArray(), true);
+            return _w.ToArray();
         }
     }
 }

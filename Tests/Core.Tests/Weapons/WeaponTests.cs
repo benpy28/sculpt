@@ -67,8 +67,12 @@ namespace Sculpt.Core.Tests.Weapons
             Assert.That(pump.DamageFactorAt(5), Is.EqualTo(1.0));
             Assert.That(pump.DamageFactorAt(12), Is.EqualTo(0.65).Within(1e-9));
             Assert.That(pump.DamageFactorAt(40), Is.EqualTo(0.2).Within(1e-9), "heavy past 12 m");
-            Assert.That(smg.DamageFactorAt(10), Is.EqualTo(1.0));
-            Assert.That(smg.DamageFactorAt(20), Is.LessThan(0.7), "heavy past 10 m");
+            // Balance pass 2 (2026-11-26): SMG falloff from 7 m, 0.6 at 18 m (was 10 / 20 m), so its bigger head bonus
+            // wins at 6 m without making it a 10-15 m gun.
+            Assert.That(smg.DamageFactorAt(7), Is.EqualTo(1.0));
+            Assert.That(smg.DamageFactorAt(10), Is.LessThan(1.0).And.GreaterThan(0.85), "starts falling off past 7 m");
+            Assert.That(smg.DamageFactorAt(18), Is.EqualTo(0.6).Within(1e-12));
+            Assert.That(smg.DamageFactorAt(20), Is.LessThan(0.7), "heavy past 15 m");
             Assert.That(ar.DamageFactorAt(200), Is.EqualTo(1.0), "AR has no falloff");
             Assert.That(pistol.DamageFactorAt(25), Is.EqualTo(1.0));
             Assert.That(pistol.DamageFactorAt(37.5), Is.EqualTo(0.85).Within(1e-9));
@@ -261,13 +265,19 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
-        public void CrouchingTightensAndMovingWidens()
+        public void CrouchingDoesNotSteadyAimAndMovingWidens()
         {
+            // Balance pass 2 (2026-11-26): no gun is more accurate crouched (it was 0.75-0.8x), so a crouch only makes
+            // you smaller. The factor still works when a gun is given one.
             WeaponStats smg = _mc.Weapons.Of(Weapon.Smg);
             var s = _s;
             double still = WeaponRules.Spread(s, _mc, smg);
             s.Crouched = true;
-            Assert.That(WeaponRules.Spread(s, _mc, smg), Is.LessThan(still));
+            foreach (Weapon g in new[] { Weapon.Pump, Weapon.Smg, Weapon.Ar, Weapon.Pistol })
+                Assert.That(_mc.Weapons.Of(g).CrouchFactor, Is.EqualTo(1.0), g + " has no crouch accuracy bonus");
+            Assert.That(WeaponRules.Spread(s, _mc, smg), Is.EqualTo(still).Within(1e-12));
+            WeaponStats tight = smg.Clone(); tight.CrouchFactor = 0.5;
+            Assert.That(WeaponRules.Spread(s, _mc, tight), Is.EqualTo(still * 0.5).Within(1e-12));
             s.Crouched = false;
             s.Velocity = new Vec3d(_mc.RunSpeed, 0, 0);
             Assert.That(WeaponRules.Spread(s, _mc, smg), Is.EqualTo(still + smg.MoveSpread).Within(1e-12));

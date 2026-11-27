@@ -62,6 +62,9 @@ namespace Sculpt.Game.Weapons
             Shader s = Shader.Find("SCULPT/Viewmodel");
             if (s == null) s = Shader.Find("Universal Render Pipeline/Unlit");
             _mat = new Material(s) { name = "Thrown grenades" };
+            // The viewmodel shader squashes depth toward the near plane so the gun never clips into walls. Anything in the
+            // world must keep its real depth, or it draws through walls (it did: chests and guns showed through buildings).
+            _mat.SetFloat("_DepthSquash", 1f);
             _debris = new GameObject("Blast Debris").AddComponent<TileDebris>();
             _debris.transform.SetParent(transform, false);
             for (int i = 0; i < _own.Length; i++) _own[i] = new Own { Kind = ThrowKind.Grenade, View = Take(ThrowKind.Grenade) };
@@ -257,22 +260,23 @@ namespace Sculpt.Game.Weapons
             if (blink != (int)state)
             {
                 state = blink;
-                Synth.Play(Beep, view.position, secondsLeft < 2f ? 0.5f : 0.35f, secondsLeft < 2f ? 1.25f : 1f, true, 2f, 18f);
+                Synth.Play(Beep, view.position, secondsLeft < 2f ? 0.5f : 0.35f, secondsLeft < 2f ? 1.25f : 1f, true, 2f, 18f, bus: SoundBus.Weapons, caption: SoundCaption.C4Beeping);
             }
         }
 
         private void Launched(ThrowKind k, Vector3 at, bool remote)
         {
-            if (k == ThrowKind.Launcher) Synth.Play(Thump, at, remote ? 1f : 0.9f, Random.Range(0.95f, 1.04f), remote, 3f, 80f, true, 40);
-            else Synth.Play(Toss_, at, 0.45f, Random.Range(0.95f, 1.08f) * (k == ThrowKind.C4 ? 0.8f : 1f), true, 2f, 30f);
+            if (k == ThrowKind.Launcher) Synth.Play(Thump, at, remote ? 1f : 0.9f, Random.Range(0.95f, 1.04f), remote, 3f, 80f, true, 40, bus: SoundBus.Weapons, caption: remote ? SoundCaption.GrenadeThrow : SoundCaption.None);
+            else Synth.Play(Toss_, at, 0.45f, Random.Range(0.95f, 1.08f) * (k == ThrowKind.C4 ? 0.8f : 1f), true, 2f, 30f, bus: SoundBus.Weapons,
+                            caption: remote ? SoundCaption.GrenadeThrow : SoundCaption.None);
         }
 
-        private void Stick(Vector3 at) => Synth.Play(StickClip, at, 0.6f, Random.Range(0.95f, 1.05f), true, 2f, 25f);
+        private void Stick(Vector3 at) => Synth.Play(StickClip, at, 0.6f, Random.Range(0.95f, 1.05f), true, 2f, 25f, bus: SoundBus.Weapons);
 
         /// <summary>A launcher round that hit before it armed: a dull knock and a little smoke, nothing else.</summary>
         private void Dud(Vector3 at)
         {
-            Synth.Play(DudClip, at, 0.7f, Random.Range(0.9f, 1.1f), true, 2f, 35f);
+            Synth.Play(DudClip, at, 0.7f, Random.Range(0.9f, 1.1f), true, 2f, 35f, bus: SoundBus.Weapons);
             var box = new Aabb(new Vec3d(at.x - 0.15, at.y - 0.1, at.z - 0.15), new Vec3d(at.x + 0.15, at.y + 0.15, at.z + 0.15));
             _debris.Burst(box, Dir.North, new Color(0.42f, 0.42f, 0.40f), 4, true);
         }
@@ -288,8 +292,8 @@ namespace Sculpt.Game.Weapons
             int n = kind == ThrowKind.C4 ? 20 : 14;
             _debris.Burst(box, Dir.North, new Color(0.30f, 0.28f, 0.25f), n, true);
             _debris.Burst(box, Dir.East, new Color(0.36f, 0.33f, 0.30f), n * 3 / 4, true);
-            if (kind == ThrowKind.C4) Synth.Play(C4Boom, at, 1f, Random.Range(0.94f, 1.02f), true, 7f, 190f, true, 30);
-            else Synth.Play(Boom, at, 1f, Random.Range(0.94f, 1.04f) * (kind == ThrowKind.Launcher ? 1.06f : 1f), true, 6f, 160f, true, 32);
+            if (kind == ThrowKind.C4) Synth.Play(C4Boom, at, 1f, Random.Range(0.94f, 1.02f), true, 7f, 190f, true, 30, bus: SoundBus.Weapons, caption: SoundCaption.Explosion);
+            else Synth.Play(Boom, at, 1f, Random.Range(0.94f, 1.04f) * (kind == ThrowKind.Launcher ? 1.06f : 1f), true, 6f, 160f, true, 32, bus: SoundBus.Weapons, caption: SoundCaption.Explosion);
 
             UnityEngine.Camera cam = UnityEngine.Camera.main;
             if (cam == null || _shake == null) return;

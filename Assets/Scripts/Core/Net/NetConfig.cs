@@ -43,7 +43,20 @@ namespace Sculpt.Core.Net
         /// <summary>Client prediction history length (ticks). Must cover the round trip plus lead.</summary>
         public int HistoryTicks = 128 * SimTime.Per60;
 
-        /// <summary>Server sends a snapshot every N ticks (1 = 60 Hz).</summary>
+        /// <summary>
+        /// Delta snapshots: each snapshot is coded against the newest one the client acked (see SnapshotCodec), so a
+        /// still player costs a couple of bytes and your own state only what changed. Off = every snapshot full (the
+        /// old size; for comparison). Either way the client decodes exactly the same state.
+        /// </summary>
+        public bool DeltaSnapshots = true;
+
+        /// <summary>
+        /// How far back (ticks) a delta base may be. Server and client keep this many snapshots each. An ack older than
+        /// this (a long stall or a very bad link) gets a full snapshot. 128 ticks = 1.07 s at 120 Hz.
+        /// </summary>
+        public int SnapshotBaselineTicks = 64 * SimTime.Per60;
+
+        /// <summary>Server sends a snapshot every N ticks (1 = every tick).</summary>
         public int SnapshotEveryTicks = 1;
 
         /// <summary>Remote players are drawn this many ticks behind the newest snapshot (covers jitter and a lost snapshot).</summary>
@@ -69,6 +82,17 @@ namespace Sculpt.Core.Net
         /// The game only turns it on in the Editor and development builds.
         /// </summary>
         public bool AllowDevWarp;
+
+        /// <summary>
+        /// Dev respawn (F1): whether a respawn press from a client is honoured. Off by default since 2026-11-26: before,
+        /// any client could send it, so a modified client could skip the 3 s respawn wait or teleport home at full health
+        /// mid-fight. The game turns it on only in the Editor and development builds, like the warp. The server's own
+        /// respawns (match countdown, the respawn timer, falling out of the world) never need it.
+        /// </summary>
+        public bool AllowDevRespawn;
+
+        /// <summary>Anti-cheat checks and interest management (who goes in whose snapshots).</summary>
+        public AntiCheat.AntiCheatConfig AntiCheat = new AntiCheat.AntiCheatConfig();
         public Vec3d DevWarpPoint;
     }
 }

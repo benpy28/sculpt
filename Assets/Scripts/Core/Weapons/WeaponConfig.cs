@@ -27,7 +27,9 @@ namespace Sculpt.Core
         public double BaseSpread;
         /// <summary>Added at run speed, scaled by horizontal speed / run speed (capped at 1).</summary>
         public double MoveSpread;
-        /// <summary>Multiplies base + move + bloom while crouched on the ground.</summary>
+        /// <summary>Multiplies base + move + bloom while crouched on the ground. 1 on every gun since balance pass 2
+        /// (2026-11-26): crouching makes you a smaller target but no longer steadies your aim, so planting in a crouch
+        /// stops out-shooting a player who keeps moving.</summary>
         public double CrouchFactor = 1;
         /// <summary>Added while sliding / airborne (mantling and sprinting can't shoot).</summary>
         public double SlideSpread;
@@ -110,6 +112,30 @@ namespace Sculpt.Core
         /// <summary>Lag compensation: targets are rewound to what the shooter saw, at most this many ticks back.</summary>
         public int MaxRewindTicks = 18 * SimTime.Per60;
 
+        /// <summary>
+        /// Battle royale rarity (Ben 2026-11-26), indexed by <see cref="Rarity"/>: None, Common, Uncommon, Rare, Epic,
+        /// Legendary. Damage to players is scaled (uncommon = the normal numbers, legendary about +20% over it); wall
+        /// damage, spread, recoil and fire rate never change. Legendary also reloads 5% faster.
+        /// </summary>
+        public double[] RarityDamage = { 1.0, 0.95, 1.0, 1.065, 1.13, 1.2 };
+        public double[] RarityReload = { 1.0, 1.0, 1.0, 1.0, 1.0, 0.95 };
+
+        /// <summary>Player damage of a hit from a gun of this rarity (rounded once, like every hit).</summary>
+        public int ScaleDamage(int damage, Rarity r)
+        {
+            int i = (int)r;
+            if (i <= 0 || RarityDamage == null || i >= RarityDamage.Length) return damage;
+            return (int)Math.Round(damage * RarityDamage[i]);
+        }
+
+        /// <summary>A reload time (ticks) for a gun of this rarity.</summary>
+        public int ScaleReload(int ticks, Rarity r)
+        {
+            int i = (int)r;
+            if (i <= 0 || RarityReload == null || i >= RarityReload.Length) return ticks;
+            return Math.Max(1, (int)Math.Round(ticks * RarityReload[i]));
+        }
+
         public WeaponStats[] Stats =
         {
             // Pump: 9 x 9.4, head pellets 1.5x (Ben 2026-11-25: gun damage ~15% lower; was 11), 0.75 s cycle (balance pass 2026-11-25, was 0.9: it lost to the SMG even at 3 m), falloff from 5 m, heavy past 12 m; wider in the air and sliding.
@@ -123,12 +149,14 @@ namespace Sculpt.Core
                 MagSize = 5, ShellReload = true, ShellStartTicks = 6 * SimTime.Per60, ShellTicks = 30 * SimTime.Per60,
                 RecoilPitchPerShot = 3.5, RecoilFirstShotPitch = 0.5, RecoilYawPerShot = 0.6, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 11, RecoilRecoveryDelayTicks = 8 * SimTime.Per60,
             },
-            // SMG: 12.75 (was 15), 12 shots/s, heavy falloff past 10 m; head 1.25x (Ben 2026-11-20).
+            // SMG: 12.75 (was 15), 11 shots/s, falloff from 7 m. Head 1.5x = 19.125, 8 heads to kill (balance pass 2
+            // 2026-11-26, was 1.25x = 15.94, 10 heads: at pro aim the AR's 1.58x head out-damaged it, so it had no range of its
+            // own; body damage is unchanged, so chest-aiming players see little difference).
             new WeaponStats
             {
-                Name = "SMG", BodyDamage = 12.75, HeadDamage = 15.9375, MagSize = 30, ReloadTicks = 96 * SimTime.Per60, SwapBloom = 0.3, FireIntervalMilliTicks = 5455 * SimTime.Per60, Automatic = true, Range = 120,
-                FalloffDistances = new double[] { 10, 20, 35 }, FalloffFactors = new double[] { 1.0, 0.6, 0.4 },
-                BaseSpread = 0.9, MoveSpread = 0.7, CrouchFactor = 0.8, SlideSpread = 1.2, AirSpread = 1.8,
+                Name = "SMG", BodyDamage = 12.75, HeadDamage = 19.125, MagSize = 30, ReloadTicks = 96 * SimTime.Per60, SwapBloom = 0.3, FireIntervalMilliTicks = 5455 * SimTime.Per60, Automatic = true, Range = 120,
+                FalloffDistances = new double[] { 7, 18, 35 }, FalloffFactors = new double[] { 1.0, 0.6, 0.4 }, // falloff from 7 m, 0.6 at 18 m (balance pass 2, was 10 / 20 m): the bigger head bonus must not make it a 10-15 m gun
+                BaseSpread = 0.9, MoveSpread = 0.7, CrouchFactor = 1, SlideSpread = 1.2, AirSpread = 1.8, // crouch bonus 0.8 -> 1 (balance pass 2, 2026-11-26)
                 BloomPerShot = 0.12, BloomMax = 1.6, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 7 * SimTime.Per60,
                 RecoilPitchPerShot = 0.28, RecoilFirstShotPitch = 0.25, RecoilYawPerShot = 0.2, RecoilMaxPitch = 5, RecoilRecoveryPerSecond = 10, RecoilRecoveryDelayTicks = 7 * SimTime.Per60,
             },
@@ -136,7 +164,7 @@ namespace Sculpt.Core
             new WeaponStats
             {
                 Name = "AR", BodyDamage = 21.5, HeadDamage = 34, MagSize = 25, ReloadTicks = 114 * SimTime.Per60, SwapBloom = 0.4, AimFovScale = 0.8, FireIntervalMilliTicks = 10909 * SimTime.Per60, Automatic = true, Range = 250,
-                BaseSpread = 0.0, MoveSpread = 0.9, CrouchFactor = 0.75, SlideSpread = 3.0, AirSpread = 4.0,
+                BaseSpread = 0.0, MoveSpread = 0.9, CrouchFactor = 1, SlideSpread = 3.0, AirSpread = 4.0, // crouch bonus 0.75 -> 1 (balance pass 2, 2026-11-26)
                 BloomPerShot = 0.45, BloomMax = 3.0, BloomRecoveryPerSecond = 6, BloomRecoveryDelayTicks = 13 * SimTime.Per60,
                 RecoilPitchPerShot = 0.7, RecoilFirstShotPitch = 0.6, RecoilYawPerShot = 0.3, RecoilMaxPitch = 7, RecoilRecoveryPerSecond = 9, RecoilRecoveryDelayTicks = 13 * SimTime.Per60,
             },
@@ -146,7 +174,7 @@ namespace Sculpt.Core
                 Name = "Pistol", BodyDamage = 25.5, HeadDamage = 37, MagSize = 12, ReloadTicks = 78 * SimTime.Per60, SwapBloom = 0.3, AimFovScale = 0.87, FireIntervalMilliTicks = 12000 * SimTime.Per60, Automatic = false,
                 FireBufferTicks = 6 * SimTime.Per60, Range = 250,
                 FalloffDistances = new double[] { 25, 50 }, FalloffFactors = new double[] { 1.0, 0.7 },
-                BaseSpread = 0.1, MoveSpread = 0.5, CrouchFactor = 0.8, SlideSpread = 1.5, AirSpread = 2.0,
+                BaseSpread = 0.1, MoveSpread = 0.5, CrouchFactor = 1, SlideSpread = 1.5, AirSpread = 2.0, // crouch bonus 0.8 -> 1 (balance pass 2, 2026-11-26)
                 BloomPerShot = 0.8, BloomMax = 2.5, BloomRecoveryPerSecond = 8, BloomRecoveryDelayTicks = 14 * SimTime.Per60,
                 RecoilPitchPerShot = 1.4, RecoilFirstShotPitch = 0.45, RecoilYawPerShot = 0.25, RecoilMaxPitch = 6, RecoilRecoveryPerSecond = 14, RecoilRecoveryDelayTicks = 4 * SimTime.Per60,
             },

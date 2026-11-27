@@ -19,17 +19,66 @@ namespace Sculpt.Core
         C4 = 6,
         /// <summary>Grenade launcher: few rounds, slow and clunky, rounds only arm after a few metres.</summary>
         Launcher = 7,
+        /// <summary>Battle royale loot chest. Only ever on the ground (never in a bag): interact opens it and it spills a
+        /// random-rarity gun and an item (server side, <see cref="ChestRules"/>).</summary>
+        Chest = 8,
+        /// <summary>Bandage (Ben 2026-11-26): +25 health, quick to use. Stacks.</summary>
+        Bandage = 9,
+        /// <summary>First-aid kit (Ben 2026-11-26): +100 health, a longer commitment. Stacks.</summary>
+        Medkit = 10,
+    }
+
+    /// <summary>
+    /// Battle royale gun rarity (Ben 2026-11-26): five tiers, common to legendary. Rarity changes damage only (legendary is
+    /// about +20% over uncommon), and legendary also reloads 5% faster. None = no rarity at all (the 1v1 and every
+    /// mode without loot): exactly the normal numbers, which are uncommon's.
+    /// </summary>
+    public enum Rarity : byte
+    {
+        None = 0,
+        Common = 1,
+        Uncommon = 2,
+        Rare = 3,
+        Epic = 4,
+        Legendary = 5,
+    }
+
+    public static class Rarities
+    {
+        public const Rarity Last = Rarity.Legendary;
+
+        public static string Name(Rarity r)
+        {
+            switch (r)
+            {
+                case Rarity.Common: return "Common";
+                case Rarity.Uncommon: return "Uncommon";
+                case Rarity.Rare: return "Rare";
+                case Rarity.Epic: return "Epic";
+                case Rarity.Legendary: return "Legendary";
+                default: return "";
+            }
+        }
     }
 
     public static class Items
     {
         public const int Slots = 5;
-        /// <summary>The utility slot (slot 5 on the keys): grenades, C4 or the launcher, one kind at a time.</summary>
+        /// <summary>The old utility slot (slot 5 on the keys). Only used while <see cref="ItemConfig.UtilityShareSlot"/> is
+        /// on; since 2026-11-26 every slot takes any item (Ben).</summary>
         public const int UtilitySlot = 4;
-        /// <summary>The snapshot carries the held item in 3 bits, so this stays at most 7.</summary>
-        public const Item Last = Item.Launcher;
+        /// <summary>The last item number a bag or the wire's held-item field can carry. The snapshot carries the held item
+        /// in 4 bits, so this stays at most 15. <see cref="Item.Chest"/> is inside the range but never in a bag
+        /// (<see cref="CanCarry"/>).</summary>
+        public const Item Last = Item.Medkit;
+        /// <summary>The last item that can lie on the ground.</summary>
+        public const Item LastGround = Item.Medkit;
 
+        /// <summary>Items a bag slot can hold (everything but None and chests).</summary>
+        public static bool CanCarry(Item i) => i != Item.None && i != Item.Chest && i <= Last;
         public static bool IsGun(Item i) => i >= Item.Pump && i <= Item.Pistol;
+        /// <summary>Healing items (bandage, first-aid kit): select the slot and press fire to use one (<see cref="HealItemRules"/>).</summary>
+        public static bool IsHeal(Item i) => i == Item.Bandage || i == Item.Medkit;
         /// <summary>The gun of a gun item. Only call with <see cref="IsGun"/> true.</summary>
         public static Weapon GunOf(Item i) => (Weapon)((int)i - 1);
         public static Item Of(Weapon w) => (Item)((int)w + 1);
@@ -37,11 +86,14 @@ namespace Sculpt.Core
         /// Items that carry a count in their slot: grenades and C4 (how many), the launcher (rounds left). Picking up more
         /// of one you have adds to it up to the carry limit. Guns are one per slot, and one of each gun at most.
         /// </summary>
-        public static bool Stacks(Item i) => i == Item.Grenade || i == Item.C4 || i == Item.Launcher;
+        public static bool Stacks(Item i) => i == Item.Grenade || i == Item.C4 || i == Item.Launcher || IsHeal(i);
         /// <summary>Items that leave your hand as a projectile (<see cref="GrenadeRules"/>).</summary>
         public static bool Throws(Item i) => i == Item.Grenade || i == Item.C4 || i == Item.Launcher;
         public static ThrowKind KindOf(Item i) => i == Item.C4 ? ThrowKind.C4 : i == Item.Launcher ? ThrowKind.Launcher : ThrowKind.Grenade;
         public static Item ItemOf(ThrowKind k) => k == ThrowKind.C4 ? Item.C4 : k == ThrowKind.Launcher ? Item.Launcher : Item.Grenade;
+
+        /// <summary>The name with its rarity in front ("Epic AR"), or just the name when it has none.</summary>
+        public static string Name(Item i, Rarity r) => r == Rarity.None ? Name(i) : Rarities.Name(r) + " " + Name(i);
 
         public static string Name(Item i)
         {
@@ -54,6 +106,9 @@ namespace Sculpt.Core
                 case Item.Grenade: return "Grenade";
                 case Item.C4: return "C4";
                 case Item.Launcher: return "Launcher";
+                case Item.Chest: return "Chest";
+                case Item.Bandage: return "Bandage";
+                case Item.Medkit: return "First-aid kit";
                 default: return "";
             }
         }
@@ -61,7 +116,9 @@ namespace Sculpt.Core
 
     /// <summary>
     /// The five hotbar slots: a plain struct inside <see cref="HandState"/>, so it is predicted, sent and reconciled
-    /// with the hand. At most one of each gun and one stack of each stacking item. N0..N4 are the slots' counts
+    /// with the hand. Any item goes in any slot (Ben 2026-11-26). Duplicate guns are allowed: copies of one gun share
+    /// its fire timer and its magazine (both live per gun type in <see cref="WeaponState"/>), so carrying two pumps never
+    /// shoots sooner or skips a reload. One stack of each stacking item. N0..N4 are the slots' counts
     /// (grenades or C4 in the stack, launcher rounds left; 0 for guns). A C4 slot at 0 is the detonator: it stays
     /// while any of your charges is still out.
     /// </summary>
@@ -69,6 +126,8 @@ namespace Sculpt.Core
     {
         public Item S0, S1, S2, S3, S4;
         public byte N0, N1, N2, N3, N4;
+        /// <summary>Each slot's rarity (guns in battle royale; <see cref="Rarity.None"/> everywhere else).</summary>
+        public Rarity R0, R1, R2, R3, R4;
 
         /// <summary>The fixed starting loadout: pump, SMG, AR, pistol, two grenades in slot 5.</summary>
         public const int StartGrenades = 2;
@@ -100,6 +159,60 @@ namespace Sculpt.Core
                 case 4: N4 = v; break;
                 default: throw new ArgumentOutOfRangeException(nameof(slot));
             }
+        }
+
+        public Rarity RarityOf(int slot)
+        {
+            switch (slot)
+            {
+                case 0: return R0;
+                case 1: return R1;
+                case 2: return R2;
+                case 3: return R3;
+                case 4: return R4;
+                default: return Rarity.None;
+            }
+        }
+
+        public void SetRarity(int slot, Rarity r)
+        {
+            switch (slot)
+            {
+                case 0: R0 = r; break;
+                case 1: R1 = r; break;
+                case 2: R2 = r; break;
+                case 3: R3 = r; break;
+                case 4: R4 = r; break;
+                default: throw new ArgumentOutOfRangeException(nameof(slot));
+            }
+        }
+
+        /// <summary>
+        /// The rarity of a gun of this kind you carry: the copy in <paramref name="heldSlot"/> if that slot holds one (the
+        /// gun that fired), else the first copy. None if you don't have it, or it has none.
+        /// </summary>
+        public Rarity RarityOfGun(Weapon w, int heldSlot = -1)
+        {
+            Item i = Items.Of(w);
+            if (heldSlot >= 0 && heldSlot < Items.Slots && this[heldSlot] == i) return RarityOf(heldSlot);
+            int k = SlotOf(i);
+            return k < 0 ? Rarity.None : RarityOf(k);
+        }
+
+        /// <summary>Another slot than <paramref name="except"/> holds this item.</summary>
+        public bool HasOther(Item i, int except)
+        {
+            for (int k = 0; k < Items.Slots; k++) if (k != except && this[k] == i) return true;
+            return false;
+        }
+
+        /// <summary>Swaps the contents of two slots (item, count and rarity).</summary>
+        public void SwapSlots(int a, int b)
+        {
+            if (a == b) return;
+            Item ia = this[a]; byte na = Count(a); Rarity ra = RarityOf(a);
+            this[a] = this[b]; SetCount(a, Count(b)); SetRarity(a, RarityOf(b));
+            this[b] = ia; SetCount(b, na); SetRarity(b, ra);
         }
 
         /// <summary>Grenades in the grenade slot (0 when there is none). Setting it with no grenade slot does nothing.</summary>
@@ -171,10 +284,12 @@ namespace Sculpt.Core
         {
             this[slot] = Item.None;
             SetCount(slot, 0);
+            SetRarity(slot, Rarity.None);
         }
 
         public bool Equals(in Bag o) => S0 == o.S0 && S1 == o.S1 && S2 == o.S2 && S3 == o.S3 && S4 == o.S4 &&
-                                        N0 == o.N0 && N1 == o.N1 && N2 == o.N2 && N3 == o.N3 && N4 == o.N4;
+                                        N0 == o.N0 && N1 == o.N1 && N2 == o.N2 && N3 == o.N3 && N4 == o.N4 &&
+                                        R0 == o.R0 && R1 == o.R1 && R2 == o.R2 && R3 == o.R3 && R4 == o.R4;
     }
 
     /// <summary>Item numbers (Breach Settings writes these). Ticks at 60 Hz, distances in metres.</summary>
@@ -186,9 +301,17 @@ namespace Sculpt.Core
         public int C4Carry = 2;
         /// <summary>Most launcher rounds one player carries.</summary>
         public int LauncherCarry = 6;   // was 4 (Ben 2026-11-25, balance pass)
-        /// <summary>Grenades, C4 and the launcher all live in the utility slot (picking one swaps out the kind you had),
-        /// so a pickup never costs a gun (Ben 2026-11-25). Off = the old rule: held, empty, or swap with the held item.</summary>
-        public bool UtilityShareSlot = true;
+        /// <summary>Most bandages in one stack (Claude 2026-11-26).</summary>
+        public int BandageCarry = 6;
+        /// <summary>Most first-aid kits in one stack (Claude 2026-11-26).</summary>
+        public int MedkitCarry = 2;
+        /// <summary>
+        /// The 2026-11-25 rule: grenades, C4 and the launcher all live in slot 5 and guns never do. Off (the default since
+        /// Ben 2026-11-26): every slot takes any item, and a pickup goes where the player's <see cref="SlotPrefs"/> put it.
+        /// </summary>
+        public bool UtilityShareSlot = false;
+        /// <summary>Using bandages and first-aid kits.</summary>
+        public HealItemConfig Heal = new HealItemConfig();
         /// <summary>Pickup reach, eye to the item.</summary>
         public double Reach = 2.5;
         /// <summary>An item counts as aimed at within this angle of the crosshair (the closest one to the crosshair wins).</summary>
@@ -212,7 +335,8 @@ namespace Sculpt.Core
         public GrenadeConfig Of(ThrowKind k) => k == ThrowKind.C4 ? C4 : k == ThrowKind.Launcher ? Launcher : Grenade;
 
         /// <summary>Most of a stacking item you can carry (1 for anything else).</summary>
-        public int Carry(Item i) => i == Item.Grenade ? GrenadeCarry : i == Item.C4 ? C4Carry : i == Item.Launcher ? LauncherCarry : 1;
+        public int Carry(Item i) => i == Item.Grenade ? GrenadeCarry : i == Item.C4 ? C4Carry : i == Item.Launcher ? LauncherCarry
+            : i == Item.Bandage ? BandageCarry : i == Item.Medkit ? MedkitCarry : 1;
     }
 
     /// <summary>One item lying on the ground. Items don't move: they rest where they were dropped.</summary>
@@ -224,6 +348,8 @@ namespace Sculpt.Core
         public int Count;
         /// <summary>Guns: rounds fired from the magazine since it was full, so a dropped gun keeps its ammo.</summary>
         public int AmmoUsed;
+        /// <summary>Guns in battle royale: the rarity (None everywhere else).</summary>
+        public Rarity Rarity;
         /// <summary>The point it rests on (bottom centre).</summary>
         public Vec3d Position;
         public int DroppedBy;
@@ -294,6 +420,15 @@ namespace Sculpt.Core
             Version++;
         }
 
+        /// <summary>Replaces the item with this id, or adds it (a client applying the server's delta).</summary>
+        public void Upsert(GroundItem item)
+        {
+            int i = IndexOf(item.Id);
+            if (i < 0) { Add(item); return; }
+            _items[i] = item;
+            Version++;
+        }
+
         /// <summary>Replaces everything (a client copying the server's full list).</summary>
         public void ReplaceAll(IReadOnlyList<GroundItem> items)
         {
@@ -316,10 +451,12 @@ namespace Sculpt.Core
         TooFar = 3,
         /// <summary>A wall is between you and it.</summary>
         Blocked = 4,
-        /// <summary>You already have that gun, or a full grenade stack.</summary>
+        /// <summary>A full stack of that item already (grenades, C4, launcher rounds, heals).</summary>
         AlreadyHave = 5,
         /// <summary>Dead, disarmed, or you just dropped it.</summary>
         NotNow = 6,
+        /// <summary>A chest: opened (it spills its loot on the ground).</summary>
+        Opened = 7,
     }
 
     /// <summary>What a pickup would do (shown in the prompt, applied by the server).</summary>
@@ -328,20 +465,162 @@ namespace Sculpt.Core
         public PickupResult Result;
         /// <summary>The slot it goes into.</summary>
         public int Slot;
-        /// <summary>How many it takes (grenades: up to the carry limit).</summary>
+        /// <summary>How many it takes (stacks: up to the carry limit).</summary>
         public int Take;
         /// <summary>What goes on the ground in exchange (a swap), or None.</summary>
         public Item SwapOut;
+        /// <summary>Auto-sort: the item in <see cref="MoveFrom"/> moves to the empty slot <see cref="MoveTo"/> first, to
+        /// free its preferred slot for the pickup (-1 = no move).</summary>
+        public int MoveFrom, MoveTo;
 
         public bool Allowed => Result == PickupResult.Ok || Result == PickupResult.Swapped;
+        /// <summary>The item is a chest: the press opens it (nothing goes in the bag).</summary>
+        public bool Opens;
+    }
+
+    /// <summary>What a slot preference names (Ben 2026-11-26: "default pump 1, AR 2 and heals 5").</summary>
+    public enum SlotPref : byte
+    {
+        Any = 0,
+        Pump = 1,
+        Smg = 2,
+        Ar = 3,
+        Pistol = 4,
+        /// <summary>Bandages and first-aid kits.</summary>
+        Heals = 5,
+        Grenade = 6,
+        C4 = 7,
+        Launcher = 8,
+    }
+
+    /// <summary>
+    /// A player's auto-sort: which kind of item each of the five slots is for (Ben 2026-11-26). It only applies when an
+    /// item is picked up (and to the battle royale start loadout); the inventory screen moves things by hand, and nothing
+    /// is ever re-sorted behind your back. Server side per player (the client sends it, <c>MsgType.Prefs</c>); the replay
+    /// stream records every change so a re-run picks up into the same slots.
+    /// </summary>
+    public struct SlotPrefs
+    {
+        public SlotPref P0, P1, P2, P3, P4;
+
+        public const SlotPref Last = SlotPref.Launcher;
+        /// <summary>Pump in 1, AR in 2, heals in 5, anything in 3 and 4.</summary>
+        public static SlotPrefs Default => new SlotPrefs { P0 = SlotPref.Pump, P1 = SlotPref.Ar, P4 = SlotPref.Heals };
+
+        public SlotPref this[int slot]
+        {
+            get
+            {
+                switch (slot)
+                {
+                    case 0: return P0;
+                    case 1: return P1;
+                    case 2: return P2;
+                    case 3: return P3;
+                    case 4: return P4;
+                    default: return SlotPref.Any;
+                }
+            }
+            set
+            {
+                if (value > Last) value = SlotPref.Any;
+                switch (slot)
+                {
+                    case 0: P0 = value; break;
+                    case 1: P1 = value; break;
+                    case 2: P2 = value; break;
+                    case 3: P3 = value; break;
+                    case 4: P4 = value; break;
+                    default: throw new ArgumentOutOfRangeException(nameof(slot));
+                }
+            }
+        }
+
+        /// <summary>The preference kind an item belongs to (Any for nothing).</summary>
+        public static SlotPref Of(Item i)
+        {
+            switch (i)
+            {
+                case Item.Pump: return SlotPref.Pump;
+                case Item.Smg: return SlotPref.Smg;
+                case Item.Ar: return SlotPref.Ar;
+                case Item.Pistol: return SlotPref.Pistol;
+                case Item.Bandage: case Item.Medkit: return SlotPref.Heals;
+                case Item.Grenade: return SlotPref.Grenade;
+                case Item.C4: return SlotPref.C4;
+                case Item.Launcher: return SlotPref.Launcher;
+                default: return SlotPref.Any;
+            }
+        }
+
+        public static string Name(SlotPref p)
+        {
+            switch (p)
+            {
+                case SlotPref.Pump: return "Pump";
+                case SlotPref.Smg: return "SMG";
+                case SlotPref.Ar: return "AR";
+                case SlotPref.Pistol: return "Pistol";
+                case SlotPref.Heals: return "Heals";
+                case SlotPref.Grenade: return "Grenades";
+                case SlotPref.C4: return "C4";
+                case SlotPref.Launcher: return "Launcher";
+                default: return "Anything";
+            }
+        }
+
+        public bool Equals(in SlotPrefs o) => P0 == o.P0 && P1 == o.P1 && P2 == o.P2 && P3 == o.P3 && P4 == o.P4;
+
+        /// <summary>
+        /// Where a new item goes in a bag with no swap (-1 = the bag is full), and the item that has to move out of its
+        /// way first (moveFrom to the empty slot moveTo, or -1). The rule, in order:
+        /// 1. the first slot meant for its kind that is empty;
+        /// 2. the first slot meant for its kind holding something that isn't meant to be there, if an empty slot is left
+        ///    for that thing (it moves there: an empty slot meant for its own kind first, then one meant for anything);
+        /// 3. the first empty slot meant for anything, then any empty slot.
+        /// The held item can move like any other (the hand follows it, so what you hold never changes).
+        /// </summary>
+        public int Place(in Bag b, Item kind, out int moveFrom, out int moveTo)
+        {
+            moveFrom = moveTo = -1;
+            SlotPref want = Of(kind);
+            if (want != SlotPref.Any)
+            {
+                for (int k = 0; k < Items.Slots; k++)
+                    if (this[k] == want && b[k] == Item.None) return k;
+                for (int k = 0; k < Items.Slots; k++)
+                {
+                    if (this[k] != want || b[k] == Item.None || Of(b[k]) == want) continue;
+                    int to = EmptyFor(b, Of(b[k]), -1);
+                    if (to < 0) break;
+                    moveFrom = k;
+                    moveTo = to;
+                    return k;
+                }
+            }
+            return EmptyFor(b, want, -1);
+        }
+
+        /// <summary>The best empty slot for something of kind <paramref name="kind"/>: one meant for it, else one meant for
+        /// anything, else any empty slot (-1 if none). Slot <paramref name="except"/> is never chosen.</summary>
+        public int EmptyFor(in Bag b, SlotPref kind, int except)
+        {
+            if (kind != SlotPref.Any)
+                for (int k = 0; k < Items.Slots; k++) if (k != except && b[k] == Item.None && this[k] == kind) return k;
+            for (int k = 0; k < Items.Slots; k++) if (k != except && b[k] == Item.None && this[k] == SlotPref.Any) return k;
+            for (int k = 0; k < Items.Slots; k++) if (k != except && b[k] == Item.None) return k;
+            return -1;
+        }
     }
 
     /// <summary>
     /// Pickup and drop rules. Pure functions of the player state and the ground list, so the client's prompt and the
     /// server's decision use the same code.
-    /// - A pickup goes into the matching grenade stack, else the held slot if it is empty, else the first empty slot,
-    ///   else it swaps with the held item (the held item lands where the picked one was).
-    /// - At most one of each gun. Grenades stack to <see cref="ItemConfig.GrenadeCarry"/>; the rest stay on the ground.
+    /// - A stacking item joins your stack of it up to the carry limit (the rest stays on the ground); a full stack refuses.
+    /// - Anything else (and a stack you don't have yet) goes where your <see cref="SlotPrefs"/> put it; with a full bag
+    ///   it swaps with the held item (the held item lands where the picked one was).
+    /// - Duplicate guns are allowed. A copy of a gun you already carry joins its magazine (copies share one), so picking
+    ///   up a fresh copy never reloads you.
     /// - Dropping puts the whole held slot on the ground in front of you and draws your previous slot.
     /// </summary>
     public static class ItemRules
@@ -384,14 +663,21 @@ namespace Sculpt.Core
             return !h.Hit;
         }
 
+        /// <summary>What picking up this item would do with the default slot preferences (no change made).</summary>
+        public static PickupPlan Plan(in MotorState s, in GroundItem g, int playerId, int tick, ItemConfig cfg) =>
+            Plan(s, g, playerId, tick, cfg, SlotPrefs.Default);
+
         /// <summary>What picking up this item would do (no change made).</summary>
-        public static PickupPlan Plan(in MotorState s, in GroundItem g, int playerId, int tick, ItemConfig cfg)
+        public static PickupPlan Plan(in MotorState s, in GroundItem g, int playerId, int tick, ItemConfig cfg, in SlotPrefs prefs)
         {
-            var p = new PickupPlan { Result = PickupResult.Ok, Slot = -1, SwapOut = Item.None };
+            var p = new PickupPlan { Result = PickupResult.Ok, Slot = -1, SwapOut = Item.None, MoveFrom = -1, MoveTo = -1 };
             if (s.Dead || s.Hand.Mode == HandMode.Disarmed) { p.Result = PickupResult.NotNow; return p; }
             if (g.DroppedBy == playerId && tick - g.DroppedTick < cfg.DropperLockTicks) { p.Result = PickupResult.NotNow; return p; }
             if (g.Kind == Item.None || g.Count <= 0) { p.Result = PickupResult.NoItem; return p; }
+            if (g.Kind == Item.Chest) { p.Opens = true; return p; } // opened where it stands; nothing goes in the bag
+            if (!Items.CanCarry(g.Kind)) { p.Result = PickupResult.NoItem; return p; }
             Bag b = s.Hand.Bag;
+            p.Take = 1;
             if (Items.Stacks(g.Kind))
             {
                 int have = b.SlotOf(g.Kind);
@@ -406,18 +692,25 @@ namespace Sculpt.Core
                 }
                 p.Take = Math.Min(Math.Max(1, carry), g.Count);
             }
-            else
-            {
-                if (b.SlotOf(g.Kind) >= 0) { p.Result = PickupResult.AlreadyHave; return p; }
-                p.Take = 1;
-            }
             int held = s.Hand.Slot;
             if (cfg.UtilityShareSlot)
             {
-                // Ben 2026-11-25: grenades, C4 and the launcher share the utility slot, so taking one never costs a gun;
-                // guns stay in the gun slots.
+                // The 2026-11-25 rule: grenades, C4 and the launcher share the utility slot, so taking one never costs a
+                // gun; guns stay in the gun slots; one of each gun.
+                if (Items.IsGun(g.Kind))
+                {
+                    int have = b.SlotOf(g.Kind);
+                    if (have >= 0)
+                    {
+                        if (b.RarityOf(have) == g.Rarity) { p.Result = PickupResult.AlreadyHave; return p; }
+                        p.Slot = have;
+                        p.SwapOut = g.Kind;
+                        p.Result = PickupResult.Swapped;
+                        return p;
+                    }
+                }
                 int u = Items.UtilitySlot;
-                if (Items.Throws(g.Kind))
+                if (Items.Throws(g.Kind) || Items.IsHeal(g.Kind))
                 {
                     p.Slot = u;
                     if (b[u] == Item.None || b.CountIn(u) == 0) return p;
@@ -434,31 +727,40 @@ namespace Sculpt.Core
                 p.Result = PickupResult.Swapped;
                 return p;
             }
-            if (b[held] == Item.None) { p.Slot = held; return p; }
-            int empty = b.FirstEmpty();
-            if (empty >= 0) { p.Slot = empty; return p; }
-            if (b.CountIn(held) == 0) { p.Slot = held; return p; } // an empty C4 detonator is simply replaced
+
+            // Ben 2026-11-26: five generic slots, auto-sorted by the player's preferences on pickup.
+            int slot = prefs.Place(b, g.Kind, out p.MoveFrom, out p.MoveTo);
+            if (slot >= 0) { p.Slot = slot; return p; }
+            // Full bag: the pickup takes the held slot (an empty C4 detonator is simply replaced).
             p.Slot = held;
+            if (b.CountIn(held) == 0) return p;
             p.SwapOut = b[held];
             p.Result = PickupResult.Swapped;
             return p;
         }
+
+        /// <summary>The server's pickup with the default slot preferences.</summary>
+        public static PickupResult TryPickup(ref MotorState s, GroundItems items, int itemId, ITerrain terrain, Vec3d eye,
+            int playerId, int tick, MovementConfig mc) =>
+            TryPickup(ref s, items, itemId, terrain, eye, playerId, tick, mc, SlotPrefs.Default);
 
         /// <summary>
         /// The server's pickup: checks reach and line of sight from <paramref name="eye"/>, then moves the item into the
         /// bag. A swapped-out item lands where the picked one lay. Returns what happened.
         /// </summary>
         public static PickupResult TryPickup(ref MotorState s, GroundItems items, int itemId, ITerrain terrain, Vec3d eye,
-            int playerId, int tick, MovementConfig mc)
+            int playerId, int tick, MovementConfig mc, in SlotPrefs prefs)
         {
             ItemConfig cfg = mc.Items;
             if (!items.TryGet(itemId, out GroundItem g)) return PickupResult.NoItem;
             if ((g.Centre - eye).Length > cfg.Reach + cfg.ServerReachSlack) return PickupResult.TooFar;
             if (!Visible(terrain, eye, g.Centre)) return PickupResult.Blocked;
-            PickupPlan p = Plan(s, g, playerId, tick, cfg);
+            PickupPlan p = Plan(s, g, playerId, tick, cfg, prefs);
             if (!p.Allowed) return p.Result;
+            if (p.Opens) return PickupResult.NoItem; // chests are opened by the server (ChestRules), never picked up
 
             ref HandState h = ref s.Hand;
+            if (p.MoveFrom >= 0) HandRules.SwapSlots(ref h, p.MoveFrom, p.MoveTo); // auto-sort: clear the preferred slot
             if (p.SwapOut != Item.None)
             {
                 var outItem = TakeOut(ref s, p.Slot, g.Position, playerId, tick);
@@ -474,13 +776,17 @@ namespace Sculpt.Core
             }
             else
             {
+                // A copy of a gun you already carry joins that gun's magazine (copies share one, so no free reload).
+                bool joins = Items.IsGun(g.Kind) && h.Bag.HasOther(g.Kind, p.Slot);
                 h.Bag[p.Slot] = g.Kind;
-                if (Items.IsGun(g.Kind)) s.Weapon.SetUsed(Items.GunOf(g.Kind), g.AmmoUsed);
+                h.Bag.SetCount(p.Slot, 0);
+                h.Bag.SetRarity(p.Slot, g.Rarity);
+                if (Items.IsGun(g.Kind) && !joins) s.Weapon.SetUsed(Items.GunOf(g.Kind), g.AmmoUsed);
             }
             if (g.Count - p.Take > 0) items.SetCount(g.Id, g.Count - p.Take);
             else items.Remove(g.Id);
 
-            // A new item in the slot you hold is drawn (a grenade added to a stack you already hold is not).
+            // A new item in the slot you hold is drawn (more added to a stack you already hold is not).
             if (intoHeld && (p.SwapOut != Item.None || h.Bag.CountIn(p.Slot) == p.Take)) HandRules.Redraw(ref h, tick, mc.Hand);
             return p.Result;
         }
@@ -503,17 +809,21 @@ namespace Sculpt.Core
             return true;
         }
 
-        /// <summary>Empties a slot into a ground item (with the gun's ammo), cancelling a reload of that gun.</summary>
+        /// <summary>
+        /// Empties a slot into a ground item (with the gun's ammo), cancelling a reload of that gun. If another copy of the
+        /// gun stays in the bag, the magazine stays with it (the dropped copy carries the same count), so dropping a copy
+        /// never refills the one you keep.
+        /// </summary>
         private static GroundItem TakeOut(ref MotorState s, int slot, Vec3d at, int playerId, int tick)
         {
             Bag b = s.Hand.Bag;
             Item kind = b[slot];
-            var g = new GroundItem { Kind = kind, Count = b.CountIn(slot), Position = at, DroppedBy = playerId, DroppedTick = tick };
+            var g = new GroundItem { Kind = kind, Count = b.CountIn(slot), Position = at, DroppedBy = playerId, DroppedTick = tick, Rarity = b.RarityOf(slot) };
             if (Items.IsGun(kind))
             {
                 Weapon w = Items.GunOf(kind);
                 g.AmmoUsed = s.Weapon.UsedOf(w);
-                s.Weapon.SetUsed(w, 0);
+                if (!b.HasOther(kind, slot)) s.Weapon.SetUsed(w, 0);
                 if (s.Weapon.Reloading && s.Weapon.ReloadGun == w) s.Weapon.Reloading = false;
             }
             s.Hand.Bag.Clear(slot);

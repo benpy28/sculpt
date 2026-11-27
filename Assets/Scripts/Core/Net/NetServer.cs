@@ -1,5 +1,7 @@
+using Sculpt.Core.Diagnostics;
 using System;
 using System.Collections.Generic;
+using Sculpt.Core.AntiCheat;
 
 namespace Sculpt.Core.Net
 {
@@ -8,6 +10,12 @@ namespace Sculpt.Core.Net
     {
         public int Id;
         public int ConnectionId;
+        /// <summary>
+        /// Someone looks through this player's eyes (a person: snapshots go to them). Bots and the practice dummy are not
+        /// viewers: interest (what each viewer is sent) is never worked out between two of them, and their hits are not
+        /// checked against it. A replay re-run sets it from the recorded join.
+        /// </summary>
+        public bool Viewer = true;
         public int Team;
         public Vec3d Spawn;
         public double SpawnYaw;
@@ -23,7 +31,8 @@ namespace Sculpt.Core.Net
         internal readonly double[] ArriveMs;
         internal readonly int[] ArriveTick;
         internal int NewestReceived = int.MinValue;
-        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch, CarryHeal, CarryHealReinforce, CarryDoor, CarryDoorOpen;
+        internal bool CarryJump, CarryCrouch, CarryRespawn, CarryWarp, CarryToggle, CarrySculpt, CarryReload, CarryPickup, CarryDrop, CarryPunch, CarryHeal, CarryHealReinforce, CarryDoor, CarryDoorOpen, CarrySwap;
+        internal byte CarrySwapA, CarrySwapB;
         internal byte CarryWeapon;
         internal int CarryPickId, CarryHealTile, CarryHealCell, CarryDoorTile;
         internal InputCmd CarrySculptCmd;
@@ -56,8 +65,23 @@ namespace Sculpt.Core.Net
         public int MatchKills, MatchDeaths;
         /// <summary>Respawn on the next tick (a new match).</summary>
         internal bool ForceRespawn;
+        /// <summary>Battle royale: give the start-of-match loadout once this respawn has happened.</summary>
+        internal bool BrLoadout;
+        /// <summary>Battle royale: the gun picked in the locker (None: the server's default).</summary>
+        public Item Locker;
+        /// <summary>Auto-sort on pickup (Ben 2026-11-26). Set from the player's Prefs message, between ticks (<see cref="NetServer.SetSlotPrefs"/>).</summary>
+        public SlotPrefs Prefs = SlotPrefs.Default;
         /// <summary>The last enemy who hurt this player, and when (kill credit for falls).</summary>
         public int LastHurtBy, LastHurtTick;
+
+        // Delta snapshots: the newest snapshot tick this client acked (from its newest input packet) and what we sent it.
+        internal int AckTick = int.MinValue;
+        internal SnapshotBaselines Sent;
+        /// <summary>Snapshot bytes sent to this client, and how many snapshots were deltas or full (stats and tests).</summary>
+        public long SnapshotBytes;
+        public int DeltaSnapshotsSent, FullSnapshotsSent;
+
+        internal readonly PlayerWatch Watch = new PlayerWatch();
 
         public int MissedInputs;   // ticks stepped with a repeated command
         public int LateInputs;     // commands that arrived after their tick was simulated
@@ -136,6 +160,7 @@ namespace Sculpt.Core.Net
         private readonly ByteWriter _w = new ByteWriter(1024);
         private readonly List<InputCmd> _cmdScratch = new List<InputCmd>(Protocol.MaxCmdsPerPacket);
         private readonly List<PlayerSnap> _others = new List<PlayerSnap>();
+        private readonly SnapshotCodec _snapCodec = new SnapshotCodec();
         private int _nextId = 1;
         private readonly int _ringSize;
 
@@ -160,7 +185,10 @@ namespace Sculpt.Core.Net
 
         public ServerPlayer FindByConnection(int connectionId) => _byConn.TryGetValue(connectionId, out var p) ? p : null;
 
-        public ServerPlayer AddPlayer(int connectionId, int team, Vec3d spawn, double spawnYaw)
+        public ServerPlayer AddPlayer(int connectionId, int team, Vec3d spawn, double spawnYaw) =>
+            AddPlayer(connectionId, team, spawn, spawnYaw, Replay.JoinKind.Human, true);
+
+        private ServerPlayer AddPlayer(int connectionId, int team, Vec3d spawn, double spawnYaw, Replay.JoinKind kind, bool countsAsPlayer)
         {
             if (_byConn.ContainsKey(connectionId)) throw new InvalidOperationException("Connection already has a player.");
             var p = new ServerPlayer(_ringSize, Config.LeadWindowTicks, Config.ServerHistoryTicks)
@@ -171,6 +199,7 @@ namespace Sculpt.Core.Net
                 Spawn = spawn,
                 SpawnYaw = spawnYaw,
                 State = MotorState.At(spawn),
+                Viewer = kind == Replay.JoinKind.Human,
             };
             p.LastCmd = new InputCmd { Tick = Tick, Move = new MoveInput { Yaw = InputCmd.QuantizeYaw(spawnYaw) } };
             p.Body = new PlayerBody(p.Id, team, spawn);
@@ -178,6 +207,7 @@ namespace Sculpt.Core.Net
             _players.Add(p);
             _byConn[connectionId] = p;
             Sculpt?.AddPlayer(p.Body);
+            Stream?.OnJoin(Tick, p, kind, countsAsPlayer);
 
             _w.Clear();
             Protocol.Write(_w, new WelcomeMsg
@@ -200,7 +230,9 @@ namespace Sculpt.Core.Net
 
         public void RemovePlayer(int connectionId)
         {
+            RemoveSpectator(connectionId);
             if (!_byConn.TryGetValue(connectionId, out var p)) return;
+            Stream?.OnLeave(Tick, p.Id);
             _byConn.Remove(connectionId);
             _players.Remove(p);
             _matchDirty = true;
@@ -208,6 +240,7 @@ namespace Sculpt.Core.Net
             _dummies.Remove(p.Id);
             _brains.Remove(p.Id);
             _ownBars.Remove(p.Id);
+            ForgetInterest(p.Id);
             if (Sculpt != null)
             {
                 if (p.PendingSeq >= 0 || Sculpt.PendingOf(p.Id) != null)
@@ -223,14 +256,28 @@ namespace Sculpt.Core.Net
             try
             {
                 var r = new ByteReader(data, offset, count);
-                if (Protocol.PeekType(data, offset, count) != MsgType.Inputs) { p.DroppedPackets++; return; }
-                Protocol.ReadInputs(ref r, _cmdScratch);
+                MsgType type = Protocol.PeekType(data, offset, count);
+                if (type == MsgType.Prefs)
+                {
+                    PrefsMsg pm = Protocol.ReadPrefs(ref r);
+                    SetSlotPrefs(p, pm.Slots);
+                    if (pm.Locker != Item.None) SetLocker(p, pm.Locker); // None = no pick (keeps whatever the server set); refuses anything the locker doesn't offer
+                    return;
+                }
+                if (type != MsgType.Inputs) { p.DroppedPackets++; return; }
+                InputCmd.Sanitized = 0;
+                InputsMsg im = Protocol.ReadInputs(ref r, _cmdScratch);
                 p.ReceivedPackets++;
+                if (_cmdScratch.Count > 0) CheckPacket(p, im, _cmdScratch, InputCmd.Sanitized);
+                // The ack rides with the commands; only the newest packet's counts (an older one arriving late would
+                // name an older snapshot, still valid but needlessly far back).
+                if (_cmdScratch[_cmdScratch.Count - 1].Tick > p.NewestReceived && im.AckSnapshotTick <= Tick) p.AckTick = im.AckSnapshotTick;
                 AcceptCommands(p, _cmdScratch);
             }
             catch (NetFormatException)
             {
                 p.DroppedPackets++;
+                Flag(p, FlagKind.Malformed);
             }
         }
 
@@ -239,7 +286,7 @@ namespace Sculpt.Core.Net
             int newest = cmds[cmds.Count - 1].Tick;
             int lead = newest - Tick;
             // Too far ahead: a broken or cheating clock. Ignore the whole packet.
-            if (lead > Config.MaxCommandLeadTicks) return;
+            if (lead > Config.MaxCommandLeadTicks) { Flag(p, FlagKind.ClockAhead, lead); return; }
 
             RecordLead(p, lead);
             if (newest > p.NewestReceived) p.NewestReceived = newest;
@@ -278,6 +325,7 @@ namespace Sculpt.Core.Net
                         if (c.Hand.Pickup) { p.CarryPickup = true; p.CarryPickId = c.Hand.PickId; }
                         if (c.Hand.Drop) p.CarryDrop = true;
                         if (c.Hand.Door) { p.CarryDoor = true; p.CarryDoorTile = c.Hand.DoorTile; p.CarryDoorOpen = c.Hand.DoorOpen; }
+                        if (c.Hand.Swap) { p.CarrySwap = true; p.CarrySwapA = c.Hand.SwapA; p.CarrySwapB = c.Hand.SwapB; }
                         if (c.Hand.Punch) p.CarryPunch = true;
                         if (c.Hand.Heal) { p.CarryHeal = true; p.CarryHealTile = c.Hand.HealTile; p.CarryHealCell = c.Hand.HealCell; p.CarryHealReinforce = c.Hand.HealReinforce; }
                         if (c.HasSculpt) { p.CarrySculpt = true; p.CarrySculptCmd = c; }
@@ -339,8 +387,18 @@ namespace Sculpt.Core.Net
         /// </summary>
         public void Step(List<MoveEvent> events = null)
         {
+            Prof.Begin(Prof.Section.ServerTick);
+            try { StepInner(events); }
+            finally { Prof.End(Prof.Section.ServerTick); }
+        }
+
+        private void StepInner(List<MoveEvent> events)
+        {
             Tick++;
+            Stream?.BeginTick(Tick);
+            Prof.Begin(Prof.Section.BrMatch);
             StepMatch();
+            Prof.End(Prof.Section.BrMatch);
             _combat.Clear();
             ItemActions.Clear();
             if (Walls != null) Walls.Tick = Tick;
@@ -360,7 +418,10 @@ namespace Sculpt.Core.Net
                 }
             }
 
+            Prof.Begin(Prof.Section.Bots);
             FeedBots();
+            Prof.End(Prof.Section.Bots);
+            Prof.Begin(Prof.Section.Players);
             foreach (ServerPlayer p in _players)
             {
                 // Slots for ticks in the lead window must be cleared lazily; a slot is valid only if its tick matches.
@@ -382,7 +443,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryFire) { cmd.Move.FirePressed = true; p.CarryFire = false; }
                 if (p.CarryAim) { cmd.Move.AimPressed = true; p.CarryAim = false; }
                 if (p.CarryRespawn) { cmd.Respawn = true; p.CarryRespawn = false; }
-                if (p.ForceRespawn) { cmd.Respawn = true; p.ForceRespawn = false; }
+                if (p.ForceRespawn) { cmd.Respawn = true; cmd.ForcedRespawn = true; p.ForceRespawn = false; }
                 if (p.CarryWarp) { cmd.Warp = true; p.CarryWarp = false; }
                 if (p.CarryToggle) { cmd.Hand.SculptToggle = true; p.CarryToggle = false; }
                 if (p.CarryReload) { cmd.Hand.Reload = true; p.CarryReload = false; }
@@ -390,6 +451,7 @@ namespace Sculpt.Core.Net
                 if (p.CarryPickup) { if (!cmd.Hand.Pickup) { cmd.Hand.Pickup = true; cmd.Hand.PickId = p.CarryPickId; } p.CarryPickup = false; }
                 if (p.CarryDrop) { cmd.Hand.Drop = true; p.CarryDrop = false; }
                 if (p.CarryDoor) { if (!cmd.Hand.Door) { cmd.Hand.Door = true; cmd.Hand.DoorTile = p.CarryDoorTile; cmd.Hand.DoorOpen = p.CarryDoorOpen; } p.CarryDoor = false; }
+                if (p.CarrySwap) { if (!cmd.Hand.Swap) { cmd.Hand.Swap = true; cmd.Hand.SwapA = p.CarrySwapA; cmd.Hand.SwapB = p.CarrySwapB; } p.CarrySwap = false; }
                 if (p.CarryPunch) { cmd.Hand.Punch = true; p.CarryPunch = false; }
                 if (p.CarryHeal) { if (!cmd.Hand.Heal) { cmd.Hand.Heal = true; cmd.Hand.HealTile = p.CarryHealTile; cmd.Hand.HealCell = p.CarryHealCell; cmd.Hand.HealReinforce = p.CarryHealReinforce; } p.CarryHeal = false; }
                 if (p.CarrySculpt)
@@ -397,7 +459,9 @@ namespace Sculpt.Core.Net
                     if (!cmd.HasSculpt) { cmd.HasSculpt = true; cmd.SculptSeq = p.CarrySculptCmd.SculptSeq; cmd.Sculpt = p.CarrySculptCmd.Sculpt; }
                     p.CarrySculpt = false;
                 }
+                CheckCommand(p, ref cmd);
                 p.LastCmd = cmd;
+                Stream?.AddInput(p.Id, cmd);
 
                 // Sculpt shoves move the shared body between ticks; friction drags and throw kicks add velocity.
                 // A dead player's body is parked out of the world, so it is not theirs to copy back.
@@ -412,7 +476,12 @@ namespace Sculpt.Core.Net
                 p.Nades.Clear();
                 p.Punches.Clear();
                 _charge.By = p.Id;
+                Before before = TakeBefore(p);
+                Prof.Begin(Prof.Section.Simulate);
                 NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches, Walls != null ? _charge : null);
+                Prof.End(Prof.Section.Simulate);
+                CheckIntegrity(p, before);
+                if (p.BrLoadout && !p.State.Dead) { GiveBrLoadout(p); p.BrLoadout = false; }
                 if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
                 if (!p.State.Dead && (cmd.Hand.Pickup || cmd.Hand.Drop)) HandleItems(p, cmd);
                 if (cmd.Hand.Heal) HandleHeal(p, cmd);
@@ -433,11 +502,21 @@ namespace Sculpt.Core.Net
                 p.DeadHistory[h] = p.State.Dead;
             }
 
+            Prof.End(Prof.Section.Players);
+            Prof.Begin(Prof.Section.Shots);
             ResolveShots();
             ResolvePunches();
+            Prof.End(Prof.Section.Shots);
+            Prof.Begin(Prof.Section.Grenades);
             ResolveGrenades();
+            Prof.End(Prof.Section.Grenades);
+            Prof.Begin(Prof.Section.Healing);
             StepHealing();
-            StepPing();
+            Prof.End(Prof.Section.Healing);
+            if (Br == null) StepPing(); // no anti-hiding ping in a battle royale (the circle does that job)
+            Prof.Begin(Prof.Section.Interest);
+            StepInterest();
+            Prof.End(Prof.Section.Interest);
 
             if (Sculpt != null)
             {
@@ -447,15 +526,41 @@ namespace Sculpt.Core.Net
                 SendWorldDelta();
             }
 
+            Prof.Begin(Prof.Section.Send);
+            StepBrEnd();
             SendCombat();
             SendTiles();
             if (Items.Version != _itemsSentVersion) { _itemsSentVersion = Items.Version; SendItems(-1); }
             SendMatch();
+            Prof.End(Prof.Section.Send);
+            Prof.Begin(Prof.Section.Snapshots);
             if (Config.SnapshotEveryTicks <= 1 || Tick % Config.SnapshotEveryTicks == 0)
                 SendSnapshots();
+            Prof.End(Prof.Section.Snapshots);
+            Prof.Begin(Prof.Section.Replay);
+            if (Stream != null)
+            {
+                Stream.EndTick(this);
+                StepSpectators();
+            }
+            Prof.End(Prof.Section.Replay);
+            Prof.Begin(Prof.Section.BrMatch);
+            BrBetweenTicks();
+            Prof.End(Prof.Section.BrMatch); // bots join and leave between ticks, like people (a re-run adds them back at the same place)
         }
 
         // ================================================================ Items
+
+        /// <summary>
+        /// Sets a player's auto-sort (from their Prefs message, or a bot or test). Call between ticks. Recorded in the
+        /// replay stream so a re-run picks up into the same slots.
+        /// </summary>
+        public void SetSlotPrefs(ServerPlayer p, in SlotPrefs prefs)
+        {
+            if (p == null || p.Prefs.Equals(prefs)) return;
+            p.Prefs = prefs;
+            Stream?.OnPrefs(Tick, p.Id, prefs);
+        }
 
         /// <summary>
         /// Pickup and drop, applied right after the player's movement on the tick they were pressed. Not predicted: the
@@ -466,21 +571,41 @@ namespace Sculpt.Core.Net
             if (cmd.Hand.Pickup)
             {
                 Vec3d eye = p.State.Position + new Vec3d(0, PlayerMovement.EyeOf(p.State, Movement), 0);
-                PickupResult r = ItemRules.TryPickup(ref p.State, Items, cmd.Hand.PickId, Grid, eye, p.Id, Tick, Movement);
+                if (Br != null && Items.TryGet(cmd.Hand.PickId, out GroundItem chest) && chest.Kind == Item.Chest)
+                {
+                    ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, OpenChest(p, chest, eye)));
+                    return;
+                }
+                PickupResult r = ItemRules.TryPickup(ref p.State, Items, cmd.Hand.PickId, Grid, eye, p.Id, Tick, Movement, p.Prefs);
                 ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, r));
             }
             else if (cmd.Hand.Drop && ItemRules.TryDrop(ref p.State, Items, Grid, cmd.Move.Yaw, p.Id, Tick, Movement))
                 ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, PickupResult.Ok));
         }
 
-        /// <summary>The whole ground list to one connection, or to everyone (-1).</summary>
+        private readonly Dictionary<int, GroundItem> _itemsSent = new Dictionary<int, GroundItem>();
+        private readonly List<GroundItem> _itemUpserts = new List<GroundItem>();
+        private readonly List<int> _itemRemoved = new List<int>();
+        private readonly HashSet<int> _itemSeen = new HashSet<int>();
+
+        /// <summary>
+        /// The whole ground list to one connection (a joiner), or to everyone (-1) only what changed since the last
+        /// broadcast. Broadcasts also go into the spectator stream, whose key frames carry the whole list.
+        /// </summary>
         private void SendItems(int connectionId)
         {
-            var w = new ByteWriter(16 + Items.Count * 24);
-            ItemsProtocol.Write(w, new ItemsMsg { Tick = Tick, Items = new List<GroundItem>(Items.All) });
-            byte[] data = w.ToArray();
-            if (connectionId >= 0) { Send(connectionId, data, true); return; }
-            foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
+            if (connectionId != -1)
+            {
+                var full = new ByteWriter(16 + Items.Count * 24);
+                ItemsProtocol.Write(full, new ItemsMsg { Tick = Tick, Full = true, Items = new List<GroundItem>(Items.All) });
+                Send(connectionId, full.ToArray(), true);
+                return;
+            }
+            ItemsProtocol.Diff(_itemsSent, Items.All, _itemUpserts, _itemRemoved, _itemSeen);
+            if (_itemUpserts.Count == 0 && _itemRemoved.Count == 0) return;
+            var w = new ByteWriter(24 + _itemUpserts.Count * 24 + _itemRemoved.Count * 4);
+            ItemsProtocol.Write(w, new ItemsMsg { Tick = Tick, Items = _itemUpserts, Removed = _itemRemoved });
+            Broadcast(w.ToArray());
         }
 
         /// <summary>Puts an item on the map (map setup, tests). It rests on the surface below the point.</summary>
@@ -619,12 +744,13 @@ namespace Sculpt.Core.Net
             _opsSent = ops.Count;
             _w.Clear();
             WorldProtocol.Write(_w, new WorldMsg { Tick = Tick, Ops = _opsScratch, Events = _worldEvents });
-            byte[] data = _w.ToArray();
-            foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
+            Broadcast(_w.ToArray());
         }
 
         /// <summary>Late join: the whole op log, windups in progress, pieces in flight.</summary>
-        private void SendJoinState(ServerPlayer to)
+        private void SendJoinState(ServerPlayer to) => Send(to.ConnectionId, JoinStateBytes(), true);
+
+        private byte[] JoinStateBytes()
         {
             var events = new List<WorldEvent>();
             foreach (ServerPlayer o in _players)
@@ -639,7 +765,7 @@ namespace Sculpt.Core.Net
             for (int k = 0; k < _opsSent && k < Sculpt.Pieces.Ops.Count; k++) ops.Add(Sculpt.Pieces.Ops[k]);
             var w = new ByteWriter(4096);
             WorldProtocol.Write(w, new WorldMsg { Tick = Tick, Join = true, Ops = ops, Events = events });
-            Send(to.ConnectionId, w.ToArray(), true);
+            return w.ToArray();
         }
 
         /// <summary>
@@ -658,29 +784,32 @@ namespace Sculpt.Core.Net
 
         private void SendSnapshots()
         {
+            // What everyone sees of everyone else is the same for every receiver: build and quantize it once.
+            _others.Clear();
+            foreach (ServerPlayer o in _players)
+            {
+                _others.Add(new PlayerSnap
+                {
+                    Id = o.Id,
+                    Team = o.Team,
+                    Position = o.State.Position,
+                    Velocity = o.State.Velocity,
+                    Yaw = (float)o.LastCmd.Move.Yaw,
+                    Pitch = o.LastCmd.Pitch,
+                    Mode = o.State.Mode,
+                    Crouched = o.State.Crouched,
+                    Dead = o.State.Dead,
+                    Held = o.State.Hand.HeldItem,
+                    Hand = o.State.Hand.Mode,
+                });
+            }
+            _snapCodec.SetEveryone(Tick, _others);
             foreach (ServerPlayer to in _players)
             {
-                _others.Clear();
-                foreach (ServerPlayer o in _players)
-                {
-                    if (o == to) continue;
-                    _others.Add(new PlayerSnap
-                    {
-                        Id = o.Id,
-                        Team = o.Team,
-                        Position = o.State.Position,
-                        Velocity = o.State.Velocity,
-                        Yaw = (float)o.LastCmd.Move.Yaw,
-                        Pitch = o.LastCmd.Pitch,
-                        Mode = o.State.Mode,
-                        Crouched = o.State.Crouched,
-                        Dead = o.State.Dead,
-                        Held = o.State.Hand.HeldItem,
-                        Hand = o.State.Hand.Mode,
-                    });
-                }
+                if (IsBotConnection(to.ConnectionId)) continue; // nothing is ever sent to a bot
                 _w.Clear();
-                Protocol.Write(_w, new SnapshotMsg
+                if (to.Sent == null || to.Sent.Size != Config.SnapshotBaselineTicks) to.Sent = new SnapshotBaselines(Math.Max(2, Config.SnapshotBaselineTicks));
+                bool delta = _snapCodec.WriteForReceiver(_w, new SnapshotMsg
                 {
                     ServerTick = Tick,
                     HasSelf = true,
@@ -689,8 +818,9 @@ namespace Sculpt.Core.Net
                     Self = to.State,
                     SelfBar = BarOf(to.Id).Value,
                     SelfHoldTenthMs = HoldOf(to),
-                    Others = _others,
-                });
+                }, to.Id, to.Sent, Config.DeltaSnapshots ? to.AckTick : -1, MaskFor(to));
+                if (delta) to.DeltaSnapshotsSent++; else to.FullSnapshotsSent++;
+                to.SnapshotBytes += _w.Length;
                 Send(to.ConnectionId, _w.ToArray(), false);
             }
         }

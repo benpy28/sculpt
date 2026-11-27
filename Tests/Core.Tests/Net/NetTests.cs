@@ -357,7 +357,7 @@ namespace Sculpt.Core.Tests.Net
         [Test]
         public void RespawnCommand_IsPredicted_AndAgreed()
         {
-            var h = NetHarness.Flat();
+            var h = NetHarness.Flat(c => c.AllowDevRespawn = true); // the dev respawn (F1); refused by default, see AntiCheatTests
             var p = h.AddClient(NetHarness.Lag(30), NetHarness.Lag(30));
             p.Script = Scripts.StraightNorth;
             h.RunSeconds(2);

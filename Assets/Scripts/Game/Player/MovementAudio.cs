@@ -15,6 +15,7 @@ namespace Sculpt.Game.Player
     {
         private LocalPlayer _player;
         private AudioSource _slide;
+        private float _slideLevel;
         private Vector3 _lastFeet;
         private readonly FootstepClock _clock = new FootstepClock();
         private int _stepIndex;
@@ -52,7 +53,7 @@ namespace Sculpt.Game.Player
 
         private void LateUpdate()
         {
-            if (_player == null || !_player.Net.Joined) return;
+            if (_player == null || !_player.Net.Playing) return;
             MotorState s = _player.State;
             Vector3 feet = _player.RenderFeet;
             Vector3 d = feet - _lastFeet;
@@ -67,25 +68,25 @@ namespace Sculpt.Game.Player
                 {
                     case MoveEventType.Jumped:
                     case MoveEventType.SlideJump:
-                        Synth.Play(Jump, feet, 0.4f, Random.Range(0.95f, 1.05f), false);
+                        Synth.Play(Jump, feet, 0.4f, Random.Range(0.95f, 1.05f), false, bus: SoundBus.Movement);
                         break;
                     case MoveEventType.Landed:
                     {
                         float levels = (float)e.Amount;
                         float vol = Mathf.Clamp(0.3f + 0.22f * levels, 0.3f, 1f);
-                        Synth.Play(Land, feet, vol, Mathf.Clamp(1.1f - 0.05f * levels, 0.8f, 1.1f), false);
+                        Synth.Play(Land, feet, vol, Mathf.Clamp(1.1f - 0.05f * levels, 0.8f, 1.1f), false, bus: SoundBus.Movement);
                         _clock.Landed();
                         break;
                     }
                     case MoveEventType.SlideLandSuccess:
-                        Synth.Play(SlideLand, feet, 0.7f, 1f, false);
+                        Synth.Play(SlideLand, feet, 0.7f, 1f, false, bus: SoundBus.Movement);
                         break;
                     case MoveEventType.ChargedThrough:
-                        Synth.Play(Crash, feet + Vector3.up, 1f, Random.Range(0.92f, 1.04f), false);
+                        Synth.Play(Crash, feet + Vector3.up, 1f, Random.Range(0.92f, 1.04f), false, bus: SoundBus.Movement);
                         break;
                     case MoveEventType.Vaulted:
                     case MoveEventType.MantleStarted:
-                        Synth.Play(Grab, feet, 0.5f, Random.Range(0.95f, 1.05f), false);
+                        Synth.Play(Grab, feet, 0.5f, Random.Range(0.95f, 1.05f), false, bus: SoundBus.Movement);
                         break;
                 }
             }
@@ -97,7 +98,7 @@ namespace Sculpt.Game.Player
             if (_clock.Advance(Sounds, walking, s.Crouched, moved, speed, out double stepVol, out _))
             {
                 _stepIndex = (_stepIndex + 1 + Random.Range(0, 3)) % Steps.Length;
-                Synth.Play(Steps[_stepIndex], feet, (float)stepVol, Random.Range(0.93f, 1.07f), false);
+                Synth.Play(Steps[_stepIndex], feet, (float)stepVol, Random.Range(0.93f, 1.07f), false, bus: SoundBus.Movement);
             }
 
             // Slide scrape.
@@ -106,7 +107,8 @@ namespace Sculpt.Game.Player
             // hear when a turn is costing you.
             bool carving = sliding && s.Carving;
             float target = sliding ? Mathf.Clamp01(speed / 14f) * (carving ? 0.75f : 0.55f) : 0f;
-            _slide.volume = Mathf.MoveTowards(_slide.volume, target, Time.unscaledDeltaTime * (sliding ? 8f : 5f));
+            _slideLevel = Mathf.MoveTowards(_slideLevel, target, Time.unscaledDeltaTime * (sliding ? 8f : 5f));
+            _slide.volume = _slideLevel * SoundMix.Gain(SoundBus.Movement);
             _slide.pitch = Mathf.MoveTowards(_slide.pitch, 0.75f + 0.5f * Mathf.Clamp01(speed / 18f) + (carving ? 0.18f : 0f), Time.unscaledDeltaTime * 3f);
         }
 

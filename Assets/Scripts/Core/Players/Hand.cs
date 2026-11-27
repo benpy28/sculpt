@@ -52,8 +52,15 @@ namespace Sculpt.Core
         /// (ISSUE-11: a Q tap must never make a swap faster).
         /// </summary>
         public bool HeldReady;
+        /// <summary>A bandage or first-aid kit in hand is being used: it takes effect at this tick (0 = not using one; a
+        /// use always ends after the tick it started on, and ticks start at 0). See <see cref="HealItemRules"/>.</summary>
+        public int UseUntil;
+        /// <summary>The tick the current use started (for the progress ring).</summary>
+        public int UseStart;
 
         public static HandState Initial => new HandState { Mode = HandMode.Weapon, Slot = 0, PrevSlot = 1, Bag = Bag.Standard, ReadyTick = int.MinValue / 2, SculptLockUntil = int.MinValue / 2 };
+        /// <summary>A healing item is being used.</summary>
+        public bool Using => UseUntil != 0;
 
         /// <summary>The item in the selected slot (None = empty hands).</summary>
         public Item HeldItem => Bag[Slot];
@@ -85,7 +92,7 @@ namespace Sculpt.Core
 
         public bool Equals(in HandState o) => Mode == o.Mode && Slot == o.Slot && PrevSlot == o.PrevSlot && Bag.Equals(o.Bag) &&
                                                ReadyTick == o.ReadyTick && SculptLockUntil == o.SculptLockUntil &&
-                                               ExitQueued == o.ExitQueued && HeldReady == o.HeldReady;
+                                               ExitQueued == o.ExitQueued && HeldReady == o.HeldReady && UseUntil == o.UseUntil && UseStart == o.UseStart;
     }
 
     /// <summary>Per-tick hand input. Presses only; a weapon key is a hotbar slot 1-5 (0 = none).</summary>
@@ -113,6 +120,10 @@ namespace Sculpt.Core
         public bool Door;
         public int DoorTile;
         public bool DoorOpen;
+        /// <summary>Inventory screen: swap the contents of slots <see cref="SwapA"/> and <see cref="SwapB"/> (0..4). Predicted;
+        /// the hand follows the item it holds, so nothing in hand changes.</summary>
+        public bool Swap;
+        public byte SwapA, SwapB;
     }
 
     /// <summary>Hand timings (Ben approved 2026-11-20). Ticks at 60 Hz.</summary>
@@ -130,6 +141,9 @@ namespace Sculpt.Core
         /// <summary>The launcher is heavy: a long draw (0.6 s), so it is a commitment, never a quick swap up close.</summary>
         public int LauncherDrawTicks = 36 * SimTime.Per60;
         public int LauncherExitTicks = 18 * SimTime.Per60;
+        /// <summary>Bandages and first-aid kits out of the bag (like a grenade).</summary>
+        public int HealItemDrawTicks = 12 * SimTime.Per60;
+        public int HealItemExitTicks = 6 * SimTime.Per60;
 
         /// <summary>
         /// Heal with one press, no sculpt mode (Ben 2026-11-25: "no heal menu"; Q heals what you aim at, Alt + Q
@@ -158,6 +172,7 @@ namespace Sculpt.Core
                 case Item.Grenade: return GrenadeDrawTicks;
                 case Item.C4: return C4DrawTicks;
                 case Item.Launcher: return LauncherDrawTicks;
+                case Item.Bandage: case Item.Medkit: return HealItemDrawTicks;
                 default: return 0;
             }
         }
@@ -170,6 +185,7 @@ namespace Sculpt.Core
                 case Item.Grenade: return GrenadeExitTicks;
                 case Item.C4: return C4ExitTicks;
                 case Item.Launcher: return LauncherExitTicks;
+                case Item.Bandage: case Item.Medkit: return HealItemExitTicks;
                 default: return 0;
             }
         }
@@ -225,6 +241,19 @@ namespace Sculpt.Core
                 h.Mode = HandMode.Drawing;
                 h.ReadyTick = tick + cfg.Draw(h.HeldItem);
             }
+        }
+
+        /// <summary>
+        /// Swaps two slots' contents (the inventory screen, and auto-sort making room on a pickup). The selection and the
+        /// previous slot follow the items they pointed at, so what is in hand, its draw and any reload or heal in use
+        /// carry on untouched: a swap can never make anything faster. Out-of-range slots do nothing.
+        /// </summary>
+        public static void SwapSlots(ref HandState h, int a, int b)
+        {
+            if (a == b || a < 0 || b < 0 || a >= Items.Slots || b >= Items.Slots) return;
+            h.Bag.SwapSlots(a, b);
+            if (h.Slot == a) h.Slot = (byte)b; else if (h.Slot == b) h.Slot = (byte)a;
+            if (h.PrevSlot == a) h.PrevSlot = (byte)b; else if (h.PrevSlot == b) h.PrevSlot = (byte)a;
         }
 
         private static void Select(ref HandState h, int slot)

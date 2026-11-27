@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using NUnit.Framework;
 using Sculpt.Core.Net;
@@ -20,7 +21,7 @@ namespace Sculpt.Core.Tests.Weapons
         public void SetUp()
         {
             _mc = new MovementConfig();
-            _nc = new NetConfig();
+            _nc = new NetConfig { AllowDevRespawn = true };
             _grid = new SubGrid(4, 4, 4, -16);
             _grid.FillBaseGround();
             _spawn = new Vec3d(8 * B + 0.6, 0, 8 * B + 0.6);
@@ -193,10 +194,13 @@ namespace Sculpt.Core.Tests.Weapons
         }
 
         [Test]
-        public void SmgHeadshotIs125Percent()
+        public void SmgHeadshotIs150Percent()
         {
+            // Balance pass 2 (2026-11-26): 1.5x, was 1.25x (Ben 2026-11-20). Eight headshots kill, twelve body shots.
             WeaponStats smg = Of(Weapon.Smg);
-            Assert.That(smg.HeadDamage / smg.BodyDamage, Is.EqualTo(1.25).Within(1e-12));
+            Assert.That(smg.HeadDamage / smg.BodyDamage, Is.EqualTo(1.5).Within(1e-12));
+            Assert.That(Math.Ceiling(150 / smg.HeadDamage), Is.EqualTo(8));
+            Assert.That(Math.Ceiling(150 / smg.BodyDamage), Is.EqualTo(12));
         }
 
         [Test]

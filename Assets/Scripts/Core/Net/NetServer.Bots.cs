@@ -32,7 +32,7 @@ namespace Sculpt.Core.Net
         /// <summary>Adds a practice dummy at its post (it spawns and respawns there). Returns its server player.</summary>
         public ServerPlayer AddDummy(PracticeDummy brain, int team)
         {
-            ServerPlayer p = AddPlayer(_nextBotConnection--, team, brain.Post, brain.PostYaw);
+            ServerPlayer p = AddPlayer(_nextBotConnection--, team, brain.Post, brain.PostYaw, Replay.JoinKind.Dummy, false);
             _dummies[p.Id] = brain;
             return p;
         }
@@ -40,7 +40,7 @@ namespace Sculpt.Core.Net
         /// <summary>Adds a bot player with its own brain at a spawn (it respawns there). Returns its server player.</summary>
         public ServerPlayer AddBot(IBotBrain brain, int team, Vec3d spawn, double spawnYaw)
         {
-            ServerPlayer p = AddPlayer(_nextBotConnection--, team, spawn, spawnYaw);
+            ServerPlayer p = AddPlayer(_nextBotConnection--, team, spawn, spawnYaw, Replay.JoinKind.Bot, brain.CountsAsPlayer);
             _brains[p.Id] = brain;
             _matchDirty = true;
             return p;
@@ -53,9 +53,18 @@ namespace Sculpt.Core.Net
         private bool CountsForMatch(ServerPlayer p) =>
             !IsBotConnection(p.ConnectionId) || (_brains.TryGetValue(p.Id, out IBotBrain b) && b.CountsAsPlayer);
 
+        /// <summary>
+        /// Bot path searches started this tick. Bots share a small budget per tick (<see cref="BotPathsPerTick"/>) so 32
+        /// bots choosing where to go on the same tick (a battle royale start) spread their searches over a few ticks
+        /// instead of stalling one.
+        /// </summary>
+        public int BotPathsThisTick { get; internal set; }
+        public int BotPathsPerTick = 1;
+
         /// <summary>Writes each bot's command for this tick into its input ring, as if it had arrived.</summary>
         private void FeedBots()
         {
+            BotPathsThisTick = 0;
             if (_dummies.Count == 0 && _brains.Count == 0) return;
             foreach (ServerPlayer p in _players)
             {

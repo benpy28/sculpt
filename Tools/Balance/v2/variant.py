@@ -29,7 +29,7 @@ def run(ov, aim="mid", n=200, pairs=PAIRS):
             for sa in strats(a):
                 for sb in strats(b):
                     jobs.append((ov, sa, sb, D, aim, n))
-    with Pool(14) as p:
+    with Pool() as p:
         res = p.map(job, jobs, chunksize=4)
     out = {}
     for a, b, Ds in pairs:

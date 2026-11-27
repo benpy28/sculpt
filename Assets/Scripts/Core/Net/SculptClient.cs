@@ -207,6 +207,13 @@ namespace Sculpt.Core.Net
             ServerBarTick = int.MinValue;
         }
 
+        /// <summary>The server dealt this player a new team (battle royale match start).</summary>
+        public void SetLocalTeam(int team)
+        {
+            LocalTeam = team;
+            if (LocalBody != null) LocalBody.Team = team;
+        }
+
         public byte NextSeq()
         {
             byte s = _nextSeq++;

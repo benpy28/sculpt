@@ -18,6 +18,7 @@ namespace Sculpt.Game.UI
         private Material _gl;
         private string _ipLine;
         private MatchPhase _lastPhase;
+        private bool _facedBr;
         // Texts shown every frame are rebuilt only when their number changes (a string per frame is garbage per frame).
         private int _timeSecs = -1, _youKills = -1, _themKills = -1;
         private string _timeText = "", _youText = "", _themText = "";
@@ -38,7 +39,14 @@ namespace Sculpt.Game.UI
             if (_session == null) return;
             MatchState m = _session.Client.Match;
             // A new match puts you back at your spawn: face the way the spawn faces.
-            if (m.Phase == MatchPhase.Countdown && _lastPhase != MatchPhase.Countdown) _player.FaceSpawnNow();
+            if (m.Phase == MatchPhase.Countdown && _lastPhase != MatchPhase.Countdown && !m.IsBr) _player.FaceSpawnNow();
+            // Battle royale: once the deal has moved you to your pad, look toward the middle of the map.
+            if (m.IsBr && m.Phase == MatchPhase.Countdown && !_facedBr && _session.Client.ServerTimeEstimate - m.PhaseStartTick > 30 * SimTime.Per60)
+            {
+                _facedBr = true;
+                _player.FaceTowards(new Vec3d(BrMap.Size / 2, 0, BrMap.Size / 2));
+            }
+            if (m.Phase != MatchPhase.Countdown) _facedBr = false;
             if (m.Phase != _lastPhase) Debug.Log($"[SCULPT] Match: {m.Phase}" + (m.Phase == MatchPhase.Ended ? $" (you {m.ScoreOf(_session.Client.PlayerId).Kills} kills, leader {m.Leader()})" : ""));
             _lastPhase = m.Phase;
         }
@@ -53,9 +61,9 @@ namespace Sculpt.Game.UI
         {
             if (_session == null || _player == null) return;
             NetClient net = _session.Client;
-            if (!net.Joined) return;
+            if (!net.Joined || net.IsSpectator) return; // spectators get the watch HUD's clock and scores
             MatchState m = net.Match;
-            if (m.Phase == MatchPhase.Off) return;
+            if (m.Phase == MatchPhase.Off || m.IsBr) return; // the battle royale has its own HUD (BrHud)
             if (Event.current.type != EventType.Repaint) return; // draw-only: nothing here reacts to input events
             float w = Screen.width, h = Screen.height;
             float s = Mathf.Max(0.75f, h / 1080f);
@@ -96,7 +104,9 @@ namespace Sculpt.Game.UI
                     HudDraw.Label(new Rect(mid.x, mid.y + 18 * s, mid.width, 44 * s), "Waiting for an opponent", Mathf.RoundToInt(30 * s), HudDraw.Text, TextAnchor.MiddleCenter, true);
                     if (_session.Mode == NetMode.Host)
                     {
-                        _ipLine ??= MainMenu.LanAddresses().Count > 0 ? "They join with " + string.Join("  or  ", MainMenu.LanAddresses()) : "No network address found";
+                        _ipLine ??= MainMenu.LanAddresses().Count > 0
+                            ? (LanRoomBeacon.Problem.Length > 0 ? "They join with " : "They join with room code " + LanRoomBeacon.Code + "  or  ") + string.Join("  or  ", MainMenu.LanAddresses())
+                            : "No network address found";
                         HudDraw.Label(new Rect(mid.x, mid.y + 72 * s, mid.width, 34 * s), _ipLine, Mathf.RoundToInt(20 * s), HudDraw.Dim, TextAnchor.MiddleCenter);
                     }
                     break;

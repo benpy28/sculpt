@@ -22,6 +22,8 @@ namespace Sculpt.Core.Tests.Net
             public readonly List<MoveEvent> Events = new List<MoveEvent>();
             public ServerPlayer ServerSide;
             public Action<Peer> OnFrame;
+            /// <summary>Rewrites every packet the client sends (a modified client, for anti-cheat tests).</summary>
+            public Func<byte[], byte[]> Tamper;
         }
 
         public readonly NetConfig Config = new NetConfig();
@@ -77,7 +79,7 @@ namespace Sculpt.Core.Tests.Net
                 FrameMs = frameMs,
                 NextFrameMs = NowMs,
             };
-            p.Client = new NetClient(MakeGrid(), Movement, Config, (data, reliable) => p.Up.Send(data, reliable, NowMs));
+            p.Client = new NetClient(MakeGrid(), Movement, Config, (data, reliable) => p.Up.Send(p.Tamper != null ? p.Tamper(data) : data, reliable, NowMs));
             _byConn[p.ConnectionId] = p;
             Peers.Add(p);
             p.ServerSide = Server.AddPlayer(p.ConnectionId, team, spawn ?? Spawn, 0);

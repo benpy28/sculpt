@@ -59,6 +59,8 @@ namespace Sculpt.Game.Player
                     if (!sliding) continue;
                     loop = RoutedLoop.Create("Remote Slide " + id, transform, MovementAudio.SlideLoop, 1.5f, (float)c.SlideRange);
                     loop.Source.time = Random.Range(0f, loop.Source.clip.length * 0.9f);
+                    loop.Bus = SoundBus.Movement;
+                    loop.Caption = SoundCaption.Sliding;
                     _slides[id] = loop;
                 }
                 float speed = (float)System.Math.Sqrt(v.Velocity.X * v.Velocity.X + v.Velocity.Z * v.Velocity.Z);
@@ -84,21 +86,24 @@ namespace Sculpt.Game.Player
             Vector3 at = s.At.ToUnity() + Vector3.up * StepHeight;
             float range = (float)s.Range;
             float vol = (float)s.Volume * team;
+            bool enemy = team >= 0.99f; // captions only for enemies (teammates are drawn on the minimap and HUD)
+            const SoundBus mv = SoundBus.Movement;
             switch (s.Type)
             {
                 case MoveSoundType.Step:
                     AudioClip[] steps = MovementAudio.Steps;
                     _stepIndex = (_stepIndex + 1 + Random.Range(0, 3)) % steps.Length;
-                    Synth.Play(steps[_stepIndex], at, vol, Random.Range(0.93f, 1.07f), true, 1.5f, range);
+                    Synth.Play(steps[_stepIndex], at, vol, Random.Range(0.93f, 1.07f), true, 1.5f, range, bus: mv,
+                               caption: !enemy ? SoundCaption.None : range > 28f ? SoundCaption.Running : SoundCaption.Footsteps);
                     break;
                 case MoveSoundType.Jump:
-                    Synth.Play(MovementAudio.Jump, at, vol, Random.Range(0.95f, 1.05f), true, 1.5f, range);
+                    Synth.Play(MovementAudio.Jump, at, vol, Random.Range(0.95f, 1.05f), true, 1.5f, range, bus: mv, caption: enemy ? SoundCaption.Jump : SoundCaption.None);
                     break;
                 case MoveSoundType.Land:
-                    Synth.Play(MovementAudio.Land, at, vol, Mathf.Lerp(1.1f, 0.85f, (float)s.Weight), true, 2f, range);
+                    Synth.Play(MovementAudio.Land, at, vol, Mathf.Lerp(1.1f, 0.85f, (float)s.Weight), true, 2f, range, bus: mv, caption: enemy ? SoundCaption.Landing : SoundCaption.None);
                     break;
                 case MoveSoundType.Grab:
-                    Synth.Play(MovementAudio.Grab, at, vol, Random.Range(0.95f, 1.05f), true, 1.5f, range);
+                    Synth.Play(MovementAudio.Grab, at, vol, Random.Range(0.95f, 1.05f), true, 1.5f, range, bus: mv, caption: enemy ? SoundCaption.Climbing : SoundCaption.None);
                     break;
                 // Slide start and end drive the loop above.
             }

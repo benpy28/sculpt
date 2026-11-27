@@ -23,12 +23,15 @@ namespace Sculpt.Game.Player
         public MovementConfig Config => _cfg;
         public readonly List<MoveEvent> Events = new List<MoveEvent>();
         public NetClient Net => _session.Client;
+        public NetSession Session => _session;
         public SculptClient Sculpt => _session.Client.Sculpt;
         public SculptConfig SculptConfig => _session.SculptConfig;
 
         /// <summary>View angles in degrees. Yaw 0 = north, positive turns toward east.</summary>
         public float Yaw { get; private set; }
         public float Pitch { get; private set; }
+        /// <summary>Dev only (-autoplay): when set, its command replaces what the keyboard and mouse would send.</summary>
+        public System.Func<InputCmd?> AutoPilot;
 
         /// <summary>Interpolated feet position for rendering (includes the decaying correction offset).</summary>
         public Vector3 RenderFeet { get; private set; }
@@ -79,6 +82,24 @@ namespace Sculpt.Game.Player
         public int PickTarget { get; private set; } = -1;
         /// <summary>What pressing interact on <see cref="PickTarget"/> would do.</summary>
         public PickupPlan PickPlan { get; private set; }
+
+        /// <summary>
+        /// The inventory screen (I) is open: the mouse is free for dragging slots, so mouse look, firing and anything aimed
+        /// (pickups, heals, punches, doors) are off; the keys still move you (walk, sprint, jump, crouch, slot keys,
+        /// reload). Claude's call 2026-11-26: sorting mid-fight is possible but costs you your aim, never your feet.
+        /// </summary>
+        public bool InventoryOpen;
+        private bool _swapLatch;
+        private byte _swapA, _swapB;
+
+        /// <summary>Swap two hotbar slots (the inventory screen). Predicted, so the bag changes on the next tick.</summary>
+        public void RequestSwap(int a, int b)
+        {
+            if (a == b || a < 0 || b < 0 || a >= Items.Slots || b >= Items.Slots) return;
+            _swapLatch = true;
+            _swapA = (byte)a;
+            _swapB = (byte)b;
+        }
         /// <summary>0..1 progress of a held interact key toward dropping the held item (0 when not holding).</summary>
         public float DropHold { get; private set; }
         public string InteractKeyName => UI.SculptHud.Key(_input.Interact);
@@ -134,6 +155,19 @@ namespace Sculpt.Game.Player
         private SculptAction _confirmAction;
         private bool _hadJoined;
 
+        /// <summary>
+        /// Degrees of turn per mouse count right now: the sensitivity, times the ADS multiplier (and the zoom itself when
+        /// "zoom matched" is on) while zoomed with a gun that zooms (AR, pistol).
+        /// </summary>
+        private float LookDegreesPerCount()
+        {
+            MotorState st = State;
+            if (!Zoomed || !st.Hand.HasGun) return _client.DegreesPerCount;
+            double zoom = Config.Weapons.Of(st.Hand.Held).AimFovScale;
+            if (zoom >= 0.999) return _client.DegreesPerCount; // pump and SMG don't zoom: right mouse only drops sprint
+            return (float)global::Sculpt.Core.Settings.AimMath.AdsDegreesPerCount(_client.Sensitivity, _client.AdsMultiplier, _client.AdsZoomMatched, zoom);
+        }
+
         public void Init(NetSession session, MovementConfig cfg, MovementSettings settingsAsset, GameInput input, ClientSettings client)
         {
             _session = session;
@@ -174,7 +208,7 @@ namespace Sculpt.Game.Player
 
             // Esc opens the settings menu (SettingsMenu frees the cursor and blocks input while it is open).
             var mouse = Mouse.current;
-            bool clickToLock = !CursorLocked && !InputBlocked && mouse != null && mouse.leftButton.wasPressedThisFrame;
+            bool clickToLock = !CursorLocked && !InputBlocked && !InventoryOpen && mouse != null && mouse.leftButton.wasPressedThisFrame;
             if (clickToLock) LockCursor(true);
 
             if (_showcase != null)
@@ -189,40 +223,45 @@ namespace Sculpt.Game.Player
             else if (CursorLocked)
             {
                 Vector2 d = _input.Look.ReadValue<Vector2>();
-                float k = _client.DegreesPerCount;
+                float k = LookDegreesPerCount();
+                float ky = k * _client.VerticalMultiplier * (_client.InvertY ? -1f : 1f);
                 Yaw = Mathf.Repeat(Yaw + d.x * k + 180f, 360f) - 180f;
-                Pitch = Mathf.Clamp(Pitch - d.y * k, -89f, 89f);
-                LookDelta = new Vector2(d.x * k, d.y * k);
+                Pitch = Mathf.Clamp(Pitch - d.y * ky, -89f, 89f);
+                LookDelta = new Vector2(d.x * k, d.y * ky);
             }
             else LookDelta = Vector2.zero;
+
+            // Watching: the mouse look drives the spectator camera; nothing else of the local player runs.
+            if (Net.IsSpectator) { PickTarget = -1; DoorTarget = -1; return; }
 
             UpdateSculptAim();
             UpdateItems();
 
-            if (InputBlocked || !CursorLocked) return;
+            if (InputBlocked || !(CursorLocked || InventoryOpen)) return;
+            bool aimed = CursorLocked; // with the inventory open the mouse drags slots: nothing aimed or fired
             if (_input.Jump.WasPressedThisFrame()) _jumpLatch = true;
             if (_input.Crouch.WasPressedThisFrame()) _crouchLatch = true;
             if (GameInput.DevBuild && _input.DevRespawn.WasPressedThisFrame()) _respawnLatch = true;
             if (GameInput.DevBuild && _course != null && _input.DevShowcase.WasPressedThisFrame()) _showcaseLatch = true;
             if (GameInput.DevBuild && _course != null && _input.DevShowcaseWatch.WasPressedThisFrame()) _watchLatch = true;
-            if (_input.SculptToggle.WasPressedThisFrame())
+            if (aimed && _input.SculptToggle.WasPressedThisFrame())
             {
                 if (QuickHeal) PressHeal(); // Q heals (Alt + Q reinforces); there is no heal mode
                 else _toggleLatch = true;
             }
             for (int i = 0; i < Items.Slots; i++) if (_input.Hotbar[i].WasPressedThisFrame()) _weaponLatch = (byte)(i + 1);
             if (_input.LastWeapon.WasPressedThisFrame()) _weaponLatch = (byte)(State.Hand.PrevSlot + 1);
-            if (!InSculptMode && !clickToLock && _input.Fire.WasPressedThisFrame()) _fireLatch = true;
+            if (aimed && !InSculptMode && !clickToLock && _input.Fire.WasPressedThisFrame()) _fireLatch = true;
             if (!InSculptMode && _input.Reload.WasPressedThisFrame()) _reloadLatch = true;
-            if (!InSculptMode && !clickToLock && _input.Aim.WasPressedThisFrame()) _aimLatch = true; // C4 detonator
-            if (_input.Punch.WasPressedThisFrame()) _punchLatch = true;
+            if (aimed && !InSculptMode && !clickToLock && _input.Aim.WasPressedThisFrame()) _aimLatch = true; // C4 detonator
+            if (aimed && _input.Punch.WasPressedThisFrame()) _punchLatch = true;
             if (_client.SprintToggle && _input.Sprint.WasPressedThisFrame()) _sprintOn = !_sprintOn;
             if (_client.CrouchToggle && _input.Crouch.WasPressedThisFrame()) _crouchOn = !_crouchOn;
             // Toggle mode: pressing sprint while toggled into a crouch stands you up and sprints.
             if (_client.SprintToggle && _client.CrouchToggle && _input.Sprint.WasPressedThisFrame() && _crouchOn && State.Mode != MoveMode.Slide) _crouchOn = false;
-            if (_client.ZoomToggle && !InSculptMode && _input.Aim.WasPressedThisFrame()) _zoomOn = !_zoomOn;
+            if (aimed && _client.ZoomToggle && !InSculptMode && _input.Aim.WasPressedThisFrame()) _zoomOn = !_zoomOn;
 
-            if (!InSculptMode || clickToLock) return;
+            if (!InSculptMode || clickToLock || !aimed) return;
             if (Heals)
             {
                 if (_input.SculptPush.WasPressedThisFrame()) PressHeal();
@@ -252,7 +291,7 @@ namespace Sculpt.Game.Player
             if (i >= 0)
             {
                 PickTarget = i;
-                PickPlan = ItemRules.Plan(State, Net.Items[i], Net.PlayerId, Net.Tick, _cfg.Items);
+                PickPlan = ItemRules.Plan(State, Net.Items[i], Net.PlayerId, Net.Tick, _cfg.Items, NetSession.LocalSlotPrefs);
             }
             else if (Net.Walls != null) DoorTarget = DoorRules.FindTarget(Net.Walls, Net.Grid, SimEye, LookDir, Net.Walls.Config.DoorReach);
             bool active = CursorLocked && !InputBlocked;
@@ -378,7 +417,8 @@ namespace Sculpt.Game.Player
             if (_settingsAsset != null) _settingsAsset.ApplyTo(_cfg); // live tuning in Play mode
 #endif
             bool active = CursorLocked && !InputBlocked;
-            Vector2 move = active ? _input.Move.ReadValue<Vector2>() : Vector2.zero;
+            bool keys = !InputBlocked && (CursorLocked || InventoryOpen); // the inventory screen keeps your feet
+            Vector2 move = keys ? _input.Move.ReadValue<Vector2>() : Vector2.zero;
             bool sculpting = State.Hand.InSculptMode;
             HandState h0 = State.Hand;
             if (h0.Slot != _lastSlot) { _lastSlot = h0.Slot; _zoomOn = false; }
@@ -386,8 +426,8 @@ namespace Sculpt.Game.Player
             if (move.sqrMagnitude < 0.01f) _sprintOn = false; // a toggled sprint ends when you stop
             // ...and when you fire or aim (Ben: toggles end on their own, so you rarely press again to turn them off).
             if (_client.SprintToggle && active && !sculpting && (_input.Fire.IsPressed() || _input.Aim.IsPressed())) _sprintOn = false;
-            bool sprintHeld = active && (_client.SprintToggle ? _sprintOn : _input.Sprint.IsPressed());
-            bool crouchHeld = active && (_client.CrouchToggle ? _crouchOn : _input.Crouch.IsPressed());
+            bool sprintHeld = keys && (_client.SprintToggle ? _sprintOn : _input.Sprint.IsPressed());
+            bool crouchHeld = keys && (_client.CrouchToggle ? _crouchOn : _input.Crouch.IsPressed());
             bool aimHeld = active && !sculpting && (_client.ZoomToggle ? _zoomOn : _input.Aim.IsPressed());
             Zoomed = aimHeld && h0.Mode == HandMode.Weapon;
             var mi = new MoveInput
@@ -395,9 +435,9 @@ namespace Sculpt.Game.Player
                 MoveX = move.x,
                 MoveZ = move.y,
                 Yaw = Yaw * Mathf.Deg2Rad,
-                JumpPressed = _jumpLatch && active,
-                JumpHeld = active && _input.Jump.IsPressed(),
-                CrouchPressed = _crouchLatch && active,
+                JumpPressed = _jumpLatch && keys,
+                JumpHeld = keys && _input.Jump.IsPressed(),
+                CrouchPressed = _crouchLatch && keys,
                 CrouchHeld = crouchHeld,
                 SprintHeld = sprintHeld,
                 // In sculpt mode the mouse buttons sculpt; they never stop your sprint.
@@ -410,7 +450,8 @@ namespace Sculpt.Game.Player
             _aimLatch = false;
             var hand = new HandInput
             {
-                SculptToggle = _toggleLatch && active, WeaponKey = active ? _weaponLatch : (byte)0, Reload = _reloadLatch && active,
+                SculptToggle = _toggleLatch && active, WeaponKey = keys ? _weaponLatch : (byte)0, Reload = _reloadLatch && keys,
+                Swap = _swapLatch && keys, SwapA = _swapA, SwapB = _swapB,
                 Pickup = _pickupLatch && active, PickId = _pickupId, Drop = _dropLatch && active, Punch = _punchLatch && active,
                 Door = _doorLatch && active, DoorTile = _doorTile, DoorOpen = _doorOpen,
             };
@@ -424,6 +465,7 @@ namespace Sculpt.Game.Player
                 hand.HealReinforce = _healWantKind == HealKind.Reinforce;
             }
             _reloadLatch = false;
+            _swapLatch = false;
             _punchLatch = false;
             _pickupLatch = false;
             _dropLatch = false;
@@ -472,6 +514,21 @@ namespace Sculpt.Game.Player
                 if (_showcase.Finished) StopShowcase();
             }
 
+            // Dev autoplay (-autoplay): a bot brain plays you, so a profile run is a real first-person match.
+            if (AutoPilot != null && Net.Joined)
+            {
+                InputCmd? auto = AutoPilot();
+                if (auto.HasValue)
+                {
+                    mi = auto.Value.Move;
+                    hand = auto.Value.Hand;
+                    confirm = false;
+                    respawn = false;
+                    Yaw = (float)(mi.Yaw * Mathf.Rad2Deg);
+                    Pitch = auto.Value.Pitch;
+                }
+            }
+
             MoveMode modeBefore = State.Mode;
             int before = Events.Count;
             Net.PredictTick(mi, Pitch, respawn, hand, confirm, action, Events);
@@ -518,6 +575,15 @@ namespace Sculpt.Game.Player
 
         /// <summary>Turn to face the way your spawn faces (a new match moved you back there).</summary>
         public void FaceSpawnNow() => FaceSpawn();
+
+        /// <summary>Turns the view to look level at a point (battle royale: the map's middle when a match is dealt).</summary>
+        public void FaceTowards(Vec3d point)
+        {
+            Vec3d d = point - State.Position;
+            if (d.X * d.X + d.Z * d.Z < 1e-6) return;
+            Yaw = (float)(System.Math.Atan2(d.X, d.Z) * Mathf.Rad2Deg);
+            Pitch = 0;
+        }
 
         private void StopRace()
         {

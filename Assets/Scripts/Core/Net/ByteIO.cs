@@ -68,6 +68,24 @@ namespace Sculpt.Core.Net
 
         public void Vec(Vec3d v) { F64(v.X); F64(v.Y); F64(v.Z); }
         public void VecF(Vec3d v) { F32((float)v.X); F32((float)v.Y); F32((float)v.Z); }
+
+        /// <summary>Unsigned LEB128: 7 bits per byte, small numbers take one byte (replay and spectator streams).</summary>
+        public void VarU(ulong v)
+        {
+            while (v >= 0x80) { U8((byte)(v | 0x80)); v >>= 7; }
+            U8((byte)v);
+        }
+
+        /// <summary>Signed varint (zigzag): -1 and 1 take one byte each.</summary>
+        public void VarS(long v) => VarU(unchecked((ulong)((v << 1) ^ (v >> 63))));
+
+        /// <summary>Appends raw bytes.</summary>
+        public void Bytes(byte[] data, int offset, int count)
+        {
+            Ensure(count);
+            System.Buffer.BlockCopy(data, offset, _buf, Length, count);
+            Length += count;
+        }
     }
 
     /// <summary>Bounds-checked little-endian reader. Any overrun throws NetFormatException.</summary>
@@ -87,6 +105,7 @@ namespace Sculpt.Core.Net
         }
 
         public int Remaining => _end - Position;
+        internal byte[] BufferOf() => _buf;
 
         private void Need(int n)
         {
@@ -142,5 +161,41 @@ namespace Sculpt.Core.Net
 
         public Vec3d Vec() => new Vec3d(F64(), F64(), F64());
         public Vec3d VecF() => new Vec3d(F32(), F32(), F32());
+
+        public ulong VarU()
+        {
+            ulong v = 0;
+            for (int shift = 0; shift < 64; shift += 7)
+            {
+                byte b = U8();
+                v |= (ulong)(b & 0x7F) << shift;
+                if ((b & 0x80) == 0) return v;
+            }
+            throw new NetFormatException("Varint too long.");
+        }
+
+        public long VarS()
+        {
+            ulong u = VarU();
+            return unchecked((long)(u >> 1) ^ -(long)(u & 1));
+        }
+
+        /// <summary>A varint that must fit a non-negative int no larger than max.</summary>
+        public int VarCount(int max)
+        {
+            ulong v = VarU();
+            if (v > (ulong)max) throw new NetFormatException("Count too large.");
+            return (int)v;
+        }
+
+        /// <summary>Skips n bytes (bounds-checked) and returns where they started.</summary>
+        public int Skip(int n)
+        {
+            if (n < 0) throw new NetFormatException("Bad length.");
+            Need(n);
+            int at = Position;
+            Position += n;
+            return at;
+        }
     }
 }

@@ -41,16 +41,22 @@ namespace Sculpt.Core.Net
                         Type = CombatEventType.Shot, Attacker = p.Id, Source = (DamageSource)shot.Weapon,
                         Origin = shot.Origin, Aim = shot.Aim, Spread = (float)shot.Spread, Seed = shot.Seed,
                     });
+                    int lastShotBefore = p.Watch.LastShotTickAny;
+                    p.Watch.LastShotTickAny = shot.Tick;
+                    NoteShot(p, shot);
                     BuildTargets(p, p.LastCmd.ViewTick, p.LastCmd.ViewFrac);
                     WeaponStats st = Weapons.Of(shot.Weapon);
                     Hitscan.Resolve(Grid, shot, st, Weapons, p.Team, _targets, _victims, Walls != null ? _pellets : null);
                     Walls?.ApplyShot(_pellets, shot.Weapon, p.Id);
+                    bool firstVictim = true;
                     foreach (ShotVictim v in _victims)
                     {
                         ServerPlayer victim = FindById(v.Id);
                         if (victim == null || victim.State.Dead) continue;
-                        int dmg = v.Damage;
+                        int dmg = Weapons.ScaleDamage(v.Damage, p.State.Hand.Bag.RarityOfGun(shot.Weapon, p.State.Hand.Slot)); // battle royale rarity (None: unchanged)
                         if (dmg <= 0) continue;
+                        NoteHit(p, victim, shot, v.HeadPellets > 0, firstVictim, lastShotBefore);
+                        firstVictim = false;
                         bool killed = Hurt(p, victim, dmg);
                         _combat.Add(new CombatEvent
                         {
@@ -117,6 +123,7 @@ namespace Sculpt.Core.Net
                     DamageSource src = SourceOf(e.Kind);
                     if (e.Type == GrenadeEventType.Thrown)
                     {
+                        p.Watch.ShotNoiseUntil = Tick + AC.Interest.ShotNoiseTicks; // a throw is heard (and seen: its flight goes to everyone)
                         _combat.Add(new CombatEvent { Type = CombatEventType.Grenade, Attacker = p.Id, Source = src, Nade = e.Type, NadeSeq = e.Seq, Origin = e.Position, Aim = e.Velocity });
                         continue;
                     }
@@ -159,7 +166,21 @@ namespace Sculpt.Core.Net
         {
             _targets.Clear();
             double view = viewTick + viewFrac / 256.0;
-            view = Math.Max(Tick - Weapons.MaxRewindTicks, Math.Min(Tick, view));
+            double floor = Tick - Weapons.MaxRewindTicks;
+            // You can't rewind a target older than the snapshot you yourself claim to be drawing. The clamp boundary is
+            // deliberately the SAME as the ViewBehindAck flag boundary (ack - interp - ViewBehindAckTicks) plus a little
+            // extra slack, so the rule is "if we wouldn't flag it, we won't clamp it": any view the flag treats as honest
+            // (an honest client draws interp behind its acked snapshot, further under ping/loss) is never clamped, so
+            // legit lag compensation over bad links is untouched. It only caps a forged old view paired with a recent
+            // ack (the naive backtrack) — which ViewBehindAck already flags. A consistent old-view+old-ack backtracker
+            // is indistinguishable from honest high latency without a trusted RTT (a documented residual), so it is
+            // neither clamped nor flagged here.
+            if (AC.ClampRewindToAck && !IsBotConnection(shooter.ConnectionId) && shooter.AckTick > int.MinValue / 2)
+            {
+                double ackFloor = shooter.AckTick - Config.InterpDelayTicks - AC.ViewBehindAckTicks - AC.ViewClampMarginTicks;
+                if (ackFloor > floor) floor = ackFloor;
+            }
+            view = Math.Max(floor, Math.Min(Tick, view));
             foreach (ServerPlayer o in _players)
             {
                 if (o == shooter) continue;
@@ -220,11 +241,12 @@ namespace Sculpt.Core.Net
                 killer = victim.LastHurtBy;
             // In a 1v1 match every death is the other player's kill, however it happened and however long ago they last
             // hurt you (Ben 2026-11-25: "its a 1v1 so credit the other player"). Other modes keep the 8 s rule above.
-            if ((killer == 0 || killer == victim.Id) && Match.CountsKills) killer = TheOpponent(victim);
+            if ((killer == 0 || killer == victim.Id) && Match.CountsKills && !Match.IsBr) killer = TheOpponent(victim);
             victim.LastHurtBy = 0;
             ServerPlayer k = killer != 0 && killer != victim.Id ? FindById(killer) : null;
             if (k != null) k.Kills++;
             OnMatchKill(victim, k);
+            OnBrDeath(victim);
             victim.Body.Position = ParkedBody;
             victim.Body.Kick = Vec3d.Zero;
             _combat.Add(new CombatEvent { Type = CombatEventType.Kill, Attacker = killer, Victim = victim.Id, Source = source, HeadPellets = (byte)(headshot ? 1 : 0) });
@@ -241,8 +263,7 @@ namespace Sculpt.Core.Net
                 for (int k = start; k < Walls.Changes.Count && k < start + TileProtocol.MaxChanges; k++) _tileScratch.Add(Walls.Changes[k]);
                 _w.Clear();
                 TileProtocol.Write(_w, new TilesMsg { Tick = Tick, Changes = _tileScratch, Heals = start == 0 ? heals : null });
-                byte[] data = _w.ToArray();
-                foreach (ServerPlayer to in _players) Send(to.ConnectionId, data, true);
+                Broadcast(_w.ToArray());
             }
             Walls.Changes.Clear();
         }
@@ -250,7 +271,14 @@ namespace Sculpt.Core.Net
         /// <summary>Late join: the current state of every tile that ever changed (the rest are as built).</summary>
         private void SendTileJoinState(ServerPlayer to)
         {
-            if (Walls == null) return;
+            byte[] data = TileJoinBytes();
+            if (data != null) Send(to.ConnectionId, data, true);
+        }
+
+        /// <summary>The late-join tile message, or null when nothing ever changed.</summary>
+        private byte[] TileJoinBytes()
+        {
+            if (Walls == null) return null;
             var all = new List<TileChange>();
             for (int i = 0; i < Walls.Count; i++)
             {
@@ -263,24 +291,44 @@ namespace Sculpt.Core.Net
                     });
             }
             List<HealEvent> running = RunningHeals();
-            if (all.Count == 0 && running.Count == 0) return;
+            if (all.Count == 0 && running.Count == 0) return null;
             var w = new ByteWriter(16 + all.Count * 8 + running.Count * 8);
             TileProtocol.Write(w, new TilesMsg { Tick = Tick, Join = true, Changes = all, Heals = running });
-            Send(to.ConnectionId, w.ToArray(), true);
+            return w.ToArray();
         }
 
-        /// <summary>One reliable message per tick with events. Shots skip their shooter; health is told only to the two involved.</summary>
+        /// <summary>
+        /// One reliable message per tick with events, gated by interest so it can't be read as a wallhack. Shots skip
+        /// their shooter (predicted); health is told only to the two involved. A Shot or Grenade event carries the
+        /// attacker's exact eye and aim, so it only goes to receivers the attacker is being sent to (interest force-sends
+        /// anyone who fired or threw within 1 s and 250 m, so every shot you could hear still reaches you). A Hit event
+        /// carries the victim's impact point, so an uninvolved receiver gets it only when the victim is being sent to
+        /// them, with the victim's health masked out. Kill events carry no position and stay global (the kill feed).
+        /// </summary>
         private void SendCombat()
         {
             if (_combat.Count == 0) return;
+            if (Stream != null) StreamCombat();
             foreach (ServerPlayer to in _players)
             {
                 _combatTo.Clear();
                 foreach (CombatEvent e in _combat)
                 {
-                    if ((e.Type == CombatEventType.Shot || e.Type == CombatEventType.Grenade) && e.Attacker == to.Id) continue;
+                    bool involved = e.Attacker == to.Id || e.Victim == to.Id;
+                    switch (e.Type)
+                    {
+                        case CombatEventType.Shot:
+                        case CombatEventType.Grenade:
+                            // Leaks the attacker's eye + aim (or throw start): only receivers the attacker is sent to.
+                            if (e.Attacker == to.Id || !IsSentTo(to.Id, e.Attacker)) continue;
+                            break;
+                        case CombatEventType.Hit:
+                            // Leaks the victim's impact point: uninvolved receivers get it only if the victim is sent to them.
+                            if (!involved && !IsSentTo(to.Id, e.Victim)) continue;
+                            break;
+                    }
                     CombatEvent c = e;
-                    if (c.Type == CombatEventType.Hit && c.Attacker != to.Id && c.Victim != to.Id) c.HealthAfter = -1;
+                    if (c.Type == CombatEventType.Hit && !involved) c.HealthAfter = -1;
                     _combatTo.Add(c);
                     if (_combatTo.Count == CombatProtocol.MaxEvents) break;
                 }

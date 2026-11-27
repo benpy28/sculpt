@@ -25,6 +25,7 @@ namespace Sculpt.Game.Rendering
         private readonly List<ScriptableRendererFeature> _switchedOff = new List<ScriptableRendererFeature>();
         private UniversalRenderPipelineAsset _scaledAsset;
         private float _assetScaleBefore;
+        private int _assetMsaaBefore;
         private int _vSyncBefore, _queueBefore, _targetBefore;
         private bool _saved;
 
@@ -85,7 +86,7 @@ namespace Sculpt.Game.Rendering
                 data.stopNaN = false;
                 data.dithering = false;
                 _camera.allowHDR = !lean;
-                _camera.allowMSAA = !lean;
+                _camera.allowMSAA = s.Msaa > 1; // anti-aliasing is its own setting now (lean used to switch it off)
                 _camera.useOcclusionCulling = false; // nothing is baked; skips the query
             }
 
@@ -113,8 +114,11 @@ namespace Sculpt.Game.Rendering
                     RestoreScale();
                     _scaledAsset = asset;
                     _assetScaleBefore = asset.renderScale;
+                    _assetMsaaBefore = asset.msaaSampleCount;
                 }
                 if (!Mathf.Approximately(asset.renderScale, s.RenderScale)) asset.renderScale = s.RenderScale;
+                // MSAA samples live on the pipeline asset (the camera only allows or refuses it).
+                if (asset.msaaSampleCount != s.Msaa) asset.msaaSampleCount = s.Msaa;
             }
 
             int queue = QualitySettings.maxQueuedFrames;
@@ -122,7 +126,8 @@ namespace Sculpt.Game.Rendering
                       (ActiveCap > 0 ? ", cap " + ActiveCap : ", no cap") +
                       (queue > 0 ? ", frame queue " + queue : ", frame queue n/a") +
                       (lean ? ", lean" : ", full pipeline") +
-                      (s.RenderScale < 0.995f ? ", scale " + Mathf.RoundToInt(s.RenderScale * 100f) + "%" : "");
+                      (s.RenderScale < 0.995f ? ", scale " + Mathf.RoundToInt(s.RenderScale * 100f) + "%" : "") +
+                      (s.Msaa > 1 ? ", MSAA " + s.Msaa + "x" : "");
             Debug.Log("[SCULPT] Video: " + Summary + $" ({Screen.width}x{Screen.height} at {refresh:0.#} Hz, {SystemInfo.graphicsDeviceType}).");
         }
 
@@ -147,7 +152,7 @@ namespace Sculpt.Game.Rendering
 
         private void RestoreScale()
         {
-            if (_scaledAsset != null) _scaledAsset.renderScale = _assetScaleBefore;
+            if (_scaledAsset != null) { _scaledAsset.renderScale = _assetScaleBefore; _scaledAsset.msaaSampleCount = _assetMsaaBefore; }
             _scaledAsset = null;
         }
 

@@ -38,7 +38,7 @@ if __name__ == "__main__":
     ov = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 800
     jobs = [(ov, A, B, D, n) for A, B, _ in MATCHES for D in DISTS]
-    with Pool(14) as p: res = p.map(job, jobs)
+    with Pool() as p: res = p.map(job, jobs)
     out = {}
     for (A, B, name) in MATCHES:
         out[name] = [round(v, 3) for a, b, D, v in res if a == str(A) and b == str(B)]
