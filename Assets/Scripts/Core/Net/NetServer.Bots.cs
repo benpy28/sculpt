@@ -61,6 +61,13 @@ namespace Sculpt.Core.Net
         public int BotPathsThisTick { get; internal set; }
         public int BotPathsPerTick = 1;
 
+        /// <summary>
+        /// Battle royale: where each bot is heading for loot (bot id -> the item's position, tick of the claim), so bots
+        /// spread out over the loot instead of meeting at the same chest (or its spill) and shotgunning each other in the
+        /// first seconds.
+        /// </summary>
+        internal readonly Dictionary<int, (Vec3d at, int tick)> BotLootClaims = new Dictionary<int, (Vec3d at, int tick)>();
+
         /// <summary>Writes each bot's command for this tick into its input ring, as if it had arrived.</summary>
         private void FeedBots()
         {

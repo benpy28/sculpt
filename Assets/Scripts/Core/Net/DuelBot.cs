@@ -40,6 +40,10 @@ namespace Sculpt.Core.Net
         /// </summary>
         public double BrCalmSeconds = 45;
         public double BrCalmCloseMetres = 3;
+        /// <summary>Battle royale after the opening: the farthest enemy it starts a fight with (unless hurt).</summary>
+        public double BrEngageMetres = 35;
+        /// <summary>Battle royale: how long it holds a spot it roamed to before moving on (seconds, random in between).</summary>
+        public double BrHoldMin = 6, BrHoldMax = 20;
 
         public static DuelBotConfig For(BotLevel level)
         {
@@ -70,6 +74,8 @@ namespace Sculpt.Core.Net
         {
             public int Tick;
             public bool Seen, Heard, Pinged;
+            /// <summary>The enemy observed is another bot (battle royale opening: bots leave each other alone).</summary>
+            public bool Bot;
             public Vec3d Pos, Vel, HeardPos, PingPos;
             public double Height;
         }
@@ -188,11 +194,22 @@ namespace Sculpt.Core.Net
 
             // ---- What it knows now: what it perceived a reaction time ago.
             Obs p = Recall(tick - Config.ReactionTicks);
-            if (Calm(server, me, tick) && !(p.Seen && (p.Pos - s.Position).Length <= Config.BrCalmCloseMetres))
+            if (Calm(server, me, tick) && !(p.Seen && !p.Bot && (p.Pos - s.Position).Length <= Config.BrCalmCloseMetres))
             {
-                // Early in a battle royale: loot; an enemy seen or heard is left alone unless it hurt us or is close.
+                // Early in a battle royale: loot; an enemy seen or heard is left alone unless it hurt us, or is a person
+                // who came close (two bots passing each other on the way to their loot leave each other alone: they used
+                // to shotgun each other in the first seconds).
                 p.Seen = false;
                 p.Heard = false;
+            }
+            else if (server.Match.IsBr && server.Match.Phase == MatchPhase.Playing && tick - _hurtTick > 4 * SimTime.TicksPerSecond
+                     && !(_engaged && tick - _lastSeenTick < 30 * SimTime.Per60))
+            {
+                // Later in a battle royale: it picks its fights like a person would, not every enemy it can see across a
+                // field: only those within BrEngageMetres (or anyone who hurt it), and it doesn't go after far-off noise.
+                // (2026-11-27: 32-bot matches were down to a third alive two minutes in, long AR fights at 60-80 m.)
+                if (p.Seen && (p.Pos - s.Position).Length > Config.BrEngageMetres) p.Seen = false;
+                if (p.Heard && (p.HeardPos - s.Position).Length > Config.BrEngageMetres) p.Heard = false;
             }
             if (p.Seen)
             {
@@ -270,7 +287,7 @@ namespace Sculpt.Core.Net
                 else if (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60) goal = _lastSeenPos;
                 else if (tick - _lastHeardTick < 600 * SimTime.Per60) goal = _lastHeardPos;
                 // Battle royale: loot what is near (chests, a gun it lacks, a better rarity, a utility), else roam inside the circle.
-                else if (br && LootGoal(server, s, tick, out Vec3d loot)) goal = loot;
+                else if (br && LootGoal(server, me, s, tick, out Vec3d loot)) goal = loot;
                 else goal = br ? RoamInCircle(server, s.Position, tick) : RoamGoal(s.Position);
                 if (br && server.Match.Phase == MatchPhase.Countdown) goal = s.Position; // waits on its pad
                 wish = FollowPath(s, goal, tick, ref jump, out Vec3d lookAt, out bool arrived);
@@ -280,7 +297,11 @@ namespace Sculpt.Core.Net
                     if (goal.Equals(_pingPos)) _pingTick = int.MinValue / 2;
                     else if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
                     else if (goal.Equals(_lastHeardPos)) _lastHeardTick = int.MinValue / 2;
-                    else if (_lootId == 0) _hasRoam = false;
+                    else if (_lootId == 0)
+                    {
+                        _hasRoam = false;
+                        if (br) _holdUntil = tick + (int)((Config.BrHoldMin + _rng.NextDouble() * (Config.BrHoldMax - Config.BrHoldMin)) * SimTime.TicksPerSecond);
+                    }
                 }
                 if (br && _lootId != 0) TakeLoot(server, s, tick, ref cmd);
                 sprint = wish.LengthSquared > 0.01;
@@ -409,6 +430,7 @@ namespace Sculpt.Core.Net
                 o = Heard(o, enemy.State.Position, 2.0); // hit: it knows roughly where from
             _lastDamage = s.Damage;
             if (enemy == null) return o;
+            o.Bot = NetServer.IsBotConnection(enemy.ConnectionId);
             MotorState e = enemy.State;
             double h = PlayerMovement.HeightOf(e, server.Movement);
             o.Height = h;
@@ -648,6 +670,10 @@ namespace Sculpt.Core.Net
         }
 
         /// <summary>World direction to walk this tick along a path to the goal (re-planned when the goal moves or the bot strays).</summary>
+        /// <summary>Far goals are walked to in legs this long (see <see cref="FollowPath"/>).</summary>
+        private const double LegMetres = 60;
+        private bool _partial;
+
         private Vec3d FollowPath(in MotorState s, Vec3d goal, int tick, ref bool jump, out Vec3d lookAt, out bool arrived)
         {
             arrived = false;
@@ -661,23 +687,47 @@ namespace Sculpt.Core.Net
                 Vec3d next = Nav.Feet(_path[_pathAt]);
                 if ((next - feet).HorizontalLength > 4 || feet.Y < next.Y - 2.2) replan = true; // fell off or got pushed
             }
+            double far = (goal - feet).HorizontalLength;
             if (replan && tick - _pathTick >= 15 * SimTime.Per60 && (_server == null || _server.BotPathsThisTick < _server.BotPathsPerTick))
             {
                 if (_server != null) _server.BotPathsThisTick++;
                 _pathTick = tick;
                 _pathGoal = goal;
                 _pathAt = 0;
-                int a = Nav.Nearest(feet), b = Nav.Nearest(goal, 6);
+                // A far goal (across the battle royale map: the circle, a roam point) is reached in legs of up to
+                // LegMetres: one search over the whole map would give up before it got there (the search is capped).
+                _partial = false;
+                int a = Nav.Nearest(feet), b = -1;
+                if (far > LegMetres)
+                {
+                    Vec3d dir = (goal - feet).WithY(0) / far;
+                    for (double leg = LegMetres; leg >= 20 && b < 0; leg -= 20)
+                        b = Nav.Nearest(new Vec3d(feet.X + dir.X * leg, 0, feet.Z + dir.Z * leg), 8);
+                    _partial = b >= 0;
+                }
+                if (b < 0) b = Nav.Nearest(goal, 6);
                 if (!Nav.FindPath(a, b, _path))
                 {
                     _path.Clear();
-                    _hasRoam = false; // unreachable: pick something else
-                    if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
-                    if (goal.Equals(_lastHeardPos)) _lastHeardTick = int.MinValue / 2;
-                    if (goal.Equals(_pingPos)) _pingTick = int.MinValue / 2;
+                    _partial = false;
+                    if (far <= LegMetres)
+                    {
+                        _hasRoam = false; // unreachable: pick something else
+                        if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
+                        if (goal.Equals(_lastHeardPos)) _lastHeardTick = int.MinValue / 2;
+                        if (goal.Equals(_pingPos)) _pingTick = int.MinValue / 2;
+                    }
                 }
             }
-            if (_path.Count == 0 || _pathAt >= _path.Count) { if (_path.Count > 0) arrived = true; return Vec3d.Zero; }
+            if (_path.Count == 0 || _pathAt >= _path.Count)
+            {
+                if (_path.Count > 0 && !_partial) arrived = true;
+                else if (_path.Count > 0) _path.Clear(); // the end of a leg: plan the next one
+                // No path yet (or none found) to a far goal: head straight for it rather than stand still (a bot stuck
+                // upstairs in the circle used to wait there until it died).
+                if (!arrived && far > LegMetres) return (goal - feet).WithY(0) / far;
+                return Vec3d.Zero;
+            }
 
             // Move on to the next node once close (and past nodes the bot already reached).
             while (_pathAt < _path.Count - 1)
@@ -694,7 +744,12 @@ namespace Sculpt.Core.Net
             int look = Math.Min(_path.Count - 1, _pathAt + 3);
             lookAt = Nav.Feet(_path[look]) + new Vec3d(0, 1.6, 0);
             Vec3d d = (tp - feet).WithY(0);
-            if (_pathAt == _path.Count - 1 && d.Length < 0.4) { arrived = true; return Vec3d.Zero; }
+            if (_pathAt == _path.Count - 1 && d.Length < 0.4)
+            {
+                if (_partial) { _path.Clear(); return (goal - feet).WithY(0) / Math.Max(1e-6, far); } // next leg
+                arrived = true;
+                return Vec3d.Zero;
+            }
             return d.Length > 1e-6 ? d.Normalized : Vec3d.Zero;
         }
 
@@ -754,8 +809,34 @@ namespace Sculpt.Core.Net
             return false;
         }
 
-        /// <summary>The nearest thing worth picking up within 45 m (re-chosen every half second).</summary>
-        private bool LootGoal(NetServer server, in MotorState s, int tick, out Vec3d goal)
+        /// <summary>
+        /// Someone else will get there first: another bot is heading for it or for something within 4 m of it (a chest and
+        /// its spill count as one spot), or, in the calm opening, an enemy is already near it and nearer than this bot.
+        /// Bots then pick other loot, so two bots rarely meet at one chest in the first seconds (2026-11-27: they used to,
+        /// and shotgunned each other).
+        /// </summary>
+        private bool Contested(NetServer server, ServerPlayer me, in GroundItem g, int tick, bool calm)
+        {
+            foreach (var kv in server.BotLootClaims)
+            {
+                if (kv.Key == me.Id || tick - kv.Value.tick >= 90 * SimTime.Per60) continue;
+                if ((kv.Value.at - g.Position).WithY(0).LengthSquared > 4 * 4 || Math.Abs(kv.Value.at.Y - g.Position.Y) > 2) continue;
+                if (server.FindPlayer(kv.Key) is ServerPlayer holder && !holder.State.Dead) return true;
+            }
+            if (!calm) return false;
+            double mine = (g.Position - me.State.Position).WithY(0).LengthSquared;
+            foreach (ServerPlayer o in server.Players)
+            {
+                if (o == me || o.Team == me.Team || o.State.Dead || !server.InBrMatch(o.Id)) continue;
+                double d = (g.Position - o.State.Position).WithY(0).LengthSquared;
+                if (d < 10 * 10 && d < mine) return true;
+            }
+            return false;
+        }
+
+        /// <summary>The nearest thing worth picking up within 45 m (re-chosen every half second) that nobody else is
+        /// about to take.</summary>
+        private bool LootGoal(NetServer server, ServerPlayer me, in MotorState s, int tick, out Vec3d goal)
         {
             goal = default;
             if (server.Match.Phase != MatchPhase.Playing) { _lootId = 0; return false; }
@@ -765,6 +846,7 @@ namespace Sculpt.Core.Net
             if (_lootId == 0 || tick - _lootScanTick >= 60 * SimTime.Per60)
             {
                 _lootScanTick = tick;
+                bool calm = Calm(server, me, tick);
                 int best = 0;
                 double bestD = 45 * 45;
                 Vec3d bestPos = default;
@@ -776,11 +858,14 @@ namespace Sculpt.Core.Net
                     double d2 = d.X * d.X + d.Z * d.Z + 4 * d.Y * d.Y; // another floor is further than it looks
                     if (d2 >= bestD) continue;
                     if (server.InStorm(g.Position)) continue;
+                    if (Contested(server, me, g, tick, calm)) continue;
                     bestD = d2;
                     best = g.Id;
                     bestPos = g.Position;
                 }
                 if (best != _lootId) { _lootId = best; _lootPos = bestPos; _lootSince = tick; _lootNearSince = int.MinValue / 2; }
+                if (best != 0) server.BotLootClaims[me.Id] = (bestPos, tick);
+                else server.BotLootClaims.Remove(me.Id);
             }
             if (_lootId == 0) return false;
             if (tick - _lootSince > 25 * 60 * SimTime.Per60) { _lootGaveUp.Add(_lootId); _lootId = 0; return false; }
@@ -822,23 +907,32 @@ namespace Sculpt.Core.Net
                 double gx = _roamGoal.X - cx, gz = _roamGoal.Z - cz;
                 if (gx * gx + gz * gz < r * r) return _roamGoal;
             }
+            // Like a person playing a battle royale (2026-11-27): it holds a spot for a while, then moves on a short way,
+            // drifting toward the middle of the circle, instead of crossing the map to random points (32 bots doing that
+            // met each other constantly and the lobby was down to a handful three minutes in).
+            if (!_hasRoam && tick < _holdUntil) return from;
             _circleRoamTick = tick;
-            IReadOnlyList<BotNav.Node> nodes = Nav.Nodes;
-            for (int k = 0; k < 60; k++)
+            for (int k = 0; k < 12; k++)
             {
-                BotNav.Node n = nodes[_rng.Next(nodes.Count)];
-                if (n.Open < 8) continue;
-                Vec3d f = n.Feet(Nav);
-                double fx = f.X - cx, fz = f.Z - cz;
-                if (fx * fx + fz * fz > r * r * 0.7) continue;
-                _roamGoal = f;
+                double a = _rng.NextDouble() * Math.PI * 2, d = 25 + _rng.NextDouble() * 45;
+                double x = from.X + Math.Sin(a) * d, z = from.Z + Math.Cos(a) * d;
+                x += (cx - x) * 0.3;
+                z += (cz - z) * 0.3;
+                double fx = x - cx, fz = z - cz, lim = r * 0.8;
+                double fd = Math.Sqrt(fx * fx + fz * fz);
+                if (fd > lim && fd > 1e-6) { x = cx + fx / fd * lim; z = cz + fz / fd * lim; }
+                int node = Nav.Nearest(new Vec3d(x, 0, z), 6);
+                if (node < 0 || Nav.Nodes[node].Open < 8) continue;
+                _roamGoal = Nav.Feet(node);
                 _hasRoam = true;
-                return f;
+                return _roamGoal;
             }
             _roamGoal = new Vec3d(cx, from.Y, cz);
             _hasRoam = true;
             return _roamGoal;
         }
+
+        private int _holdUntil = int.MinValue / 2;
 
         private void Unstick(in MotorState s, int tick, Vec3d wish, ref bool jump)
         {

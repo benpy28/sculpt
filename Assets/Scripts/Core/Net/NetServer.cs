@@ -644,6 +644,8 @@ namespace Sculpt.Core.Net
         public static int GunLockUntil(SculptConfig cfg, in SculptCheck c, int startTick) =>
             startTick + c.WindupTicks + (c.Type == SculptActionType.Throw ? cfg.ThrowFollowThroughTicks : 0);
 
+        internal ServerPlayer FindPlayer(int id) => FindById(id);
+
         private ServerPlayer FindById(int id)
         {
             foreach (var p in _players) if (p.Id == id) return p;

@@ -86,9 +86,37 @@ internal static class Program
                     ServerPlayer v = null, a = null;
                     foreach (ServerPlayer p in s.Players) { if (p.Id == ce.Victim) v = p; if (p.Id == ce.Attacker) a = p; }
                     Deaths.Add($"{(ticks - playStartTick) / (double)SimTime.TicksPerSecond,6:0.0}s {s.Match.Phase,-9} {ce.Source,-8} victim {ce.Victim} attacker {ce.Attacker}" +
-                        (a != null && v != null ? $" dist {(a.State.Position - v.State.Position).Length:0.0} m" : ""));
+                        (a != null && v != null ? $" dist {(a.State.Position - v.State.Position).Length:0.0} m" : "") +
+                        (v != null && (ticks - playStartTick) < 30 * SimTime.TicksPerSecond ? $" at {v.State.Position} (pad {v.Spawn}{(a != null ? $", attacker's pad {a.Spawn}" : "")})" : ""));
                 }
             if (s.Match.Phase == MatchPhase.Playing && playStartTick < 0) playStartTick = ticks;
+            if (playStartTick >= 0 && s.Match.Phase == MatchPhase.Playing)
+                foreach (ServerPlayer p in s.Players)
+                {
+                    if (!s.InBrMatch(p.Id)) continue;
+                    bool was = WasDead.Contains(p.Id);
+                    if (!was && p.State.Dead)
+                    {
+                        WasDead.Add(p.Id);
+                        bool killed = false;
+                        foreach (CombatEvent ce in s.CombatEvents) if (ce.Type == CombatEventType.Kill && ce.Victim == p.Id && ce.Attacker != 0) killed = true;
+                        if (!killed)
+                        {
+                            StormState st = s.Match.Storm;
+                            double dx = p.State.Position.X - st.CentreXAt(s.Tick), dz = p.State.Position.Z - st.CentreZAt(s.Tick);
+                            LastPos.TryGetValue(p.Id, out Vec3d old);
+                            OtherDeaths.Add($"{(ticks - playStartTick) / (double)SimTime.TicksPerSecond,6:0.0}s player {p.Id} {(Sculpt.Core.Net.NetServer.IsBotConnection(p.ConnectionId) ? "bot" : "human")} at {p.State.Position} {Math.Sqrt(dx * dx + dz * dz) - st.RadiusAt(s.Tick):0} m outside the circle (phase {st.Phase + 1}); moved {(p.State.Position - old).HorizontalLength:0} m in the last 10 s");
+                        }
+                    }
+                    if ((ticks - playStartTick) % (10 * SimTime.TicksPerSecond) == 0) LastPos[p.Id] = p.State.Position;
+                }
+            if (playStartTick >= 0 && s.Match.Phase == MatchPhase.Playing && (ticks - playStartTick) % (30 * SimTime.TicksPerSecond) == 0)
+            {
+                int inMatch = 0, live = 0;
+                foreach (ServerPlayer p in s.Players) if (s.InBrMatch(p.Id)) { inMatch++; if (!p.State.Dead) live++; }
+                StormState st = s.Match.Storm;
+                Alive.Add($"{(ticks - playStartTick) / SimTime.TicksPerSecond,5}s alive {live,2}/{inMatch}  circle phase {st.Phase + 1} radius {st.RadiusAt(s.Tick),5:0}");
+            }
             if (s.Match.Phase != MatchPhase.Playing) { if (playTicks > 0 && s.Match.Phase == MatchPhase.Ended) break; continue; }
             playTicks++;
             for (int i = 0; i < N; i++)
@@ -114,6 +142,10 @@ internal static class Program
         }
         Console.WriteLine($"deaths ({Deaths.Count}), seconds after play starts:");
         foreach (string d in Deaths.GetRange(0, Math.Min(40, Deaths.Count))) Console.WriteLine("  " + d);
+        Console.WriteLine($"deaths with no killer ({OtherDeaths.Count}):");
+        foreach (string d in OtherDeaths) Console.WriteLine("  " + d);
+        Console.WriteLine("alive every 30 s:");
+        foreach (string a in Alive) Console.WriteLine("  " + a);
         Console.WriteLine("timeline (half seconds: phase, server ms avg/worst per tick, interest/simulate/bots avg):");
         int per = SimTime.TicksPerSecond / 2;
         for (int i = 0; i < Math.Min(Timeline.Count, 60); i++)
@@ -126,4 +158,8 @@ internal static class Program
 
     private static readonly List<double[]> Timeline = new List<double[]>();
     private static readonly List<string> Deaths = new List<string>();
+    private static readonly List<string> Alive = new List<string>();
+    private static readonly List<string> OtherDeaths = new List<string>();
+    private static readonly HashSet<int> WasDead = new HashSet<int>();
+    private static readonly Dictionary<int, Vec3d> LastPos = new Dictionary<int, Vec3d>();
 }
