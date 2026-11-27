@@ -41,14 +41,17 @@ namespace Sculpt.Game.Settings
         public bool ShowNetStats;
         /// <summary>MSAA samples for the game camera: 1 = off (default, competitive), 2, 4 or 8. Smooths polygon edges.</summary>
         public int Msaa = 1;
+        /// <summary>Picture effects: post-processing, shadows, ambient occlusion, lighting, fog (see <see cref="Sculpt.Core.Settings.LookValues"/>).
+        /// Defaults are the clean competitive picture.</summary>
+        public Sculpt.Core.Settings.LookValues Look = Sculpt.Core.Settings.LookValues.Clean;
 
         /// <summary>The preset these values are exactly (or Custom).</summary>
         public Sculpt.Core.Settings.VideoPreset Preset => Sculpt.Core.Settings.DisplayPresets.Detect(Values);
 
         public Sculpt.Core.Settings.VideoValues Values
         {
-            get => new Sculpt.Core.Settings.VideoValues { VSync = VSync, FpsCap = FpsCap, LowLatency = LowLatency, LeanRendering = LeanRendering, RenderScale = RenderScale, Msaa = Msaa };
-            set { VSync = value.VSync; FpsCap = value.FpsCap; LowLatency = value.LowLatency; LeanRendering = value.LeanRendering; RenderScale = value.RenderScale; Msaa = Sculpt.Core.Settings.DisplayPresets.NormMsaa(value.Msaa); _cmd = null; Clamped(); Changed(); }
+            get => new Sculpt.Core.Settings.VideoValues { VSync = VSync, FpsCap = FpsCap, LowLatency = LowLatency, LeanRendering = LeanRendering, RenderScale = RenderScale, Msaa = Msaa, Look = Look };
+            set { VSync = value.VSync; FpsCap = value.FpsCap; LowLatency = value.LowLatency; LeanRendering = value.LeanRendering; RenderScale = value.RenderScale; Msaa = Sculpt.Core.Settings.DisplayPresets.NormMsaa(value.Msaa); Look = value.Look; _cmd = null; Clamped(); Changed(); }
         }
 
         /// <summary>Bumped by <see cref="Changed"/>; whoever applies settings compares it with the version it last applied.</summary>
@@ -72,6 +75,7 @@ namespace Sculpt.Game.Settings
             if (FpsCap > 1000) FpsCap = 1000;
             if (FpsCap > 0 && FpsCap < 30) FpsCap = 30;
             Msaa = Sculpt.Core.Settings.DisplayPresets.NormMsaa(Msaa);
+            Look = Look.Clamped();
             return this;
         }
 
@@ -82,6 +86,21 @@ namespace Sculpt.Game.Settings
             .Bool(SettingsGroup.Video, "sculpt.video.lean", true, v => v.LeanRendering, (v, b) => v.LeanRendering = b)
             .Float(SettingsGroup.Video, "sculpt.video.renderscale", 1f, MinRenderScale, MaxRenderScale, v => v.RenderScale, (v, f) => v.RenderScale = f)
             .Int(SettingsGroup.Video, "sculpt.video.msaa", 1, 1, 8, v => v.Msaa, (v, i) => v.Msaa = i)
+            // Picture effects (defaults = the clean competitive picture, so nobody's look changes until they pick it).
+            .Int(SettingsGroup.Video, "sculpt.look.postaa", 0, 0, 3, v => v.Look.PostAa, (v, i) => v.Look.PostAa = i)
+            .Int(SettingsGroup.Video, "sculpt.look.tonemap", 0, 0, 1, v => v.Look.Tonemap, (v, i) => v.Look.Tonemap = i)
+            .Int(SettingsGroup.Video, "sculpt.look.grading", 0, 0, 2, v => v.Look.Grading, (v, i) => v.Look.Grading = i)
+            .Int(SettingsGroup.Video, "sculpt.look.bloom", 0, 0, 2, v => v.Look.Bloom, (v, i) => v.Look.Bloom = i)
+            .Int(SettingsGroup.Video, "sculpt.look.ao", 0, 0, 2, v => v.Look.Ao, (v, i) => v.Look.Ao = i)
+            .Int(SettingsGroup.Video, "sculpt.look.shadows", 0, 0, 2, v => v.Look.Shadows, (v, i) => v.Look.Shadows = i)
+            .Int(SettingsGroup.Video, "sculpt.look.lighting", 0, 0, 1, v => v.Look.Lighting, (v, i) => v.Look.Lighting = i)
+            .Int(SettingsGroup.Video, "sculpt.look.fog", 1, 0, 2, v => v.Look.Fog, (v, i) => v.Look.Fog = i)
+            .Bool(SettingsGroup.Video, "sculpt.look.shafts", false, v => v.Look.Shafts, (v, b) => v.Look.Shafts = b)
+            .Int(SettingsGroup.Video, "sculpt.look.dof", 0, 0, 1, v => v.Look.Dof, (v, i) => v.Look.Dof = i)
+            .Int(SettingsGroup.Video, "sculpt.look.motionblur", 0, 0, 2, v => v.Look.MotionBlur, (v, i) => v.Look.MotionBlur = i)
+            .Float(SettingsGroup.Video, "sculpt.look.vignette", 0f, 0f, 1f, v => v.Look.Vignette, (v, f) => v.Look.Vignette = f)
+            .Float(SettingsGroup.Video, "sculpt.look.grain", 0f, 0f, 1f, v => v.Look.Grain, (v, f) => v.Look.Grain = f)
+            .Float(SettingsGroup.Video, "sculpt.look.sharpen", 0f, 0f, 1f, v => v.Look.Sharpen, (v, f) => v.Look.Sharpen = f)
             .Bool(SettingsGroup.Latency, "sculpt.video.showfps", false, v => v.ShowFps, (v, b) => v.ShowFps = b)
             .Bool(SettingsGroup.Latency, "sculpt.video.showlatency", false, v => v.ShowLatency, (v, b) => v.ShowLatency = b)
             .Bool(SettingsGroup.Latency, "sculpt.video.shownet", false, v => v.ShowNetStats, (v, b) => v.ShowNetStats = b);
@@ -110,6 +129,7 @@ namespace Sculpt.Game.Settings
             c.ShowLatency &= ShowLatency == c.Over.ShowLatency;
             c.FpsCap &= FpsCap == c.Over.FpsCap;
             c.RenderScale &= Mathf.Approximately(RenderScale, c.Over.RenderScale);
+            c.Look &= Look.Equals(c.Over.Look);
             var v = (VideoSettings)MemberwiseClone();
             if (c.VSync) v.VSync = c.Stored.VSync;
             if (c.LowLatency) v.LowLatency = c.Stored.LowLatency;
@@ -118,13 +138,14 @@ namespace Sculpt.Game.Settings
             if (c.ShowLatency) v.ShowLatency = c.Stored.ShowLatency;
             if (c.FpsCap) v.FpsCap = c.Stored.FpsCap;
             if (c.RenderScale) v.RenderScale = c.Stored.RenderScale;
+            if (c.Look) v.Look = c.Stored.Look;
             Table.Save(v);
         }
 
         /// <summary>Which values the command line overrode this run, what they were before, and what they became.</summary>
         private sealed class CommandLineOverrides
         {
-            public bool VSync, LowLatency, Lean, ShowFps, ShowLatency, FpsCap, RenderScale;
+            public bool VSync, LowLatency, Lean, ShowFps, ShowLatency, FpsCap, RenderScale, Look;
             public VideoSettings Stored, Over;
         }
 
@@ -137,7 +158,7 @@ namespace Sculpt.Game.Settings
 
         /// <summary>
         /// One-run overrides, never saved (benchmarks and A/B tests): -vsync 0|1, -fpscap N (0 = unlimited, -1 = display - 3),
-        /// -lowlatency 0|1, -lean 0|1, -renderscale 0.5..1, -showfps 0|1, -showlatency 0|1.
+        /// -lowlatency 0|1, -lean 0|1, -renderscale 0.5..1, -showfps 0|1, -showlatency 0|1, -look competitive|quality.
         /// </summary>
         public void ApplyCommandLine(string[] args)
         {
@@ -154,9 +175,16 @@ namespace Sculpt.Game.Settings
                 else if (a == "-showlatency" && Flag(next, out b)) { ShowLatency = b; cmd.ShowLatency = true; }
                 else if (a == "-fpscap" && int.TryParse(next, NumberStyles.Integer, CultureInfo.InvariantCulture, out int cap)) { FpsCap = cap; cmd.FpsCap = true; }
                 else if (a == "-renderscale" && float.TryParse(next, NumberStyles.Float, CultureInfo.InvariantCulture, out float s)) { RenderScale = s; cmd.RenderScale = true; }
+                // -look competitive|quality: the preset's picture for one run (benchmarks and before/after photos).
+                else if (a == "-look")
+                {
+                    Look = string.Equals(next, "quality", StringComparison.OrdinalIgnoreCase)
+                        ? Sculpt.Core.Settings.DisplayPresets.QualityLook : Sculpt.Core.Settings.LookValues.Clean;
+                    cmd.Look = true;
+                }
             }
             Clamped();
-            if (!(cmd.VSync || cmd.LowLatency || cmd.Lean || cmd.ShowFps || cmd.ShowLatency || cmd.FpsCap || cmd.RenderScale)) return;
+            if (!(cmd.VSync || cmd.LowLatency || cmd.Lean || cmd.ShowFps || cmd.ShowLatency || cmd.FpsCap || cmd.RenderScale || cmd.Look)) return;
             cmd.Stored = stored;
             cmd.Over = (VideoSettings)MemberwiseClone();
             cmd.Over._cmd = null;

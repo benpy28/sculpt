@@ -10,22 +10,117 @@ namespace Sculpt.Core.Settings
         public float RenderScale;
         /// <summary>MSAA samples: 1 = off, 2, 4 or 8.</summary>
         public int Msaa;
+        /// <summary>Picture effects (post-processing, shadows, lighting, fog). All off is the competitive look.</summary>
+        public LookValues Look;
+    }
+
+    /// <summary>
+    /// The picture settings beyond frame pacing: post-processing, sun shadows, ambient occlusion, lighting and fog.
+    /// Every value at 0 / false is the clean competitive picture (the game exactly as it looked before these settings).
+    /// None of them change what the game knows or sends: players never cast shadows (so nobody sees someone round a
+    /// corner by their shadow), and players and loot never take shadow, ambient occlusion or atmospheric fog.
+    /// </summary>
+    public struct LookValues
+    {
+        /// <summary>Post-process anti-aliasing: 0 off, 1 FXAA, 2 SMAA, 3 TAA (TAA turns MSAA off).</summary>
+        public int PostAa;
+        /// <summary>0 off, 1 filmic (neutral: keeps hues, so team and rarity colours stay true).</summary>
+        public int Tonemap;
+        /// <summary>Colour grading: 0 off, 1 natural, 2 vivid.</summary>
+        public int Grading;
+        /// <summary>0 off, 1 low, 2 high. Only very bright things glow (sun, sparks, blasts), never walls or players.</summary>
+        public int Bloom;
+        /// <summary>Screen-space ambient occlusion on the world: 0 off, 1 low, 2 high.</summary>
+        public int Ao;
+        /// <summary>Sun shadows cast by the world: 0 off, 1 low (40 m), 2 high (80 m, soft).</summary>
+        public int Shadows;
+        /// <summary>Directional sun light with sky and bounce colour on the world: 0 flat (baked shading only), 1 rich.</summary>
+        public int Lighting;
+        /// <summary>0 off, 1 light haze (the classic look), 2 atmospheric (height fog that glows toward the sun).</summary>
+        public int Fog;
+        /// <summary>Light shafts round the sun when you look toward it.</summary>
+        public bool Shafts;
+        /// <summary>Depth of field: 0 off, 1 far background only (never near you or your gun).</summary>
+        public int Dof;
+        /// <summary>Camera motion blur: 0 off, 1 low, 2 high.</summary>
+        public int MotionBlur;
+        /// <summary>0..1 amounts.</summary>
+        public float Vignette, Grain, Sharpen;
+
+        /// <summary>The picture as it was before these settings (and the competitive one): only the light haze.</summary>
+        public static LookValues Clean => new LookValues { Fog = 1 };
+
+        public static readonly string[] PostAaNames = { "Off", "FXAA", "SMAA", "TAA" };
+        public static readonly string[] TonemapNames = { "Off", "Filmic" };
+        public static readonly string[] GradingNames = { "Off", "Natural", "Vivid" };
+        public static readonly string[] LowHighNames = { "Off", "Low", "High" };
+        public static readonly string[] LightingNames = { "Flat", "Rich" };
+        public static readonly string[] FogNames = { "Off", "Light haze", "Atmospheric" };
+        public static readonly string[] DofNames = { "Off", "Far background" };
+
+        /// <summary>Puts every value in its legal range (bad saved values or a pasted code can't break the renderer).</summary>
+        public LookValues Clamped()
+        {
+            LookValues v = this;
+            v.PostAa = Clamp(v.PostAa, 0, 3);
+            v.Tonemap = Clamp(v.Tonemap, 0, 1);
+            v.Grading = Clamp(v.Grading, 0, 2);
+            v.Bloom = Clamp(v.Bloom, 0, 2);
+            v.Ao = Clamp(v.Ao, 0, 2);
+            v.Shadows = Clamp(v.Shadows, 0, 2);
+            v.Lighting = Clamp(v.Lighting, 0, 1);
+            v.Fog = Clamp(v.Fog, 0, 2);
+            v.Dof = Clamp(v.Dof, 0, 1);
+            v.MotionBlur = Clamp(v.MotionBlur, 0, 2);
+            v.Vignette = Unit(v.Vignette);
+            v.Grain = Unit(v.Grain);
+            v.Sharpen = Unit(v.Sharpen);
+            return v;
+        }
+
+        /// <summary>Whether the render pipeline's post-processing pass is needed at all (off = zero post cost).</summary>
+        public bool NeedsPost => PostAa > 0 || Tonemap > 0 || Grading > 0 || Bloom > 0 || Dof > 0 || MotionBlur > 0 || Vignette > 0.001f || Grain > 0.001f;
+
+        /// <summary>Whether a scene depth texture is needed (depth of field, motion blur, light shafts and TAA read it).</summary>
+        public bool NeedsDepth => Dof > 0 || MotionBlur > 0 || Shafts || PostAa == 3;
+
+        /// <summary>Whether the frame needs a high dynamic range target (bloom, tonemapping and shafts work above white).</summary>
+        public bool NeedsHdr => Bloom > 0 || Tonemap > 0 || Shafts;
+
+        public bool SameAs(in LookValues b) =>
+            PostAa == b.PostAa && Tonemap == b.Tonemap && Grading == b.Grading && Bloom == b.Bloom && Ao == b.Ao &&
+            Shadows == b.Shadows && Lighting == b.Lighting && Fog == b.Fog && Shafts == b.Shafts && Dof == b.Dof &&
+            MotionBlur == b.MotionBlur && Near(Vignette, b.Vignette) && Near(Grain, b.Grain) && Near(Sharpen, b.Sharpen);
+
+        private static bool Near(float a, float b) => System.Math.Abs(a - b) < 0.005f;
+        private static int Clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;
+        private static float Unit(float v) => float.IsNaN(v) || v < 0 ? 0 : v > 1 ? 1 : v;
     }
 
     public enum VideoPreset : byte { Custom = 0, Competitive = 1, Quality = 2 }
 
     /// <summary>
     /// The two video presets Ben asked for (home screen roadmap item 20). Competitive: the lowest latency and highest frame
-    /// rate (V-Sync off, no cap, one queued frame, lean rendering, full resolution, no anti-aliasing). Quality: smoother
-    /// edges and an even frame pace (4x MSAA, capped 3 under the display's refresh so a variable-refresh display never
-    /// tears or adds V-Sync delay; low latency stays on). The game's look is unlit, so lean rendering costs no picture in
-    /// either; anti-aliasing and the cap are the real differences. Any other mix shows as Custom.
+    /// rate (V-Sync off, no cap, one queued frame, lean rendering, full resolution, no anti-aliasing) and the clean
+    /// picture (no post-processing, shadows or ambient occlusion; only the light haze). Quality: smoother edges and an
+    /// even frame pace (4x MSAA, capped 3 under the display's refresh so a variable-refresh display never tears or adds
+    /// V-Sync delay; low latency stays on) and the full look: filmic tonemapping, natural grading, low bloom, high
+    /// ambient occlusion and soft shadows, rich lighting, atmospheric fog, light shafts, a light vignette and a little
+    /// sharpening. Depth of field, motion blur and film grain stay off in both (Ben: off by default). Any other mix
+    /// shows as Custom.
     /// </summary>
     public static class DisplayPresets
     {
         public static VideoValues Of(VideoPreset p) => p == VideoPreset.Quality
-            ? new VideoValues { VSync = false, FpsCap = -1, LowLatency = true, LeanRendering = true, RenderScale = 1f, Msaa = 4 }
-            : new VideoValues { VSync = false, FpsCap = 0, LowLatency = true, LeanRendering = true, RenderScale = 1f, Msaa = 1 };
+            ? new VideoValues { VSync = false, FpsCap = -1, LowLatency = true, LeanRendering = true, RenderScale = 1f, Msaa = 4, Look = QualityLook }
+            : new VideoValues { VSync = false, FpsCap = 0, LowLatency = true, LeanRendering = true, RenderScale = 1f, Msaa = 1, Look = LookValues.Clean };
+
+        /// <summary>The Quality preset's picture.</summary>
+        public static LookValues QualityLook => new LookValues
+        {
+            PostAa = 0, Tonemap = 1, Grading = 1, Bloom = 1, Ao = 2, Shadows = 2, Lighting = 1, Fog = 2, Shafts = true,
+            Dof = 0, MotionBlur = 0, Vignette = 0.2f, Grain = 0f, Sharpen = 0.25f,
+        };
 
         public static string Name(VideoPreset p) => p == VideoPreset.Competitive ? "Competitive" : p == VideoPreset.Quality ? "Quality" : "Custom";
 
@@ -39,7 +134,7 @@ namespace Sculpt.Core.Settings
 
         private static bool Same(in VideoValues a, in VideoValues b) =>
             a.VSync == b.VSync && a.FpsCap == b.FpsCap && a.LowLatency == b.LowLatency && a.LeanRendering == b.LeanRendering &&
-            System.Math.Abs(a.RenderScale - b.RenderScale) < 0.001f && NormMsaa(a.Msaa) == NormMsaa(b.Msaa);
+            System.Math.Abs(a.RenderScale - b.RenderScale) < 0.001f && NormMsaa(a.Msaa) == NormMsaa(b.Msaa) && a.Look.SameAs(b.Look);
 
         public static int NormMsaa(int s) => s >= 8 ? 8 : s >= 4 ? 4 : s >= 2 ? 2 : 1;
     }
