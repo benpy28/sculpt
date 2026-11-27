@@ -43,6 +43,7 @@ namespace Sculpt.Core.Tests.AntiCheat
             var targetAt = new Vec3d(19, 0, 12);
             ServerPlayer target = s.AddBot(new Brain { F = (sv, me) => new InputCmd { Tick = sv.Tick, ViewTick = sv.Tick, Move = new MoveInput { Yaw = Math.PI } } }, 2, targetAt, Math.PI);
             ServerPlayer viewer = s.AddBot(new Brain { F = (sv, me) => new InputCmd { Tick = sv.Tick, ViewTick = sv.Tick } }, 1, viewerAt, 0);
+            target.Viewer = viewer.Viewer = true; // stand-ins for people: interest is worked out for viewers
             for (int i = 0; i < 2 * SimTime.TicksPerSecond; i++) s.Step();
             Vec3d eye = viewer.State.Position + new Vec3d(0, PlayerMovement.EyeOf(viewer.State, s.Movement), 0);
             Assert.That(DuelBot.CanSee(t, eye, target.State.Position, PlayerMovement.HeightOf(target.State, s.Movement)), Is.True,
