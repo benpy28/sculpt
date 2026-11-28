@@ -125,9 +125,12 @@ namespace Sculpt.Game.UI
             Add(TabVideo, "Rendering", "Lean rendering", "lean pipeline hdr performance", false, () => { if (Toggle("Lean rendering (recommended, same picture)", ref v.LeanRendering)) VideoChanged(); });
 
             // ---- Picture (post-processing, shadows, lighting) ----
+            Add(TabVideo, "Picture", "Picture quality", "picture quality graphics off low medium high ultra beautiful", true, () => DrawPictureQuality(v));
             Add(TabVideo, "Picture", "About picture settings", "graphics quality beautiful pretty post processing effects", true, () =>
                 Note("None of these add input delay; they only cost graphics card time. Players, loot and their colours are never shaded, fogged or darkened, and players never cast shadows, so turning these on or off never shows or hides anyone. Competitive turns them all off."));
-            Add(TabVideo, "Picture", "Shadows", "shadows sun shadow quality cascades", true, () => LookChoice("Sun shadows", ref v.Look.Shadows, LookValues.LowHighNames, "Low: hard, 40 m. High: soft, 80 m."));
+            Add(TabVideo, "Picture", "Shadows", "shadows sun shadow quality cascades", true, () => LookChoice("Sun shadows", ref v.Look.Shadows, LookValues.ShadowNames, "Low: hard, 40 m. High: soft, 80 m. Ultra: soft, 150 m, sharper."));
+            Add(TabVideo, "Picture", "Surface detail", "detail normals texture sheen surface quality", false, () => LookChoice("Surface detail (fine relief and sheen on walls, ground and bark)", ref v.Look.Detail, LookValues.OffOnNames, null));
+            Add(TabVideo, "Picture", "Grass", "grass density foliage blades flowers", false, () => LookChoice("Grass", ref v.Look.Grass, LookValues.GrassNames, "Grass is always short and flattens round players, so it never hides anyone on any setting; this only changes how many blades are drawn."));
             Add(TabVideo, "Picture", "Ambient occlusion", "ambient occlusion ao ssao contact shadows corners", true, () => LookChoice("Ambient occlusion (soft shade in corners)", ref v.Look.Ao, LookValues.LowHighNames, null));
             Add(TabVideo, "Picture", "Lighting", "lighting sun light sky bounce rich flat", true, () => LookChoice("Lighting", ref v.Look.Lighting, LookValues.LightingNames, "Rich: warm sun on the sunny side, cool sky light in shade, a little bounce from the ground."));
             Add(TabVideo, "Picture", "Fog", "fog haze atmosphere volumetric atmospheric distance", false, () => FogChoice(v));
@@ -619,6 +622,21 @@ namespace Sculpt.Game.UI
         }
 
         // ---------------------------------------------------------------- Video
+
+        /// <summary>One step for the whole picture (Off .. Ultra); any single change below shows as Custom.</summary>
+        private void DrawPictureQuality(VideoSettings v)
+        {
+            PictureQuality now = PictureLadder.Detect(v.Look);
+            int at = now == PictureQuality.Custom ? -1 : (int)now;
+            int n = Choice("Picture quality (now: " + PictureLadder.Name(now) + ")", at, PictureLadder.Names); // -1: none lit (Custom)
+            if (n >= 0 && n != at) { v.Look = PictureLadder.Of(PictureLadder.Steps[n]); VideoChanged(); }
+            Note(now == PictureQuality.Off ? "Off: the clean competitive picture, no lighting or effects. The fastest."
+                : now == PictureQuality.Low ? "Low: sun and sky light on the world, filmic colour, FXAA, full grass."
+                : now == PictureQuality.Medium ? "Medium: adds sun shadows to 40 m, soft corner shade, a little bloom, SMAA and sharpening."
+                : now == PictureQuality.High ? "High: soft shadows to 80 m, deeper corner shade, atmospheric fog, light shafts, surface detail."
+                : now == PictureQuality.Ultra ? "Ultra: shadows to 150 m, stronger bloom, dense grass. Needs a strong graphics card."
+                : "Custom: you changed something below. Pick a step to go back to a set picture.");
+        }
 
         private void DrawPreset()
         {

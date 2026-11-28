@@ -92,7 +92,7 @@ namespace Sculpt.Game.Settings
             .Int(SettingsGroup.Video, "sculpt.look.grading", 0, 0, 2, v => v.Look.Grading, (v, i) => v.Look.Grading = i)
             .Int(SettingsGroup.Video, "sculpt.look.bloom", 0, 0, 2, v => v.Look.Bloom, (v, i) => v.Look.Bloom = i)
             .Int(SettingsGroup.Video, "sculpt.look.ao", 0, 0, 2, v => v.Look.Ao, (v, i) => v.Look.Ao = i)
-            .Int(SettingsGroup.Video, "sculpt.look.shadows", 0, 0, 2, v => v.Look.Shadows, (v, i) => v.Look.Shadows = i)
+            .Int(SettingsGroup.Video, "sculpt.look.shadows", 0, 0, 3, v => v.Look.Shadows, (v, i) => v.Look.Shadows = i)
             .Int(SettingsGroup.Video, "sculpt.look.lighting", 0, 0, 1, v => v.Look.Lighting, (v, i) => v.Look.Lighting = i)
             .Int(SettingsGroup.Video, "sculpt.look.fog", 1, 1, 2, v => v.Look.Fog, (v, i) => v.Look.Fog = i)
             .Bool(SettingsGroup.Video, "sculpt.look.shafts", false, v => v.Look.Shafts, (v, b) => v.Look.Shafts = b)
@@ -101,6 +101,8 @@ namespace Sculpt.Game.Settings
             .Float(SettingsGroup.Video, "sculpt.look.vignette", 0f, 0f, 1f, v => v.Look.Vignette, (v, f) => v.Look.Vignette = f)
             .Float(SettingsGroup.Video, "sculpt.look.grain", 0f, 0f, 1f, v => v.Look.Grain, (v, f) => v.Look.Grain = f)
             .Float(SettingsGroup.Video, "sculpt.look.sharpen", 0f, 0f, 1f, v => v.Look.Sharpen, (v, f) => v.Look.Sharpen = f)
+            .Int(SettingsGroup.Video, "sculpt.look.detail", 0, 0, 1, v => v.Look.Detail, (v, i) => v.Look.Detail = i)
+            .Int(SettingsGroup.Video, "sculpt.look.grass", 0, 0, 2, v => v.Look.Grass, (v, i) => v.Look.Grass = i)
             .Bool(SettingsGroup.Latency, "sculpt.video.showfps", false, v => v.ShowFps, (v, b) => v.ShowFps = b)
             .Bool(SettingsGroup.Latency, "sculpt.video.showlatency", false, v => v.ShowLatency, (v, b) => v.ShowLatency = b)
             .Bool(SettingsGroup.Latency, "sculpt.video.shownet", false, v => v.ShowNetStats, (v, b) => v.ShowNetStats = b);
@@ -158,7 +160,7 @@ namespace Sculpt.Game.Settings
 
         /// <summary>
         /// One-run overrides, never saved (benchmarks and A/B tests): -vsync 0|1, -fpscap N (0 = unlimited, -1 = display - 3),
-        /// -lowlatency 0|1, -lean 0|1, -renderscale 0.5..1, -showfps 0|1, -showlatency 0|1, -look competitive|quality.
+        /// -lowlatency 0|1, -lean 0|1, -renderscale 0.5..1, -showfps 0|1, -showlatency 0|1, -look off|low|medium|high|ultra (competitive|quality).
         /// </summary>
         public void ApplyCommandLine(string[] args)
         {
@@ -175,11 +177,11 @@ namespace Sculpt.Game.Settings
                 else if (a == "-showlatency" && Flag(next, out b)) { ShowLatency = b; cmd.ShowLatency = true; }
                 else if (a == "-fpscap" && int.TryParse(next, NumberStyles.Integer, CultureInfo.InvariantCulture, out int cap)) { FpsCap = cap; cmd.FpsCap = true; }
                 else if (a == "-renderscale" && float.TryParse(next, NumberStyles.Float, CultureInfo.InvariantCulture, out float s)) { RenderScale = s; cmd.RenderScale = true; }
-                // -look competitive|quality: the preset's picture for one run (benchmarks and before/after photos).
-                else if (a == "-look")
+                // -look off|low|medium|high|ultra (or competitive = off, quality = high): that picture quality step for
+                // one run (benchmarks and before/after photos).
+                else if (a == "-look" && Sculpt.Core.Settings.PictureLadder.TryParse(next, out Sculpt.Core.Settings.PictureQuality q))
                 {
-                    Look = string.Equals(next, "quality", StringComparison.OrdinalIgnoreCase)
-                        ? Sculpt.Core.Settings.DisplayPresets.QualityLook : Sculpt.Core.Settings.LookValues.Clean;
+                    Look = Sculpt.Core.Settings.PictureLadder.Of(q);
                     cmd.Look = true;
                 }
             }

@@ -32,7 +32,7 @@ namespace Sculpt.Core.Settings
         public int Bloom;
         /// <summary>Screen-space ambient occlusion on the world: 0 off, 1 low, 2 high.</summary>
         public int Ao;
-        /// <summary>Sun shadows cast by the world: 0 off, 1 low (40 m), 2 high (80 m, soft).</summary>
+        /// <summary>Sun shadows cast by the world: 0 off, 1 low (40 m), 2 high (80 m, soft), 3 ultra (150 m, soft, 4096 map).</summary>
         public int Shadows;
         /// <summary>Directional sun light with sky and bounce colour on the world: 0 flat (baked shading only), 1 rich.</summary>
         public int Lighting;
@@ -47,6 +47,12 @@ namespace Sculpt.Core.Settings
         public int MotionBlur;
         /// <summary>0..1 amounts.</summary>
         public float Vignette, Grain, Sharpen;
+        /// <summary>Surface detail on the world: 0 off, 1 on (per-pixel detail normals and a soft sheen on stone and steel).
+        /// Shading only: no shape changes.</summary>
+        public int Detail;
+        /// <summary>Grass blades on the ground: 0 sparse, 1 full, 2 dense and drawn further out. Blades are always under
+        /// 0.3 m and pressed flat round players, so no setting lets grass hide anyone (or shows more than another).</summary>
+        public int Grass;
 
         /// <summary>The picture as it was before these settings (and the competitive one): only the light haze.</summary>
         public static LookValues Clean => new LookValues { Fog = 1 };
@@ -55,6 +61,9 @@ namespace Sculpt.Core.Settings
         public static readonly string[] TonemapNames = { "Off", "Filmic" };
         public static readonly string[] GradingNames = { "Off", "Natural", "Vivid" };
         public static readonly string[] LowHighNames = { "Off", "Low", "High" };
+        public static readonly string[] ShadowNames = { "Off", "Low", "High", "Ultra" };
+        public static readonly string[] OffOnNames = { "Off", "On" };
+        public static readonly string[] GrassNames = { "Sparse", "Full", "Dense" };
         public static readonly string[] LightingNames = { "Flat", "Rich" };
         public static readonly string[] FogNames = { "Light haze", "Light haze", "Atmospheric" };
         /// <summary>The fog choices the settings offer (value 1 and 2).</summary>
@@ -70,7 +79,7 @@ namespace Sculpt.Core.Settings
             v.Grading = Clamp(v.Grading, 0, 2);
             v.Bloom = Clamp(v.Bloom, 0, 2);
             v.Ao = Clamp(v.Ao, 0, 2);
-            v.Shadows = Clamp(v.Shadows, 0, 2);
+            v.Shadows = Clamp(v.Shadows, 0, 3);
             v.Lighting = Clamp(v.Lighting, 0, 1);
             v.Fog = Clamp(v.Fog, 1, 2); // the haze can't be turned off (the same view for everyone)
             v.Dof = Clamp(v.Dof, 0, 1);
@@ -78,6 +87,8 @@ namespace Sculpt.Core.Settings
             v.Vignette = Unit(v.Vignette);
             v.Grain = Unit(v.Grain);
             v.Sharpen = Unit(v.Sharpen);
+            v.Detail = Clamp(v.Detail, 0, 1);
+            v.Grass = Clamp(v.Grass, 0, 2);
             return v;
         }
 
@@ -93,7 +104,8 @@ namespace Sculpt.Core.Settings
         public bool SameAs(in LookValues b) =>
             PostAa == b.PostAa && Tonemap == b.Tonemap && Grading == b.Grading && Bloom == b.Bloom && Ao == b.Ao &&
             Shadows == b.Shadows && Lighting == b.Lighting && Fog == b.Fog && Shafts == b.Shafts && Dof == b.Dof &&
-            MotionBlur == b.MotionBlur && Near(Vignette, b.Vignette) && Near(Grain, b.Grain) && Near(Sharpen, b.Sharpen);
+            MotionBlur == b.MotionBlur && Near(Vignette, b.Vignette) && Near(Grain, b.Grain) && Near(Sharpen, b.Sharpen) &&
+            Detail == b.Detail && Grass == b.Grass;
 
         private static bool Near(float a, float b) => System.Math.Abs(a - b) < 0.005f;
         private static int Clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;
@@ -101,6 +113,64 @@ namespace Sculpt.Core.Settings
     }
 
     public enum VideoPreset : byte { Custom = 0, Competitive = 1, Quality = 2 }
+
+    /// <summary>Video > Picture quality: one step for the whole picture (Ben 2026-11-28: "off/minimum up to ultra").</summary>
+    public enum PictureQuality : byte { Off = 0, Low = 1, Medium = 2, High = 3, Ultra = 4, Custom = 255 }
+
+    /// <summary>
+    /// The picture quality ladder. Each step adds to the one below; none changes what anyone can see of the game (view
+    /// distance, haze, grass height and every colour of players and loot are the same on all of them), only how the
+    /// scenery is lit and finished, and what it costs the graphics card. Off is the clean competitive picture.
+    /// </summary>
+    public static class PictureLadder
+    {
+        public static readonly PictureQuality[] Steps = { PictureQuality.Off, PictureQuality.Low, PictureQuality.Medium, PictureQuality.High, PictureQuality.Ultra };
+        public static readonly string[] Names = { "Off", "Low", "Medium", "High", "Ultra" };
+
+        public static string Name(PictureQuality q) => q == PictureQuality.Custom ? "Custom" : Names[(int)q];
+
+        public static LookValues Of(PictureQuality q)
+        {
+            LookValues l = LookValues.Clean; // Off: no lighting or effects, sparse grass
+            if (q == PictureQuality.Custom || q == PictureQuality.Off) return l;
+            // Low: sun and sky light on the world, filmic tonemapping, natural grading, FXAA, full grass.
+            l.Lighting = 1; l.Tonemap = 1; l.Grading = 1; l.PostAa = 1; l.Grass = 1;
+            if (q == PictureQuality.Low) return l;
+            // Medium: hard sun shadows to 40 m, low ambient occlusion, low bloom, SMAA, a little sharpening.
+            l.Shadows = 1; l.Ao = 1; l.Bloom = 1; l.PostAa = 2; l.Sharpen = 0.2f;
+            if (q == PictureQuality.Medium) return l;
+            // High: soft shadows to 80 m, high ambient occlusion, atmospheric fog, light shafts, surface detail, vignette.
+            l.Shadows = 2; l.Ao = 2; l.Fog = 2; l.Shafts = true; l.Detail = 1; l.Vignette = 0.2f; l.Sharpen = 0.25f;
+            if (q == PictureQuality.High) return l;
+            // Ultra: shadows to 150 m on a bigger map, high bloom, dense grass drawn further out.
+            l.Shadows = 3; l.Bloom = 2; l.Grass = 2;
+            return l;
+        }
+
+        /// <summary>Which step these values are exactly, or Custom.</summary>
+        public static PictureQuality Detect(in LookValues l)
+        {
+            foreach (PictureQuality q in Steps)
+                if (Of(q).SameAs(l)) return q;
+            return PictureQuality.Custom;
+        }
+
+        /// <summary>Reads "off", "low", "medium", "high", "ultra" (and the preset names "competitive" = off, "quality" = high).</summary>
+        public static bool TryParse(string s, out PictureQuality q)
+        {
+            q = PictureQuality.Custom;
+            if (s == null) return false;
+            switch (s.Trim().ToLowerInvariant())
+            {
+                case "off": case "competitive": q = PictureQuality.Off; return true;
+                case "low": q = PictureQuality.Low; return true;
+                case "medium": case "med": q = PictureQuality.Medium; return true;
+                case "high": case "quality": q = PictureQuality.High; return true;
+                case "ultra": q = PictureQuality.Ultra; return true;
+                default: return false;
+            }
+        }
+    }
 
     /// <summary>
     /// The two video presets Ben asked for (home screen roadmap item 20). Competitive: the lowest latency and highest frame
@@ -118,12 +188,8 @@ namespace Sculpt.Core.Settings
             ? new VideoValues { VSync = false, FpsCap = -1, LowLatency = true, LeanRendering = true, RenderScale = 1f, Msaa = 4, Look = QualityLook }
             : new VideoValues { VSync = false, FpsCap = 0, LowLatency = true, LeanRendering = true, RenderScale = 1f, Msaa = 1, Look = LookValues.Clean };
 
-        /// <summary>The Quality preset's picture.</summary>
-        public static LookValues QualityLook => new LookValues
-        {
-            PostAa = 0, Tonemap = 1, Grading = 1, Bloom = 1, Ao = 2, Shadows = 2, Lighting = 1, Fog = 2, Shafts = true,
-            Dof = 0, MotionBlur = 0, Vignette = 0.2f, Grain = 0f, Sharpen = 0.25f,
-        };
+        /// <summary>The Quality preset's picture: the High step of the picture quality ladder.</summary>
+        public static LookValues QualityLook => PictureLadder.Of(PictureQuality.High);
 
         public static string Name(VideoPreset p) => p == VideoPreset.Competitive ? "Competitive" : p == VideoPreset.Quality ? "Quality" : "Custom";
 

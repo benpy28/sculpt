@@ -259,7 +259,7 @@ namespace Sculpt.Core.Tests.Settings
         [Test]
         public void ChangingAnyPictureSetting_MakesItCustom()
         {
-            for (int field = 0; field < 14; field++)
+            for (int field = 0; field < 16; field++)
             {
                 VideoValues v = DisplayPresets.Of(VideoPreset.Competitive);
                 LookValues l = v.Look;
@@ -279,6 +279,8 @@ namespace Sculpt.Core.Tests.Settings
                     case 11: l.Vignette = 0.3f; break;
                     case 12: l.Grain = 0.3f; break;
                     case 13: l.Sharpen = 0.3f; break;
+                    case 14: l.Detail = 1; break;
+                    case 15: l.Grass = 2; break;
                 }
                 v.Look = l;
                 Assert.That(DisplayPresets.Detect(v), Is.EqualTo(VideoPreset.Custom), "field " + field);
@@ -288,15 +290,17 @@ namespace Sculpt.Core.Tests.Settings
         [Test]
         public void LookClamp_FixesBadValues()
         {
-            var l = new LookValues { PostAa = 9, Tonemap = -2, Grading = 5, Bloom = 7, Ao = -1, Shadows = 3, Lighting = 4, Fog = 9, Dof = 2, MotionBlur = 5, Vignette = float.NaN, Grain = 4f, Sharpen = -1f }.Clamped();
+            var l = new LookValues { PostAa = 9, Tonemap = -2, Grading = 5, Bloom = 7, Ao = -1, Shadows = 7, Lighting = 4, Fog = 9, Dof = 2, MotionBlur = 5, Vignette = float.NaN, Grain = 4f, Sharpen = -1f, Detail = 3, Grass = -2 }.Clamped();
             Assert.That(l.PostAa, Is.EqualTo(3));
             Assert.That(l.Tonemap, Is.EqualTo(0));
             Assert.That(l.Grading, Is.EqualTo(2));
             Assert.That(l.Bloom, Is.EqualTo(2));
             Assert.That(l.Ao, Is.EqualTo(0));
-            Assert.That(l.Shadows, Is.EqualTo(2));
+            Assert.That(l.Shadows, Is.EqualTo(3), "ultra is the top");
             Assert.That(l.Lighting, Is.EqualTo(1));
             Assert.That(l.Fog, Is.EqualTo(2));
+            Assert.That(l.Detail, Is.EqualTo(1));
+            Assert.That(l.Grass, Is.EqualTo(0));
             Assert.That(l.Dof, Is.EqualTo(1));
             Assert.That(l.MotionBlur, Is.EqualTo(2));
             Assert.That(l.Vignette, Is.EqualTo(0f));
@@ -305,6 +309,8 @@ namespace Sculpt.Core.Tests.Settings
             // Names cover every legal value.
             Assert.That(LookValues.PostAaNames.Length, Is.EqualTo(4));
             Assert.That(LookValues.FogNames.Length, Is.EqualTo(3));
+            Assert.That(LookValues.ShadowNames.Length, Is.EqualTo(4));
+            Assert.That(LookValues.GrassNames.Length, Is.EqualTo(3));
         }
 
         [Test]
@@ -327,6 +333,80 @@ namespace Sculpt.Core.Tests.Settings
             Assert.That(new LookValues { PostAa = 2 }.NeedsDepth, Is.False);
             Assert.That(new LookValues { Shafts = true }.NeedsHdr, Is.True);
             Assert.That(new LookValues { Grading = 2 }.NeedsHdr, Is.False);
+        }
+
+        // ---- Picture quality ladder (Off .. Ultra)
+
+        [Test]
+        public void Ladder_OffIsTheCompetitivePicture_AndHighIsTheQualityPreset()
+        {
+            Assert.That(PictureLadder.Of(PictureQuality.Off).SameAs(DisplayPresets.Of(VideoPreset.Competitive).Look), Is.True);
+            Assert.That(PictureLadder.Of(PictureQuality.High).SameAs(DisplayPresets.Of(VideoPreset.Quality).Look), Is.True);
+            Assert.That(PictureLadder.Detect(LookValues.Clean), Is.EqualTo(PictureQuality.Off));
+        }
+
+        [Test]
+        public void Ladder_EveryStepIsDetectedAsItself_AndTheyAllDiffer()
+        {
+            foreach (PictureQuality q in PictureLadder.Steps)
+            {
+                Assert.That(PictureLadder.Detect(PictureLadder.Of(q)), Is.EqualTo(q), q.ToString());
+                Assert.That(PictureLadder.Of(q).Clamped().SameAs(PictureLadder.Of(q)), Is.True, q + " is already in range");
+            }
+            for (int a = 0; a < PictureLadder.Steps.Length; a++)
+                for (int b = a + 1; b < PictureLadder.Steps.Length; b++)
+                    Assert.That(PictureLadder.Of(PictureLadder.Steps[a]).SameAs(PictureLadder.Of(PictureLadder.Steps[b])), Is.False);
+        }
+
+        [Test]
+        public void Ladder_EachStepOnlyAddsToTheOneBelow()
+        {
+            for (int i = 1; i < PictureLadder.Steps.Length; i++)
+            {
+                LookValues lo = PictureLadder.Of(PictureLadder.Steps[i - 1]), hi = PictureLadder.Of(PictureLadder.Steps[i]);
+                string at = PictureLadder.Steps[i].ToString();
+                Assert.That(hi.Shadows, Is.GreaterThanOrEqualTo(lo.Shadows), at);
+                Assert.That(hi.Ao, Is.GreaterThanOrEqualTo(lo.Ao), at);
+                Assert.That(hi.Bloom, Is.GreaterThanOrEqualTo(lo.Bloom), at);
+                Assert.That(hi.Lighting, Is.GreaterThanOrEqualTo(lo.Lighting), at);
+                Assert.That(hi.Fog, Is.GreaterThanOrEqualTo(lo.Fog), at);
+                Assert.That(hi.Detail, Is.GreaterThanOrEqualTo(lo.Detail), at);
+                Assert.That(hi.Grass, Is.GreaterThanOrEqualTo(lo.Grass), at);
+                Assert.That(hi.Tonemap, Is.GreaterThanOrEqualTo(lo.Tonemap), at);
+            }
+        }
+
+        [Test]
+        public void Ladder_NeverTurnsOnTheEffectsBenWantsOff_OrTaa()
+        {
+            foreach (PictureQuality q in PictureLadder.Steps)
+            {
+                LookValues l = PictureLadder.Of(q);
+                Assert.That(l.Dof, Is.EqualTo(0), q.ToString());
+                Assert.That(l.MotionBlur, Is.EqualTo(0), q.ToString());
+                Assert.That(l.Grain, Is.EqualTo(0f), q.ToString());
+                Assert.That(l.PostAa, Is.Not.EqualTo(3), q + ": TAA trails fast players");
+                Assert.That(l.Fog, Is.GreaterThanOrEqualTo(1), q + ": the haze is the same for everyone");
+            }
+        }
+
+        [Test]
+        public void Ladder_AnyChangeIsCustom_AndNamesParse()
+        {
+            LookValues l = PictureLadder.Of(PictureQuality.Medium);
+            l.Grass = 2;
+            Assert.That(PictureLadder.Detect(l), Is.EqualTo(PictureQuality.Custom));
+            Assert.That(PictureLadder.Name(PictureQuality.Custom), Is.EqualTo("Custom"));
+            Assert.That(PictureLadder.Of(PictureQuality.Custom).SameAs(LookValues.Clean), Is.True);
+            foreach (PictureQuality q in PictureLadder.Steps)
+            {
+                Assert.That(PictureLadder.TryParse(PictureLadder.Name(q), out PictureQuality back), Is.True);
+                Assert.That(back, Is.EqualTo(q));
+            }
+            Assert.That(PictureLadder.TryParse("Quality", out PictureQuality hq) && hq == PictureQuality.High, Is.True);
+            Assert.That(PictureLadder.TryParse("competitive", out PictureQuality cq) && cq == PictureQuality.Off, Is.True);
+            Assert.That(PictureLadder.TryParse("epic", out _), Is.False);
+            Assert.That(PictureLadder.TryParse(null, out _), Is.False);
         }
 
         [Test]

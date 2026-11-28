@@ -32,6 +32,11 @@ namespace Sculpt.Game.Rendering
         private static readonly int SunColId = Shader.PropertyToID("_SculptSunCol");
         private static readonly int ShadeColId = Shader.PropertyToID("_SculptShadeCol");
         private static readonly int FogColId = Shader.PropertyToID("_SculptFogCol");
+        // x = surface detail 0/1, y = grass step 0 sparse / 1 full / 2 dense (read by the world and grass shaders).
+        private static readonly int DetailId = Shader.PropertyToID("_SculptDetail");
+
+        /// <summary>The grass step in force (0 sparse, 1 full, 2 dense), for the grass view.</summary>
+        public static int GrassStep { get; private set; }
 
         /// <summary>Warm light on faces in the sun (a multiplier, not a colour: set as a vector so it is not converted to linear).</summary>
         public static readonly Vector4 SunTint = new Vector4(1.07f, 1.02f, 0.93f, 1f);
@@ -61,6 +66,7 @@ namespace Sculpt.Game.Rendering
         private UniversalRenderPipelineAsset _asset;
         private float _shadowDistanceBefore;
         private int _cascadesBefore;
+        private int _shadowResBefore;
         private readonly List<(ScriptableRendererFeature feature, bool active, object settings, Dictionary<string, object> before)> _ao =
             new List<(ScriptableRendererFeature, bool, object, Dictionary<string, object>)>();
         private bool _aoFound;
@@ -173,13 +179,14 @@ namespace Sculpt.Game.Rendering
             if (_sharpen != null) _postMat.SetFloat(SculptPostPass.SharpenId, l.Sharpen);
 
             Summary = "picture: " + (l.NeedsPost ? "post on" : "post off") +
-                      (l.Shadows > 0 ? ", shadows " + LookValues.LowHighNames[l.Shadows] : "") +
+                      (l.Shadows > 0 ? ", shadows " + LookValues.ShadowNames[l.Shadows] : "") +
                       (l.Ao > 0 ? ", AO " + LookValues.LowHighNames[l.Ao] : "") +
                       (l.Lighting > 0 ? ", rich light" : "") +
                       ", fog " + LookValues.FogNames[l.Fog] +
                       (l.Shafts ? ", shafts" : "") +
                       (l.PostAa > 0 ? ", " + LookValues.PostAaNames[l.PostAa] : "") +
-                      (l.Sharpen > 0.001f ? ", sharpen " + Mathf.RoundToInt(l.Sharpen * 100f) + "%" : "");
+                      (l.Sharpen > 0.001f ? ", sharpen " + Mathf.RoundToInt(l.Sharpen * 100f) + "%" : "") +
+                      (l.Detail > 0 ? ", detail" : "") + ", grass " + LookValues.GrassNames[l.Grass];
         }
 
         private void ApplyGlobals(in LookValues l)
@@ -189,6 +196,8 @@ namespace Sculpt.Game.Rendering
                 l.Lighting > 0 ? 1f : 0f,
                 l.Fog == 2 ? FogDensity : 0f,
                 l.Ao == 2 ? 1f : l.Ao == 1 ? 0.7f : 0f));
+            Shader.SetGlobalVector(DetailId, new Vector4(l.Detail, l.Grass, 0f, 0f));
+            GrassStep = l.Grass;
             Shader.SetGlobalVector(SunColId, SunTint);
             Shader.SetGlobalVector(ShadeColId, ShadeTint);
             Color fog = World.Scenery.Horizon;
@@ -216,7 +225,7 @@ namespace Sculpt.Game.Rendering
             if (_sun == null) { Shader.SetGlobalVector(SunDirId, Vector4.zero); return; }
             Vector3 toSun = -_sun.transform.forward;
             Shader.SetGlobalVector(SunDirId, new Vector4(toSun.x, toSun.y, toSun.z, 1f));
-            LightShadows want = _look.Shadows == 2 ? LightShadows.Soft : _look.Shadows == 1 ? LightShadows.Hard : LightShadows.None;
+            LightShadows want = _look.Shadows >= 2 ? LightShadows.Soft : _look.Shadows == 1 ? LightShadows.Hard : LightShadows.None;
             if (_sun.shadows != want) _sun.shadows = want;
             _sun.shadowStrength = 1f; // the shade colour is ours (ShadeTint): the shadow map only says where
         }
@@ -230,10 +239,18 @@ namespace Sculpt.Game.Rendering
                 _asset = asset;
                 _shadowDistanceBefore = asset.shadowDistance;
                 _cascadesBefore = asset.shadowCascadeCount;
+                _shadowResBefore = asset.mainLightShadowmapResolution;
             }
-            if (l.Shadows == 0) { asset.shadowDistance = _shadowDistanceBefore; asset.shadowCascadeCount = _cascadesBefore; return; }
-            asset.shadowDistance = l.Shadows == 2 ? 80f : 40f;
-            asset.shadowCascadeCount = l.Shadows == 2 ? 4 : 2;
+            if (l.Shadows == 0)
+            {
+                asset.shadowDistance = _shadowDistanceBefore; asset.shadowCascadeCount = _cascadesBefore;
+                asset.mainLightShadowmapResolution = _shadowResBefore;
+                return;
+            }
+            asset.shadowDistance = l.Shadows == 3 ? 150f : l.Shadows == 2 ? 80f : 40f;
+            asset.shadowCascadeCount = l.Shadows >= 2 ? 4 : 2;
+            // Ultra: a bigger map so the longer distance stays as sharp as High's; Low and High keep the asset's own.
+            asset.mainLightShadowmapResolution = l.Shadows == 3 ? 4096 : _shadowResBefore;
         }
 
         // The template's SSAO renderer feature. Its settings class is internal, so the two numbers we change are set
@@ -357,6 +374,7 @@ namespace Sculpt.Game.Rendering
             if (_asset == null) return;
             _asset.shadowDistance = _shadowDistanceBefore;
             _asset.shadowCascadeCount = _cascadesBefore;
+            _asset.mainLightShadowmapResolution = _shadowResBefore;
             _asset = null;
         }
 
