@@ -96,5 +96,43 @@ namespace Sculpt.Core.Tests.Net
             Assert.That((a.ServerSide.State.Position - pad).HorizontalLength, Is.GreaterThan(1), "moving once it is GO");
             Assert.That(a.Client.Corrections, Is.EqualTo(c2), "no correction where the countdown ends");
         }
+
+        /// <summary>No tile can change in a countdown, whatever reaches the tile code (a server-side rule on top of the freeze).</summary>
+        [Test]
+        public void InTheCountdown_NoTileChanges_AndTheyBreakAgainOncePlaying()
+        {
+            DuelMap.BuildBrushes(out BreachMapInfo info);
+            var h = new NetHarness(() => DuelMap.Terrain(DuelMap.BuildGround(), DuelMap.BuildBrushes(out _)), info.TeamSpawns[0][0]);
+            h.Server.MatchConfig.Enabled = true;
+            h.Server.MatchConfig.CountdownTicks = 120 * SimTime.Per60;
+            h.AddClient(spawn: info.TeamSpawns[0][0]);
+            h.AddClient(spawn: info.TeamSpawns[1][0], team: 2, seed: 2);
+            h.RunSeconds(0.2);
+            Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Countdown));
+            TileWalls w = h.Server.Walls;
+            var walls = new List<int>();
+            foreach (int t in info.Block.Tiles)
+                if (w.HasCells(t) && !w.IsFollower(t) && w[t].State == TileState.Intact && w[t].Kind == TileKind.Wall) walls.Add(t);
+            int a = walls[0], b = walls[walls.Count / 2], c = walls[walls.Count - 1];
+            Vec3d mid = w.BoundsOf(a).Center;
+            int changes = w.Changes.Count, rev = w.Revision;
+            Assert.That(w.Damage(a, 1000, TileCause.Bullet), Is.False);
+            Assert.That(w.Damage(a, 1000, mid, TileCause.Punch, 1, 0.5), Is.False);
+            Assert.That(w.HitArea(a, mid, 1000, 1.0, TileCause.Bullet, 1), Is.False);
+            w.Blast(w.BoundsOf(b).Center, new List<int> { b }, 1000, 2.2, TileCause.Grenade, 1);
+            w.ChargeOpen(new List<ChargeCut> { new ChargeCut { Tile = c, Cells = ulong.MaxValue } }, 1);
+            w.Set(c, TileState.Reinforced, 200, TileCause.Reinforce, 1);
+            w.Set(c, TileState.Broken, 0, TileCause.Charge, 1);
+            Assert.That(w.Revision, Is.EqualTo(rev), "nothing changed");
+            Assert.That(w.Changes.Count, Is.EqualTo(changes));
+            Assert.That(w[a].State, Is.EqualTo(TileState.Intact));
+            Assert.That(w[b].State, Is.EqualTo(TileState.Intact));
+            Assert.That(w[c].State, Is.EqualTo(TileState.Intact));
+
+            h.RunSeconds(2.2);
+            Assert.That(h.Server.Match.Phase, Is.EqualTo(MatchPhase.Playing));
+            w.Damage(a, 1000, TileCause.Bullet);
+            Assert.That(w[a].State, Is.EqualTo(TileState.Broken), "walls break again once it is GO");
+        }
     }
 }

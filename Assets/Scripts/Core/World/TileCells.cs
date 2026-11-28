@@ -95,6 +95,7 @@ namespace Sculpt.Core
         /// </summary>
         public void WriteCells(int tile, ulong open, ulong patch, ulong steel, byte[] hp, TileCause cause, int by = 0)
         {
+            if (Refuses(cause)) return;
             WallTile t = _tiles[tile];
             if (!HasCells(tile)) throw new ArgumentException("Only wall and floor tiles have cells.", nameof(tile));
             bool broken = open == Brush.AllCells;
@@ -419,7 +420,7 @@ namespace Sculpt.Core
         /// </summary>
         public bool HitArea(int start, Vec3d at, int damage, double radius, TileCause cause, int by, double jitter = -1)
         {
-            if (damage <= 0 || start < 0 || !HasCells(start)) return false;
+            if (damage <= 0 || start < 0 || !HasCells(start) || Refuses(cause)) return false;
             EnsureEdges();
             _beyond.Clear();
             if (jitter < 0) jitter = Config.HitJitter;
@@ -599,6 +600,7 @@ namespace Sculpt.Core
         /// </summary>
         public void Blast(Vec3d at, IReadOnlyList<int> tiles, int damage, double radius, TileCause cause, int by)
         {
+            if (Refuses(cause)) return;
             var covered = new HashSet<int>();
             foreach (int t in tiles)
             {
@@ -647,7 +649,7 @@ namespace Sculpt.Core
         /// <summary>A charge breaks these cells (per tile), then the fairness tidy runs (ties go open).</summary>
         public void ChargeOpen(IReadOnlyList<ChargeCut> cuts, int by)
         {
-            if (cuts.Count == 0) return;
+            if (cuts.Count == 0 || Refuses(TileCause.Charge)) return;
             EnsureEdges();
             _beyond.Clear();
             var work = new Dictionary<int, ulong>();

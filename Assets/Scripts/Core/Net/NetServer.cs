@@ -386,7 +386,11 @@ namespace Sculpt.Core.Net
             StepMatch();
             _combat.Clear();
             ItemActions.Clear();
-            if (Walls != null) Walls.Tick = Tick;
+            if (Walls != null)
+            {
+                Walls.Tick = Tick;
+                Walls.Locked = Match.Phase == MatchPhase.Countdown; // no tile changes in a countdown (the reset at its start is Built)
+            }
             _worldEvents.Clear();
             _worldEvents.AddRange(_leftEvents);
             _leftEvents.Clear();
