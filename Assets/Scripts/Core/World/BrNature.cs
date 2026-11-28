@@ -31,10 +31,14 @@ namespace Sculpt.Core
         public const int CanopyClearSubs = 11;
         /// <summary>A prop's top (sub-cells above its base).</summary>
         public const int TopSubs = 32;
-        /// <summary>The ground under a prop's footprint varies at most this much (props stand on the hills).</summary>
-        public const double MaxRise = 0.9;
-        /// <summary>A trunk reaches this far under its base (covers <see cref="MaxRise"/> plus its roots' depth).</summary>
-        public const int TrunkDown = 7;
+        /// <summary>How much the ground may rise across a prop's footprint (props stand on walkable hillsides too, Hilltop
+        /// Fort 2026-11-28): trees (their canopy is counted from the highest ground under it, the trunk reaches the
+        /// lowest), boulder groups and bushes (both sit on the lowest ground, the uphill side sunk in).</summary>
+        public const double MaxRiseTree = 5.0, MaxRiseRocks = 2.0, MaxRiseBush = 1.4;
+        /// <summary>The most any prop allows (tests).</summary>
+        public const double MaxRise = MaxRiseTree;
+        /// <summary>A trunk reaches this far under its base (6 m: past the lowest ground under its canopy on a hillside).</summary>
+        public const int TrunkDown = 20;
 
         public struct Cell
         {
@@ -200,7 +204,7 @@ namespace Sculpt.Core
                 var box = new Aabb(new Vec3d(x - r - 2.5, BrGround.Lowest - 2, z - r - 2.5), new Vec3d(x + r + 2.5, BrMap.NavTop, z + r + 2.5));
                 if (t.World.BoxOverlapsSolid(box)) return false;
                 Rise(x, z, r + 1, out double lo, out double hi);
-                if (hi - lo > MaxRise) return false;
+                if (hi - lo > MaxRiseTree) return false; // a rock face; each shape checks its own limit
                 foreach (Vec3d k in b.KeepClearSpots)
                     if (Sq(k.X - x) + Sq(k.Z - z) < Sq(r + 4)) return false;
                 foreach (Prop p in mine)
@@ -216,10 +220,17 @@ namespace Sculpt.Core
                 const double s = SubGrid.SubSize;
                 Rise(x, z, r, out double lo, out double hi);
                 bool tree = shape == Shape.Tree || shape == Shape.BigTree;
+                if (hi - lo > (tree ? MaxRiseTree : shape == Shape.Rocks ? MaxRiseRocks : MaxRiseBush)) { return false; }
                 // Trees count from the highest ground under the canopy (so it clears jump reach everywhere under it),
                 // rocks and bushes from the lowest.
                 int sy = tree ? (int)Math.Ceiling(hi / s - 1e-9) : (int)Math.Floor(lo / s + 1e-9);
                 if (sy + TopSubs >= BrMap.GroundMinY + BrMap.GroundLayers * SubGrid.ChunkSize || sy - TrunkDown <= BrMap.GroundMinY) return false;
+                if (tree)
+                {
+                    // The trunk reaches 0.3 m under the lowest ground round its foot.
+                    Rise(x, z, 1.2, out double trunkLo, out _);
+                    if (sy * s - trunkLo > TrunkDown * s - 0.3) return false;
+                }
                 mine.Add(new Prop
                 {
                     Kind = tree ? "tree" : shape == Shape.Rocks ? "rocks" : "bush", Shape = shape, Variant = v, Orient = (int)(Hash(seed, 2, 78) % 8),
