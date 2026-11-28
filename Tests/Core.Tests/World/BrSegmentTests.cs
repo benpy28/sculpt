@@ -145,6 +145,25 @@ namespace Sculpt.Core.Tests
             }
         }
 
+        [Test]
+        public void SixBuildsAtOnce_AreIdentical()
+        {
+            // The game builds the server's and the client's copies of the map on two threads at once: a segment that keeps
+            // build state in a static or a field of its (shared) object breaks or mixes them (Old City did, 2026-11-28).
+            var builds = new BrMap.TemplateBuild[6];
+            System.Threading.Tasks.Parallel.For(0, builds.Length, k => builds[k] = BrMap.Build(null));
+            for (int k = 1; k < builds.Length; k++)
+            {
+                Assert.That(builds[k].World.Tiles.Count, Is.EqualTo(builds[0].World.Tiles.Count));
+                Assert.That(builds[k].World.Count, Is.EqualTo(builds[0].World.Count));
+                Assert.That(builds[k].Br.Chests.Count, Is.EqualTo(builds[0].Br.Chests.Count));
+                for (int c = 0; c < builds[0].Br.Chests.Count; c++)
+                    Assert.That(builds[k].Br.Chests[c].Position, Is.EqualTo(builds[0].Br.Chests[c].Position));
+                for (int t = 0; t < builds[0].World.Tiles.Count; t += 97)
+                    Assert.That(builds[k].World.Tiles.BoundsOf(t).Min, Is.EqualTo(builds[0].World.Tiles.BoundsOf(t).Min));
+            }
+        }
+
         private static double Sq(double v) => v * v;
     }
 }

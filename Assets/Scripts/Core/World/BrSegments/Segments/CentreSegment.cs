@@ -173,14 +173,12 @@ namespace Sculpt.Core
             }
         }
 
-        /// <summary>The promises of the last build (the template builds once a run; every build is the same).</summary>
-        public static Promises Last { get; private set; }
-
-        private Promises _p;
+        /// <summary>The promises of the map's template build (every build is the same). Build-time state lives on the
+        /// build (<see cref="BrBuild.Notes{T}"/>): two copies of the map are built at once on different threads.</summary>
+        public static Promises Last => BrMap.Template.Segments[BrLayout.Centre].Notes<Promises>();
 
         public override void Build(BrBuild b)
         {
-            _p = new Promises();
             double c = BrLayout.MapCentre;
             b.Nature.Groves = 3; b.Nature.LoneTrees = 30; b.Nature.RockGroups = 14; b.Nature.Bushes = 70;
 
@@ -188,13 +186,12 @@ namespace Sculpt.Core
             {
                 int t0 = b.World.Tiles.Count, c0 = b.Chests.Count;
                 a();
-                _p.Add(name, b.World.Tiles.Count - t0, b.Chests.Count - c0);
+                b.Notes<Promises>().Add(name, b.World.Tiles.Count - t0, b.Chests.Count - c0);
             }
             Part("citadel", () => Citadel(b, c));
             foreach (Quarter q in Quarters) Part(q.Name, () => LowerTown(b, q));
             Part("city wall", () => CityWall(b, c));
             Part("gardens", () => Gardens(b, c));
-            Last = _p;
         }
 
         // ================================================================ The citadel
@@ -291,9 +288,9 @@ namespace Sculpt.Core
                     b.Chest(t, 2, 0, s, 0);
                     b.Chest(t, 3, 3, s, Math.PI);
                     double yy = t.Y0 + s * SH;
-                    _p.Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, yy, t.Cz(0) + Col), new Vec3d(t.Cx(mx), yy + WH, t.Cz(2))),
+                    b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, yy, t.Cz(0) + Col), new Vec3d(t.Cx(mx), yy + WH, t.Cz(2))),
                                    CellCentre(t, 2, 0, s), $"Old Spire vault, floor {s} south"));
-                    _p.Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, yy, t.Cz(2) + Col), new Vec3d(t.Cx(mx), yy + WH, t.Cz(mz))),
+                    b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, yy, t.Cz(2) + Col), new Vec3d(t.Cx(mx), yy + WH, t.Cz(mz))),
                                    CellCentre(t, 3, 3, s), $"Old Spire vault, floor {s} north"));
                 }
                 else if (s == 0) b.Chest(t, 3, 0, s, Math.PI);
@@ -302,7 +299,7 @@ namespace Sculpt.Core
             b.Chest(t, 3, 3, storeys, Math.PI);
             b.Chest(t, 2, 0, storeys, 0);
             b.Item(Item.Launcher, 6, CellCentre(t, 3, 1, storeys));
-            _p.Towers.Add(t); _p.TowerNames.Add("Old Spire");
+            b.Notes<Promises>().Towers.Add(t); b.Notes<Promises>().TowerNames.Add("Old Spire");
             return t;
         }
 
@@ -336,7 +333,7 @@ namespace Sculpt.Core
             double c = BrLayout.MapCentre, m = SlotStart + 3 * SlotPitch - 2.5;
             var at = new Vec3d(c + q.Sx * m, OnSteps(q.Sx, q.Sz, 3, 3) ? StepLevel : TownLevel, c + q.Sz * m);
             b.Poi(q.Name, at, boxes.ToArray());
-            _p.Places.Add((at, q.Name));
+            b.Notes<Promises>().Places.Add((at, q.Name));
         }
 
         /// <summary>The plaza a pinwheel ramp comes down into: planters along its two sides, clear of the ramp.</summary>
@@ -383,7 +380,7 @@ namespace Sculpt.Core
                 case 'P': Plaza(b, x, y, z); break;
                 default: throw new ArgumentException($"no block kind '{kind}'");
             }
-            _p.Add("block " + kind, b.World.Tiles.Count - t0, b.Chests.Count - c0);
+            b.Notes<Promises>().Add("block " + kind, b.World.Tiles.Count - t0, b.Chests.Count - c0);
             var list = new List<Aabb>();
             for (int k = before; k < b.Buildings.Count; k++) list.Add(b.Buildings[k].Bounds);
             return list;
@@ -428,7 +425,7 @@ namespace Sculpt.Core
             b.Chest(t, 1, 2, 1, Math.PI);
             b.Chest(t, 2, 2, top, Math.PI);
             double yy = y + top * SH;
-            _p.Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, yy, t.Cz(2) + Col), new Vec3d(t.Cx(3), yy + WH, t.Cz(3))), CellCentre(t, 2, 2, top), "town house top room"));
+            b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, yy, t.Cz(2) + Col), new Vec3d(t.Cx(3), yy + WH, t.Cz(3))), CellCentre(t, 2, 2, top), "town house top room"));
         }
 
         /// <summary>
@@ -450,9 +447,9 @@ namespace Sculpt.Core
             b.Chest(t, 1, 2, 0, Math.PI);
             b.Chest(t, 2, 2, 0, Math.PI);
             b.Chest(t, 1, 1, 1, 0);
-            _p.Sealed.Add((new Aabb(new Vec3d(t.Cx(1) + Col, y, t.Cz(2) + Col), new Vec3d(t.Cx(2), y + WH, t.Cz(3))), CellCentre(t, 1, 2, 0), "guild hall storeroom"));
-            _p.Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, y, t.Cz(2) + Col), new Vec3d(t.Cx(3), y + WH, t.Cz(3))), CellCentre(t, 2, 2, 0), "guild hall storeroom"));
-            _p.Sealed.Add((new Aabb(new Vec3d(t.Cx(0) + Col, y + SH, t.Cz(0) + Col), new Vec3d(t.Cx(3), y + SH + WH, t.Cz(3))), CellCentre(t, 1, 1, 1), "guild hall loft"));
+            b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(t.Cx(1) + Col, y, t.Cz(2) + Col), new Vec3d(t.Cx(2), y + WH, t.Cz(3))), CellCentre(t, 1, 2, 0), "guild hall storeroom"));
+            b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, y, t.Cz(2) + Col), new Vec3d(t.Cx(3), y + WH, t.Cz(3))), CellCentre(t, 2, 2, 0), "guild hall storeroom"));
+            b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(t.Cx(0) + Col, y + SH, t.Cz(0) + Col), new Vec3d(t.Cx(3), y + SH + WH, t.Cz(3))), CellCentre(t, 1, 1, 1), "guild hall loft"));
         }
 
         /// <summary>A warehouse with a yard: a long one-storey store (a wide door at its west end, a shut door into the
@@ -469,8 +466,8 @@ namespace Sculpt.Core
             b.Chest(t, 0, 1, 0, Math.PI);
             b.Chest(t, 2, 0, 0, Math.PI);
             b.Chest(t, 2, 1, 0, Math.PI);
-            _p.Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, y, t.Cz(0) + Col), new Vec3d(t.Cx(3), y + WH, t.Cz(1))), CellCentre(t, 2, 0, 0), "warehouse bay"));
-            _p.Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, y, t.Cz(1) + Col), new Vec3d(t.Cx(3), y + WH, t.Cz(2))), CellCentre(t, 2, 1, 0), "warehouse bay"));
+            b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, y, t.Cz(0) + Col), new Vec3d(t.Cx(3), y + WH, t.Cz(1))), CellCentre(t, 2, 0, 0), "warehouse bay"));
+            b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, y, t.Cz(1) + Col), new Vec3d(t.Cx(3), y + WH, t.Cz(2))), CellCentre(t, 2, 1, 0), "warehouse bay"));
             // The yard: three tiles of wall round the north part, a 4 m gate in its south side.
             double yz = z + 14.6, top = z + Slot - Col;
             b.Strip(new Vec3d(x + Col, y, top), Slot - 2 * Col, true, 3);
@@ -490,7 +487,7 @@ namespace Sculpt.Core
             b.Strip(new Vec3d(x + 3, y, z + 14), 7.5, false, 2);
             b.Strip(new Vec3d(x + 6, y, z + 21.5), 6, true, 1);
             foreach (double o in new[] { 2.4, 15.0 })
-                _p.Sealed.Add((new Aabb(new Vec3d(x + o + Col, y, z + o + Col), new Vec3d(x + o + M, y + WH, z + o + M)), new Vec3d(x + o + Col + 3, y, z + o + Col + 3), "shed"));
+                b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(x + o + Col, y, z + o + Col), new Vec3d(x + o + M, y + WH, z + o + M)), new Vec3d(x + o + Col + 3, y, z + o + Col + 3), "shed"));
         }
 
         /// <summary>A ruined house: broken walls two and three tiles tall in L shapes, a chest in its corner.</summary>
@@ -566,13 +563,13 @@ namespace Sculpt.Core
                     b.Chest(t, 2, 0, s, 0);
                     b.Chest(t, 2, 2, s, Math.PI);
                     double yy = t.Y0 + s * SH;
-                    _p.Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, yy, t.Cz(0) + Col), new Vec3d(t.Cx(3), yy + WH, t.Cz(3))), CellCentre(t, 2, 0, s), $"{name} floor {s} strong room"));
+                    b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(t.Cx(2) + Col, yy, t.Cz(0) + Col), new Vec3d(t.Cx(3), yy + WH, t.Cz(3))), CellCentre(t, 2, 0, s), $"{name} floor {s} strong room"));
                 }
                 else if (s % 3 == 0) b.Chest(t, 2, s % 2 == 0 ? 0 : 2, s, Math.PI);
             }
             b.Chest(t, 2, 2, t.Storeys, Math.PI);
-            _p.Towers.Add(t); _p.TowerNames.Add(name);
-            _p.Add($"tower {t.Storeys}", b.World.Tiles.Count - t0, 0);
+            b.Notes<Promises>().Towers.Add(t); b.Notes<Promises>().TowerNames.Add(name);
+            b.Notes<Promises>().Add($"tower {t.Storeys}", b.World.Tiles.Count - t0, 0);
         }
 
         /// <summary>A 3 x 3 tower sits this far in from its slot's sides.</summary>
@@ -669,7 +666,7 @@ namespace Sculpt.Core
             b.Strip(new Vec3d(x0, top, z0), z1 - z0, false, 1);
             b.Strip(new Vec3d(x1 - Col, top, z0), z1 - z0, false, 1);
             b.Style = was;
-            _p.Bridges.Add(new Aabb(new Vec3d(x0 + Col, top, z0), new Vec3d(x1 - Col, top + 2, z1)));
+            b.Notes<Promises>().Bridges.Add(new Aabb(new Vec3d(x0 + Col, top, z0), new Vec3d(x1 - Col, top + 2, z1)));
         }
 
         /// <summary>A deck of floor tiles (about 1.5 m on a side) with its top at <paramref name="top"/> (like the greybox
@@ -794,7 +791,7 @@ namespace Sculpt.Core
                     var tomb = new GreyboxBlock.Building(gx + 14, gz + 8.7, 1, 1, 1) { Y0 = y };
                     b.Raise(tomb, "Tomb");
                     b.Chest(tomb, 0, 0, 0, 0);
-                    _p.Sealed.Add((new Aabb(new Vec3d(tomb.X0 + Col, y, tomb.Z0 + Col), new Vec3d(tomb.X0 + M, y + WH, tomb.Z0 + M)), CellCentre(tomb, 0, 0, 0), "tomb"));
+                    b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(tomb.X0 + Col, y, tomb.Z0 + Col), new Vec3d(tomb.X0 + M, y + WH, tomb.Z0 + M)), CellCentre(tomb, 0, 0, 0), "tomb"));
                     boxes.Add(tomb.Bounds);
                 }
             // Plots: 16 m x 12 m, two rows staggered along each side, 172..197 from the centre.
@@ -825,7 +822,7 @@ namespace Sculpt.Core
                             b.Strip(new Vec3d(r.X0, y, r.Z1 - Col), w * 0.4, true, 1);
                             b.Strip(new Vec3d(r.X0, y, r.Z0 + Col), d - 2 * Col, false, 1);
                             BrKit.Shed(b, r.X1 - 7.2, y, r.Z1 - 7.2);
-                            _p.Sealed.Add((new Aabb(new Vec3d(r.X1 - 7.2 + Col, y, r.Z1 - 7.2 + Col), new Vec3d(r.X1 - 7.2 + M, y + WH, r.Z1 - 7.2 + M)),
+                            b.Notes<Promises>().Sealed.Add((new Aabb(new Vec3d(r.X1 - 7.2 + Col, y, r.Z1 - 7.2 + Col), new Vec3d(r.X1 - 7.2 + M, y + WH, r.Z1 - 7.2 + M)),
                                            new Vec3d(r.X1 - 7.2 + Col + 3, y, r.Z1 - 7.2 + Col + 3), "garden shed"));
                             break;
                         case 1: // a gardener's hut (a door) and a plot wall

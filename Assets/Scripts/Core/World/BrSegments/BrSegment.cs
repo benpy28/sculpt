@@ -126,6 +126,19 @@ namespace Sculpt.Core
             Anchor = BrLayout.Anchor(id);
         }
 
+        private readonly Dictionary<Type, object> _notes = new Dictionary<Type, object>();
+
+        /// <summary>
+        /// A segment's own record of this build (what its tests check: sealed rooms, high spots, towers...), one per build
+        /// and type. Keep build-time state here, never in a static or a field of the segment: the server's and the
+        /// client's copies of the map are built on two threads at once, and the segment objects are shared.
+        /// </summary>
+        public T Notes<T>() where T : class, new()
+        {
+            if (!_notes.TryGetValue(typeof(T), out object o)) _notes[typeof(T)] = o = new T();
+            return (T)o;
+        }
+
         /// <summary>Natural ground (no footings) at a map position.</summary>
         public double Natural(double x, double z) => BrGround.Natural(x, z);
 
