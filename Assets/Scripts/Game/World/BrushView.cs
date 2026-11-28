@@ -168,6 +168,7 @@ namespace Sculpt.Game.World
                     _marks?.ClearTile(c.Tile);
                 // Cells drawn round this tile changed (cracks spread by area, so its neighbours redraw too).
                 if (_tiles.HasCells(c.Tile)) { _dirty.Add(TileBlockOf(_tiles.World[_tiles[c.Tile].Brush])); DirtyNeighbours(c.Tile); }
+                else LookAgain(c.Tile); // stairs, frame, doors: their look changes only with a change of their own
                 // Sound finds its way through what is open now (a new hole, a healed wall, a door).
                 Audio.SoundRouter.Invalidate(_tiles.BoundsOf(c.Tile));
                 if (c.Cause == TileCause.Server || c.Cause == TileCause.Built) continue;
@@ -202,21 +203,10 @@ namespace Sculpt.Game.World
             if (_tiles.Revision != _tilesRev)
             {
                 _tilesRev = _tiles.Revision;
-                // Walls and floors redraw from their changes (above); after the first pass only the plain tiles are
-                // scanned for a new look (the map has tens of thousands of walls).
-                int n = _firstScan ? _tiles.Count : _plainTiles.Length;
-                for (int k = 0; k < n; k++)
-                {
-                    int i = _firstScan ? k : _plainTiles[k];
-                    if (_tiles.HasCells(i) && _look[i] != -1) continue;
-                    int look = LookOf(_tiles[i]);
-                    ulong open = _tiles[i].Open;
-                    if (look == _look[i] && open == _openSeen[i]) continue;
-                    _look[i] = look;
-                    _openSeen[i] = open;
-                    _dirty.Add(TileBlockOf(_tiles.World[_tiles[i].Brush]));
-                    DirtyNeighbours(i); // a hole's rim is drawn by the broken tile and depends on the tiles around it
-                }
+                // Everything redraws from its changes (above); only the first pass scans every tile (the village map
+                // has about 200 thousand: scanning the plain ones every frame something changed cost milliseconds).
+                if (_firstScan)
+                    for (int i = 0; i < _tiles.Count; i++) LookAgain(i);
             }
             bool all = _firstScan;
             _firstScan = false;
@@ -227,6 +217,19 @@ namespace Sculpt.Game.World
         /// Rebuilds changed tile blocks, nearest the camera first: everything within <see cref="RebuildAlwaysMetres"/>
         /// at once, the rest while this frame's budget lasts (all of it on the first build).
         /// </summary>
+        /// <summary>Works out a tile's look again; if it changed, its block (and the blocks round it) redraw.</summary>
+        private void LookAgain(int i)
+        {
+            if (_tiles.HasCells(i) && _look[i] != -1) return;
+            int look = LookOf(_tiles[i]);
+            ulong open = _tiles[i].Open;
+            if (look == _look[i] && open == _openSeen[i]) return;
+            _look[i] = look;
+            _openSeen[i] = open;
+            _dirty.Add(TileBlockOf(_tiles.World[_tiles[i].Brush]));
+            DirtyNeighbours(i); // a hole's rim is drawn by the broken tile and depends on the tiles around it
+        }
+
         private void RebuildDirty(bool all)
         {
             if (_dirty.Count == 0) return;

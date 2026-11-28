@@ -28,7 +28,10 @@ namespace Sculpt.Core
         public readonly double Cell, MinX, MinZ;
         public readonly int NX, NZ;
         private readonly List<Node> _nodes = new List<Node>();
-        private readonly List<int>[] _columns;
+        /// <summary>The spots of column c are nodes _colStart[c] .. _colStart[c + 1] - 1 (nodes are made column by column).
+        /// Flat arrays, not a list per column: on the 921 m map that was nearly a million small objects for every garbage
+        /// collection to walk, and a collection stalled the game for seconds.</summary>
+        private readonly int[] _colStart;
         private readonly List<int> _to = new List<int>();
         private readonly List<float> _cost = new List<float>();
         private readonly List<Link> _kind = new List<Link>();
@@ -48,7 +51,7 @@ namespace Sculpt.Core
         private BotNav(double cell, double minX, double minZ, int nx, int nz)
         {
             Cell = cell; MinX = minX; MinZ = minZ; NX = nx; NZ = nz;
-            _columns = new List<int>[nx * nz];
+            _colStart = new int[nx * nz + 1];
         }
 
         /// <summary>
@@ -76,13 +79,15 @@ namespace Sculpt.Core
                 }
                 rows[cz] = found;
             });
+            int col = 0;
             for (int cz = 0; cz < nz; cz++)
                 foreach ((int cx, double y) in rows[cz])
                 {
-                    var list = n._columns[cz * nx + cx] ??= new List<int>(2);
-                    list.Add(n._nodes.Count);
+                    int c = cz * nx + cx;
+                    while (col <= c) n._colStart[col++] = n._nodes.Count; // columns up to this one start here
                     n._nodes.Add(new Node { Cx = cx, Cz = cz, Y = y });
                 }
+            while (col <= nx * nz) n._colStart[col++] = n._nodes.Count;
             n.Connect(t);
             n.FindAreas();
             return n;
@@ -206,12 +211,12 @@ namespace Sculpt.Core
                 {
                     int bx = a.Cx + Dx[d], bz = a.Cz + Dz[d];
                     if (bx < 0 || bz < 0 || bx >= NX || bz >= NZ) continue;
-                    var col = _columns[bz * NX + bx];
-                    if (col == null) continue;
+                    int c0 = _colStart[bz * NX + bx], c1 = _colStart[bz * NX + bx + 1];
+                    if (c0 == c1) continue;
                     bool diag = d >= 4;
                     double run = diag ? Cell * Math.Sqrt(2) : Cell;
                     double bxw = MinX + (bx + 0.5) * Cell, bzw = MinZ + (bz + 0.5) * Cell;
-                    foreach (int j in col)
+                    for (int j = c0; j < c1; j++)
                     {
                         Node b = _nodes[j];
                         double dy = b.Y - a.Y;
@@ -267,9 +272,8 @@ namespace Sculpt.Core
                     {
                         if (Math.Max(Math.Abs(x - cx), Math.Abs(z - cz)) != r) continue;
                         if (x < 0 || z < 0 || x >= NX || z >= NZ) continue;
-                        var col = _columns[z * NX + x];
-                        if (col == null) continue;
-                        foreach (int i in col)
+                        int c0 = _colStart[z * NX + x], c1 = _colStart[z * NX + x + 1];
+                        for (int i = c0; i < c1; i++)
                         {
                             Node n = _nodes[i];
                             double dy = feet.Y - n.Y;

@@ -106,6 +106,30 @@ namespace Sculpt.Game.World
 
         /// <summary>A wall or floor tile, by cell: its two big faces, the sides of every hole edge, and its own edges where
         /// no tile of the same wall carries on.</summary>
+        /// <summary>The tile and the tiles round it (edges and corners) never left their built state.</summary>
+        private bool Untouched(int id)
+        {
+            if (!AsBuilt(id)) return false;
+            for (int d = 0; d < 4; d++)
+            {
+                int j = _tiles.EdgeNeighbour(id, d);
+                if (j < 0) continue;
+                if (!AsBuilt(j)) return false;
+                for (int e = 0; e < 4; e++)
+                {
+                    int k = _tiles.EdgeNeighbour(j, e);
+                    if (k >= 0 && !AsBuilt(k)) return false;
+                }
+            }
+            return true;
+        }
+
+        private bool AsBuilt(int id)
+        {
+            WallTile t = _tiles[id];
+            return !t.Changed && t.State == TileState.Intact && t.Open == 0 && t.Patch == 0 && t.Steel == 0 && t.Health == _tiles.Config.IntactHealth;
+        }
+
         private void AddCelledTile(MeshBits m, int id, in WallTile t)
         {
             if (t.State == TileState.Broken) return; // nothing left; the tiles round it draw the hole's sides
@@ -116,6 +140,15 @@ namespace Sculpt.Game.World
             Vector3 a1 = AxisVec(b.CellA1), a2 = AxisVec(b.CellA2), n = AxisVec(3 - b.CellA1 - b.CellA2);
             Vector3 lo = b.Bounds.Min.ToUnity(), hi = b.Bounds.Max.ToUnity();
             float s1 = Along(hi - lo, a1) / Q, s2 = Along(hi - lo, a2) / Q, th = Along(hi - lo, n);
+            if (Untouched(id))
+            {
+                // As built, and so is everything round it: the plain box, without working out a single field (the
+                // battle royale's first draw is about 200 thousand tiles).
+                _uv1 = _uv2 = Vector2.zero;
+                AddBox(m, lo, hi, col);
+                _surface = Rough;
+                return;
+            }
             FillFields(id);
             bool plain = true;
             for (int k = 0; k < _field.Length && plain; k++) if (!Flat(_field[k])) plain = false;

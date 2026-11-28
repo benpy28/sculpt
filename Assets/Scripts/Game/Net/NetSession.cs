@@ -569,7 +569,10 @@ namespace Sculpt.Game.Net
             UnityEngine.Profiling.Profiler.BeginThreadProfiling("SCULPT", "Server"); // shows in the profiler (development builds)
             try { fine = timeBeginPeriod(1) == 0; } catch { } // 1 ms sleeps (Windows; elsewhere the spin covers it)
             double tickMs = 1000.0 / SimTime.TicksPerSecond;
-            lock (ServerLock) server.PrepareSight(); // seconds on the big map: before the first tick, not in the middle of the run
+            // Seconds on the big map: before the first tick, not in the middle of the run (the battle royale builds it on
+            // the loading screen; this is a no-op then). Not under the lock, so the main thread (which takes it to read
+            // the server) never waits on it; nothing else touches the server's world until it starts ticking.
+            server.PrepareSight();
             double next = clock.Elapsed.TotalMilliseconds;
             double sum = 0, worst = 0, windowStart = next;
             int count = 0;

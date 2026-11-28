@@ -183,12 +183,21 @@ namespace Sculpt.Game.Bootstrap
             {
                 // The battle royale (Ben 2026-11-26): 32 players, bots fill the lobby.
                 build = BrMap.BuildGround;
+                // The village map takes a second or so to build, and the game needs three copies (what is drawn, the
+                // server's and the client's): build them side by side.
+                var serverCopy = System.Threading.Tasks.Task.Run(() => BrMap.BuildBrushes(out _, out _, breach));
+                var clientCopy = System.Threading.Tasks.Task.Run(() => BrMap.BuildBrushes(out _, out _, breach));
                 _grid = BrMap.BuildGround();
                 brushes = BrMap.BuildBrushes(out breachInfo, out brInfo, breach);
-                terrain = g => BrMap.Terrain(g, BrMap.BuildBrushes(out _, out _, breach));
+                int copies = 0;
+                terrain = g => BrMap.Terrain(g, copies++ == 0 ? serverCopy.Result : copies == 2 ? clientCopy.Result : BrMap.BuildBrushes(out _, out _, breach));
                 spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
                 yaw = new double[] { brInfo.Regions[0].PadYaw[0], brInfo.Regions[0].PadYaw[0] };
-                _brNav ??= System.Threading.Tasks.Task.Run(() => BrMap.BuildNav(1.0));
+                // The bots' walking grid from the copy the map is drawn from (only its static parts are drawn from it; the
+                // tiles drawn are the client's own copy).
+                BrushWorld navCopy = brushes;
+                BreachMapInfo navInfo = breachInfo;
+                _brNav ??= System.Threading.Tasks.Task.Run(() => BrMap.BuildNav(navCopy, navInfo, 1.0));
                 Sculpt.Game.UI.BrHud.SetBuildings(breachInfo.Block.Buildings); // the minimap
             }
             else if (NextMap == MapChoice.Duel)
@@ -280,6 +289,10 @@ namespace Sculpt.Game.Bootstrap
             NetSession.LocalLocker = LockerPick.Load();
             NetSession.LocalSlotPrefs = SlotPrefsStore.Load();
             _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup, mapName, modeLabel);
+            // The server's sight grid (seconds on the village map) builds alongside the rest of the load: the server
+            // doesn't tick until the first frame.
+            NetServer sightServer = _session.Server;
+            System.Threading.Tasks.Task sightTask = brInfo != null && sightServer != null ? System.Threading.Tasks.Task.Run(() => sightServer.PrepareSight()) : null;
             _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
             if (vsBot) { _session.MatchOffline = true; _session.Server.MatchConfig.Enabled = true; }
 
@@ -405,6 +418,21 @@ namespace Sculpt.Game.Bootstrap
             menu.Init(_player, _session);
 
             Mark("huds");
+            // The map was built several times over (the village map is about 90 MB a copy): clear the leftovers now, on
+            // the loading screen, not in the first seconds of play (a collection then stalled the game for seconds).
+            if (brInfo != null)
+            {
+                // Every big one-off build finishes here, on the loading screen: the bots' walking grid, the server's sight
+                // grid and this client's sound grid ran on workers while the rest loaded. Finishing them in play cost
+                // seconds of hitches (all cores busy, and garbage collections over a heap full of map copies).
+                try { _brNav?.Wait(); } catch (System.Exception e) { Debug.LogException(e); }
+                sightTask?.Wait();
+                SoundRouter.WaitReady(20000);
+                Mark("builds done");
+                System.GC.Collect();
+                System.GC.WaitForPendingFinalizers();
+                Mark("collect");
+            }
             Debug.Log("[SCULPT] Load: " + loadSteps + (_relaunchClock != null ? $" (menu press to here {_relaunchClock.ElapsedMilliseconds - loadClock.ElapsedMilliseconds} ms before this load)" : ""));
             _relaunchClock = null;
             switch (NextLaunch)
