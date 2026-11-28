@@ -62,8 +62,32 @@ namespace Sculpt.Game.World
             if (_regions.TryGetValue(RegionOfBlock(block), out Region r)) r.FarDirty = true;
         }
 
+        // Tiles that are not as built, or sit within two edges of one that isn't: drawn exactly in the far mesh. Kept up
+        // to date from the change list (working Untouched out again for every tile of a region cost milliseconds).
+        private bool[] _touched;
+
+        private void MarkTouched(int tile)
+        {
+            if (_touched == null) return;
+            _touched[tile] = true;
+            if (!_tiles.HasCells(tile)) return;
+            for (int d = 0; d < 4; d++)
+            {
+                int j = _tiles.EdgeNeighbour(tile, d);
+                if (j < 0) continue;
+                _touched[j] = true;
+                for (int e = 0; e < 4; e++)
+                {
+                    int k = _tiles.EdgeNeighbour(j, e);
+                    if (k >= 0) _touched[k] = true;
+                }
+            }
+        }
+
         private void BindRegions()
         {
+            _touched = new bool[_tiles.Count];
+            for (int i = 0; i < _tiles.Count; i++) if (!AsBuilt(i)) MarkTouched(i);
             foreach (Region r in _regionList)
             {
                 if (r.FarGo != null) Destroy(r.FarGo);
@@ -117,6 +141,7 @@ namespace Sculpt.Game.World
                 if (r.Near) on += r.Blocks.Count; else far++;
             }
             if (_toBuild.Count > 0)
+            using (MkBlocks.Auto())
             {
                 _regionNearest ??= (a, b) => RegionDistance(a).CompareTo(RegionDistance(b));
                 _toBuild.Sort(_regionNearest);
@@ -133,9 +158,18 @@ namespace Sculpt.Game.World
             TileRenderersOn = on + far;
             FarRegions = far;
 
+            using (MkNear.Auto()) RebuildDirty(all);
+            using (MkFar.Auto()) BuildFarMeshes(all);
+        }
+
+        private static readonly Unity.Profiling.ProfilerMarker MkNear = new Unity.Profiling.ProfilerMarker("SCULPT.Buildings.Near"),
+            MkFar = new Unity.Profiling.ProfilerMarker("SCULPT.Buildings.Far"), MkBlocks = new Unity.Profiling.ProfilerMarker("SCULPT.Buildings.Blocks");
+
+        private void BuildFarMeshes(bool all)
+        {
+            double tick = System.Diagnostics.Stopwatch.Frequency / 1000.0;
             // Changed near blocks: as before (RebuildDirty drops blocks of regions without near meshes; those are built
-            // whole when they come near).
-            RebuildDirty(all);
+            // whole when they come near), in UpdateLod.
 
             // Far meshes: every region gets one at the first build, changes after that share a budget, nearest first.
             _farOrder.Clear();
@@ -222,7 +256,7 @@ namespace Sculpt.Game.World
             foreach (int id in r.Tiles)
             {
                 WallTile t = _tiles[id];
-                if (_tiles.HasCells(id) && t.State != TileState.Broken && Untouched(id))
+                if (_tiles.HasCells(id) && t.State != TileState.Broken && !_touched[id])
                 {
                     // A whole tile, and so is everything round it: one strip piece.
                     Brush b = _tiles.ShapeOf(id);

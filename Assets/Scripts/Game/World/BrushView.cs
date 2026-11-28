@@ -157,11 +157,19 @@ namespace Sculpt.Game.World
             return (int)t.State * 4 + crack;
         }
 
+        private static readonly Unity.Profiling.ProfilerMarker MkLateUpdateProf = new Unity.Profiling.ProfilerMarker("SCULPT.Buildings");
+
         private void LateUpdate()
+        {
+            using (MkLateUpdateProf.Auto()) LateUpdateBody();
+        }
+
+        private void LateUpdateBody()
         {
             if (_tiles == null || _mat == null) return;
             foreach (TileChange c in _tiles.Changes)
             {
+                MarkTouched(c.Tile); // drawn exactly in the far mesh from now on
                 ulong before = _openFx[c.Tile];
                 ulong after = c.To == TileState.Broken ? Brush.AllCells : c.Open;
                 _openFx[c.Tile] = after;

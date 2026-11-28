@@ -33,17 +33,37 @@ namespace Sculpt.Game.Bootstrap
             const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
             try
             {
+                // Closed generic types the simulation holds in its fields (CowList<WallTile>, Dictionary<long, int>, List<Brush>
+                // ...): each is its own code, compiled on first use otherwise, which was mid-match (the first fights).
+                var generic = new System.Collections.Generic.HashSet<Type>();
                 foreach (Type t in core.GetTypes())
                 {
                     if (t.ContainsGenericParameters) { Skipped++; continue; }
                     foreach (MethodInfo m in t.GetMethods(all)) Prepare(m);
                     foreach (ConstructorInfo c in t.GetConstructors(all)) if (!c.IsStatic) Prepare(c);
+                    foreach (FieldInfo f in t.GetFields(all)) Collect(f.FieldType, generic);
+                }
+                foreach (Type g in generic)
+                {
+                    foreach (MethodInfo m in g.GetMethods(all)) Prepare(m);
+                    foreach (ConstructorInfo c in g.GetConstructors(all)) if (!c.IsStatic) Prepare(c);
                 }
             }
             catch (Exception e) { Debug.LogWarning("[SCULPT] JIT warm-up stopped: " + e.Message); }
             Milliseconds = sw.ElapsedMilliseconds;
             Done = true;
             Debug.Log($"[SCULPT] JIT warm-up: {Compiled} simulation methods compiled in {Milliseconds} ms ({Skipped} generic or abstract left for first use).");
+        }
+
+        /// <summary>A closed generic type and the closed generic types inside it (a dictionary's key and value lists).</summary>
+        private static void Collect(Type t, System.Collections.Generic.HashSet<Type> into)
+        {
+            if (t.IsArray) { Collect(t.GetElementType(), into); return; }
+            if (!t.IsGenericType || t.ContainsGenericParameters || !into.Add(t)) return;
+            foreach (Type a in t.GetGenericArguments()) Collect(a, into);
+            foreach (Type n in t.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
+                if (n.IsGenericTypeDefinition && n.GetGenericArguments().Length == t.GetGenericArguments().Length)
+                    try { Collect(n.MakeGenericType(t.GetGenericArguments()), into); } catch { }
         }
 
         private static void Prepare(MethodBase m)

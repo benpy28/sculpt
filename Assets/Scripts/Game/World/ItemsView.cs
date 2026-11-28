@@ -37,7 +37,14 @@ namespace Sculpt.Game.World
             _mat.SetFloat("_DepthSquash", 1f);
         }
 
+        private static readonly Unity.Profiling.ProfilerMarker MkLateUpdateProf = new Unity.Profiling.ProfilerMarker("SCULPT.Items");
+
         private void LateUpdate()
+        {
+            using (MkLateUpdateProf.Auto()) LateUpdateBody();
+        }
+
+        private void LateUpdateBody()
         {
             NetClient net = _session.Client;
             if (net != _boundTo) { _boundTo = net; _version = -1; }
@@ -56,20 +63,29 @@ namespace Sculpt.Game.World
                 Sync(items);
             }
 
+            // Items lie still: their pose is set once when they appear (moving 1,800 transforms every frame cost a
+            // quarter of a millisecond and made every one of them a moving object to the culling). Only the item under
+            // the crosshair turns and bobs.
             int target = _player.PickTarget;
             int targetId = target >= 0 && target < items.Count ? items[target].Id : 0;
-            for (int i = 0; i < items.Count; i++)
+            if (targetId != _hotId)
             {
-                GroundItem g = items[i];
-                if (!_shown.TryGetValue(g.Id, out Transform t)) continue;
-                bool hot = g.Id == targetId;
-                Vector3 basePos = g.Position.ToUnity();
-                float yaw = (g.Id * 47) % 360;
-                if (g.Kind == Item.Chest) { yaw = (float)(NetServer.ChestYaw(g) * Mathf.Rad2Deg); hot = false; } // chests sit square and face their way
-                if (hot) yaw += Time.time * 60f;
-                t.position = basePos + new Vector3(0, hot ? 0.08f + Mathf.Sin(Time.time * 4f) * 0.015f : 0f, 0);
-                t.rotation = Quaternion.Euler(0, yaw, 0);
+                if (_hotId != 0 && _shown.TryGetValue(_hotId, out Transform was))
+                    for (int i = 0; i < items.Count; i++) if (items[i].Id == _hotId) { Pose(was, items[i], false); break; }
+                _hotId = targetId;
             }
+            if (_hotId != 0 && _shown.TryGetValue(_hotId, out Transform hot)) Pose(hot, items[target], true);
+        }
+
+        private int _hotId;
+
+        private static void Pose(Transform t, in GroundItem g, bool hot)
+        {
+            Vector3 basePos = g.Position.ToUnity();
+            float yaw = (g.Id * 47) % 360;
+            if (g.Kind == Item.Chest) { yaw = (float)(NetServer.ChestYaw(g) * Mathf.Rad2Deg); hot = false; } // chests sit square and face their way
+            if (hot) yaw += Time.time * 60f;
+            t.SetPositionAndRotation(basePos + new Vector3(0, hot ? 0.08f + Mathf.Sin(Time.time * 4f) * 0.015f : 0f, 0), Quaternion.Euler(0, yaw, 0));
         }
 
         private void Sync(GroundItems items)
@@ -81,11 +97,13 @@ namespace Sculpt.Game.World
                 _alive.Add(g.Id);
                 if (_shown.TryGetValue(g.Id, out Transform old))
                 {
-                    if (old.childCount == Visuals(g)) continue;
+                    if (old.childCount == Visuals(g)) { Pose(old, g, g.Id == _hotId); continue; }
                     Destroy(old.gameObject); // a stack changed size: rebuild it
                     _shown.Remove(g.Id);
                 }
-                _shown[g.Id] = Build(g);
+                Transform made = Build(g);
+                Pose(made, g, false);
+                _shown[g.Id] = made;
             }
             _gone.Clear();
             foreach (var kv in _shown) if (!_alive.Contains(kv.Key)) _gone.Add(kv.Key);

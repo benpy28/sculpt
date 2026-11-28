@@ -51,7 +51,14 @@ namespace Sculpt.Game.Player
             _boxMesh = BuildBox();
         }
 
+        private static readonly Unity.Profiling.ProfilerMarker MkLateUpdateProf = new Unity.Profiling.ProfilerMarker("SCULPT.RemotePlayers");
+
         private void LateUpdate()
+        {
+            using (MkLateUpdateProf.Auto()) LateUpdateBody();
+        }
+
+        private void LateUpdateBody()
         {
             if (_session == null) return;
             NetClient net = _session.Client;

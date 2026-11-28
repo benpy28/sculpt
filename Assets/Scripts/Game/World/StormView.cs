@@ -47,7 +47,14 @@ namespace Sculpt.Game.World
             return go.transform;
         }
 
+        private static readonly Unity.Profiling.ProfilerMarker MkLateUpdateProf = new Unity.Profiling.ProfilerMarker("SCULPT.Storm");
+
         private void LateUpdate()
+        {
+            using (MkLateUpdateProf.Auto()) LateUpdateBody();
+        }
+
+        private void LateUpdateBody()
         {
             NetClient net = _session?.Client;
             MatchState m = net?.Match;

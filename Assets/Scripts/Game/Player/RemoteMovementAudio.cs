@@ -36,7 +36,14 @@ namespace Sculpt.Game.Player
             _tracker = new RemoteMoveSounds(MovementAudio.Sounds);
         }
 
+        private static readonly Unity.Profiling.ProfilerMarker MkLateUpdateProf = new Unity.Profiling.ProfilerMarker("SCULPT.RemoteAudio");
+
         private void LateUpdate()
+        {
+            using (MkLateUpdateProf.Auto()) LateUpdateBody();
+        }
+
+        private void LateUpdateBody()
         {
             if (_session == null) return;
             NetClient net = _session.Client;
