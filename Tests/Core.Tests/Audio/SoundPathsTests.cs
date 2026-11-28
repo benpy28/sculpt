@@ -204,6 +204,13 @@ namespace Sculpt.Core.Tests.Audio
                 if (t.BoxOverlapsSolid(new Aabb(a - hb, a + hb)) || t.BoxOverlapsSolid(new Aabb(b - hb, b + hb))) continue;
                 n++;
                 SoundRoute ab = paths.Route(a, b, 34), ba = paths.Route(b, a, 34);
+                if (n <= 300)
+                {
+                    // Loud sounds (a shot) too: the same way, gain and top end both ways round.
+                    SoundRoute lab = paths.Route(a, b, 220), lba = paths.Route(b, a, 220);
+                    if (lab.Way != lba.Way || Math.Abs(lab.GainDb - lba.GainDb) > 0.5 || Math.Abs(lab.CutoffHz - lba.CutoffHz) > 1)
+                    { wayDiff++; first ??= $"loud {a} -> {b}: {lab.Way} {lab.GainDb:0.0} dB {lab.CutoffHz:0} Hz but back {lba.Way} {lba.GainDb:0.0} dB {lba.CutoffHz:0} Hz"; }
+                }
                 if (ab.Way != ba.Way) { wayDiff++; first ??= $"{a} -> {b}: {ab.Way} ({ab.Distance:0.00} m) but back {ba.Way} ({ba.Distance:0.00} m)"; }
                 else if (ab.Audible && Math.Abs(ab.Distance - ba.Distance) > 0.05) { distDiff++; first ??= $"({a.X:R}, {a.Y:R}, {a.Z:R}) -> ({b.X:R}, {b.Y:R}, {b.Z:R}): {ab.Way} {ab.Distance:0.00} m but back {ba.Distance:0.00} m"; }
             }
@@ -258,12 +265,12 @@ namespace Sculpt.Core.Tests.Audio
             SoundRoute r = paths.Route(new Vec3d(14, 1.6, 4), new Vec3d(14, 1.6, 14), Range);
             Assert.That(r.Way, Is.EqualTo(SoundWay.Silent));
             Assert.That(r.Gain, Is.EqualTo(0));
-            // A gunshot (220 m) in there is still heard, distant and dull, from its real direction.
+            // A gunshot (220 m) in there is still heard, at the loud floor (a low rumble), from its real direction.
             SoundRoute shot = paths.Route(new Vec3d(14, 1.6, 4), new Vec3d(14, 1.6, 14), 220);
             Assert.That(shot.Way, Is.EqualTo(SoundWay.Through));
             Assert.That(shot.Obstructed, Is.True);
-            Assert.That(shot.GainDb, Is.EqualTo(-paths.Config.FarObstructedLossDb));
-            Assert.That(shot.CutoffHz, Is.EqualTo(paths.Config.FarObstructedCutoffHz));
+            Assert.That(shot.GainDb, Is.EqualTo(-paths.Config.LoudFloorLossDb));
+            Assert.That(shot.CutoffHz, Is.EqualTo(paths.Config.LoudFloorCutoffHz));
             Assert.That(shot.ArrivesFrom.Z, Is.EqualTo(1).Within(1e-9));
         }
 

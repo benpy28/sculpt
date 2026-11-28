@@ -213,13 +213,14 @@ namespace Sculpt.Core.Audio
                 r.AroundFrom = f.Length > 1e-9 ? f.Normalized : dir;
                 r.Bends = bends;
             }
-            else if (!r.ThroughPossible && range > Config.SearchRange)
+            if (!r.ThroughPossible && range > Config.SearchRange)
             {
-                // A loud sound (a shot, a blast) with no way round inside the search range and too much in the straight
-                // line: still heard, distant and dull, from its real direction (sound bends over and round big things).
+                // A loud sound (a shot, a blast) with too much in the straight line: still heard from its real direction
+                // (sound bends over and round big things), at the loud floor, which is never louder or brighter than any
+                // through-wall result (see Mix).
                 r.ThroughPossible = true;
                 r.Obstructed = true;
-                r.ThroughDb = -Config.FarObstructedLossDb;
+                r.ThroughDb = -Config.LoudFloorLossDb;
             }
             return Mix(r, listener, dir, range, Config);
         }
@@ -234,8 +235,9 @@ namespace Sculpt.Core.Audio
             double aroundDb = -c.BendLossDb * charged;
             bool around = r.AroundFound && r.AroundDistance < range;
             bool through = r.ThroughPossible && r.DirectDistance < range;
+            ThroughSound(r.ThroughDb, r.Walls, r.Obstructed, range, c, out double throughDb, out double throughHz);
             double la = around ? Loud(aroundDb, r.AroundDistance, c.ReferenceDistance) : 0;
-            double lt = through ? Loud(r.ThroughDb, r.DirectDistance, c.ReferenceDistance) : 0;
+            double lt = through ? Loud(throughDb, r.DirectDistance, c.ReferenceDistance) : 0;
             if (!around && !through)
             {
                 r.Way = SoundWay.Silent;
@@ -259,12 +261,28 @@ namespace Sculpt.Core.Audio
                 r.Way = SoundWay.Through;
                 r.Distance = r.DirectDistance;
                 r.ArrivesFrom = trueDir;
-                r.GainDb = r.ThroughDb;
-                r.CutoffHz = r.Obstructed ? c.FarObstructedCutoffHz : c.ThroughCutoffHz / Math.Pow(2, Math.Max(0, r.Walls - 1));
+                r.GainDb = throughDb;
+                r.CutoffHz = throughHz;
                 r.Bends = 0;
             }
             r.Apparent = listener + r.ArrivesFrom * r.Distance;
             return r;
+        }
+
+        /// <summary>
+        /// Gain and top end of the through-walls way. Quiet sounds: the loss as measured, the cutoff halved per wall past
+        /// the first. Loud sounds (range past <see cref="SoundConfig.SearchRange"/>): the same, but never below the loud
+        /// floor, and an obstructed line (too much solid) is exactly the floor. Both are non-increasing in walls and solid,
+        /// so more walls never sound louder or brighter than fewer. Pure: exposed for tests.
+        /// </summary>
+        public static void ThroughSound(double lossDb, int walls, bool obstructed, double range, SoundConfig c, out double gainDb, out double cutoffHz)
+        {
+            gainDb = lossDb;
+            cutoffHz = c.ThroughCutoffHz / Math.Pow(2, Math.Max(0, walls - 1));
+            if (range <= c.SearchRange) return;
+            if (obstructed) { gainDb = -c.LoudFloorLossDb; cutoffHz = c.LoudFloorCutoffHz; return; }
+            gainDb = Math.Max(gainDb, -c.LoudFloorLossDb);
+            cutoffHz = Math.Max(cutoffHz, c.LoudFloorCutoffHz);
         }
 
         /// <summary>

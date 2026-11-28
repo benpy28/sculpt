@@ -32,12 +32,16 @@ namespace Sculpt.Core.Audio
         /// route must still be inside the range.</summary>
         public double GridSlack = 1.45;
 
-        /// <summary>Longest way round searched for (metres). Loud sounds carry further (shots 220 m, blasts 190 m); past
-        /// this they are heard through the walls on the straight line, or (if that's too much solid) distant and dull.</summary>
+        /// <summary>Longest way round searched for (metres). A sound whose range is longer than this is a loud sound
+        /// (shots 220 m, blasts 190 m): past this it is heard through the walls on the straight line, and through too much
+        /// solid (a hill, more than <see cref="MaxWalls"/> walls) still as a distant low rumble at the loud floor.</summary>
         public double SearchRange = 60;
-        /// <summary>A loud sound with no way round in the search range and too much solid on the straight line.</summary>
-        public double FarObstructedLossDb = 12;
-        public double FarObstructedCutoffHz = 1800;
+        /// <summary>Loud floor: a loud sound through walls is never quieter than this loss or duller than this cutoff, and
+        /// one with too much solid on the line (no way through) is heard at exactly this. Being a floor under the
+        /// through-wall loss, more walls or solid can never sound louder or brighter than fewer (the old fixed -12 dB,
+        /// 1.8 kHz fallback made 4 walls sound better than 1). 30 dB / 300 Hz: two plain walls are about 33 dB, 450 Hz.</summary>
+        public double LoudFloorLossDb = 30;
+        public double LoudFloorCutoffHz = 300;
 
         /// <summary>Searches for a way round one frame may run (each up to ~1-2 ms on a slow PC at the expansion cap); more
         /// sounds that frame are heard direct or through the walls only, and route properly next time.</summary>
