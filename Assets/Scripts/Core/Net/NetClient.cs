@@ -444,7 +444,7 @@ namespace Sculpt.Core.Net
                 ApplyLanding(ref s, _histMoved[k], _histMoveTo[k], _histKick[k]);
                 InputCmd hc = _histCmd[k];
                 if (Freeze.Covers(t)) CountdownFreeze.Apply(ref hc, ref s);
-                NetSim.Simulate(Grid, Movement, Config, ref s, hc, Spawn, null, null, null, null, Walls != null ? Charges : null);
+                NetSim.Simulate(Grid, Movement, Config, ref s, hc, Spawn, null, null, null, null, Walls != null ? Charges : null, Match.IsBr);
                 if (_histLock[k] != int.MinValue) HandRules.LockGun(ref s.Hand, _histLock[k]);
                 _histState[k] = s;
             }
@@ -549,7 +549,7 @@ namespace Sculpt.Core.Net
             if (LocalShots.Count > 1024) LocalShots.Clear(); // nobody is draining (tests)
             if (LocalGrenades.Count > 1024) LocalGrenades.Clear();
             int shotsBefore = LocalShots.Count;
-            NetSim.Simulate(Grid, Movement, Config, ref _pred, sim, Spawn, events, LocalShots, LocalGrenades, null, Walls != null ? Charges : null);
+            NetSim.Simulate(Grid, Movement, Config, ref _pred, sim, Spawn, events, LocalShots, LocalGrenades, null, Walls != null ? Charges : null, Match.IsBr);
             for (int k = shotsBefore; k < LocalShots.Count; k++)
             {
                 WeaponShot sh = LocalShots[k];

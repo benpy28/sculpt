@@ -192,6 +192,48 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(s.Items.TryGet(chest.Id, out _), Is.False, "opens once armed again");
         }
 
+        /// <summary>
+        /// Falling below the kill height in a running battle royale used to put you straight back on your pad with the
+        /// 1v1 loadout, not counted as a death. Now it is a death like any other: out, bag dropped where you last stood,
+        /// place given, and no dev respawn or warp brings you back.
+        /// </summary>
+        [Test]
+        public void FallingOffTheWorld_InABr_IsADeath_AndNoDevRespawnBringsYouBack()
+        {
+            var nc = new NetConfig { AllowDevRespawn = true, AllowDevWarp = true };
+            var brains = new List<Scripted>();
+            NetServer s = NewServer(Quick(BrMode.Solos, brains), out BrMapInfo br, nc);
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            for (int i = 0; i < SimTime.TicksPerSecond; i++) s.Step();
+            ServerPlayer x = s.Players[3];
+            Vec3d stood = x.State.Position;
+            Assert.That(x.State.Grounded, Is.True);
+            int alive = s.Match.AlivePlayers;
+            bool respawn = false, warp = false;
+            BrainOf(s, x).Make = (srv, me) => new InputCmd { Tick = srv.Tick, ViewTick = srv.Tick, Respawn = respawn, Warp = warp };
+            // Below the kill height (the map has no way down there; through a bug or a hole in the world it would be).
+            Place(x, new Vec3d(br.Centre.X, s.Config.KillY - 0.5, br.Centre.Z));
+            StepUntil(s, () => x.State.Dead, 5 * SimTime.TicksPerSecond);
+            s.Step();
+            Assert.That(s.InBrMatch(x.Id), Is.True);
+            Assert.That(x.State.RespawnTick, Is.EqualTo(int.MaxValue), "out for the match");
+            Assert.That(s.Match.AlivePlayers, Is.EqualTo(alive - 1));
+            Assert.That(s.PlaceOf(x.Team), Is.GreaterThan(0), "its place is decided");
+            int guns = 0;
+            for (int i = 0; i < s.Items.Count; i++)
+                if (Items.IsGun(s.Items[i].Kind) && (s.Items[i].Position - stood).HorizontalLength < 2) guns++;
+            Assert.That(guns, Is.EqualTo(2), "the pump and the locker gun lie where it last stood");
+
+            respawn = true;
+            for (int i = 0; i < 10; i++) s.Step();
+            respawn = false;
+            warp = true;
+            for (int i = 0; i < 10; i++) s.Step();
+            warp = false;
+            for (int i = 0; i < 5 * SimTime.TicksPerSecond; i++) s.Step();
+            Assert.That(x.State.Dead, Is.True, "no dev respawn or warp brings it back mid-match");
+        }
+
         private static Scripted BrainOf(NetServer s, ServerPlayer p)
         {
             Assert.That(s.Bots.TryGetValue(p.Id, out IBotBrain brain));

@@ -28,6 +28,9 @@ namespace Sculpt.Core.Net
         internal byte CarrySwapA, CarrySwapB;
         internal byte CarryWeapon;
         internal int CarryPickId, CarryHealTile, CarryHealCell, CarryDoorTile;
+        /// <summary>Where this player last stood on something (a battle royale fall-out drops the bag there).</summary>
+        internal Vec3d LastGround;
+        internal bool HasLastGround;
         /// <summary>The look of the command a pickup press came in (a carried press keeps its own, not the next tick's).</summary>
         internal double CarryPickYaw, PickYaw;
         internal float CarryPickPitch, PickPitch;
@@ -474,8 +477,9 @@ namespace Sculpt.Core.Net
                 Before before = TakeBefore(p);
                 // The match countdown: only looking and slot changes (the client's prediction does the same on the same ticks).
                 if (Match.Phase == MatchPhase.Countdown) CountdownFreeze.Apply(ref cmd, ref p.State);
-                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches, Walls != null ? _charge : null);
+                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches, Walls != null ? _charge : null, Br != null);
                 CheckIntegrity(p, before);
+                if (p.State.Grounded && !p.State.Dead) { p.LastGround = p.State.Position; p.HasLastGround = true; }
                 if (p.BrLoadout && !p.State.Dead) { GiveBrLoadout(p); p.BrLoadout = false; }
                 if (!wasDead && p.State.Dead) OnKilled(p, 0, DamageSource.Fall, false);
                 if (!p.State.Dead && (cmd.Hand.Pickup || cmd.Hand.Drop)) HandleItems(p, cmd);

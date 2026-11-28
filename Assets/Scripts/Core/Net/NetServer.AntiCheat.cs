@@ -120,6 +120,13 @@ namespace Sculpt.Core.Net
                 cmd.Warp = false;
                 if (!IsBotConnection(p.ConnectionId)) Flag(p, FlagKind.DevWarpRefused);
             }
+            // A battle royale is one life: even a dev respawn or warp can't bring the dead back while a match runs (or
+            // a late joiner in before the next one). Only the server's own respawns do.
+            if (Br != null && p.State.Dead && !cmd.ForcedRespawn && (Match.Phase == MatchPhase.Playing || Match.Phase == MatchPhase.Countdown))
+            {
+                cmd.Respawn = false;
+                cmd.Warp = false;
+            }
             p.Watch.PushLook(Tick, cmd.Move.Yaw, cmd.Pitch);
             if (p.Watch.SnapPending) FinishSnap(p);
         }

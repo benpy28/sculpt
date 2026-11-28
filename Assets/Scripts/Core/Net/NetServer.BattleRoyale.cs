@@ -402,6 +402,8 @@ namespace Sculpt.Core.Net
         {
             Bag b = p.State.Hand.Bag;
             Vec3d at = p.State.Position;
+            // Fell off the world: the loot stays in the match where you last stood.
+            if (at.Y < Config.KillY + 1 && p.HasLastGround) at = p.LastGround;
             int k = 0;
             for (int slot = 0; slot < global::Sculpt.Core.Items.Slots; slot++)
             {
