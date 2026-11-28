@@ -161,7 +161,7 @@ namespace Sculpt.Core
             b.Chest(t, 6, 4, 1, Math.PI);   // upstairs office
             b.Chest(t, 7, 4, 2, Math.PI);   // roof
             b.Item(Item.Grenade, 2, new Vec3d(t.Cx(0) + 2, y, t.Cz(4) + 3));
-            b.Poi("Engine shed", new Vec3d(t.Cx(4), y, t.Cz(2)), t.Bounds);
+            b.Poi("Engine Shed", new Vec3d(t.Cx(4), y, t.Cz(2)), t.Bounds);
             return t;
         }
 
@@ -195,6 +195,19 @@ namespace Sculpt.Core
             NorthKit.Platform(b, CrossX1, P2Z0, 740, P2Z1, Yard);
             NorthKit.Platform(b, 520, P1Z0, CrossX0, P1Z1, Yard);
             NorthKit.Platform(b, CrossX1, P1Z0, 745, P1Z1, Yard);
+            // Relay cabinets in the alleys between the tracks, two per alley on opposite halves and staggered, so no
+            // alley is a clear sight line from one end of the yard to the other but you can always run down it.
+            (double lo, double hi)[] alleys = { (956.5, 959.5), (962.5, 965.5), (968.5, 971.5), (974.5, 977.5), (980.5, 983.5), (986.5, 989.5), (992.5, 995.5), (998.5, 1003.4) };
+            for (int k = 0; k < alleys.Length; k++)
+            {
+                double mid = (alleys[k].lo + alleys[k].hi) / 2;
+                bool even = k % 2 == 0;
+                // Each half of the alley gets one cabinet west of the crossing and one east of it.
+                foreach (double x in even ? new[] { 586.0, 734.0 } : new[] { 611.0, 691.0 })
+                    NorthKit.Box(b, x, alleys[k].lo, 1.5, mid - alleys[k].lo, true, Yard, 2, true);
+                foreach (double x in even ? new[] { 611.0, 691.0 } : new[] { 586.0, 734.0 })
+                    NorthKit.Box(b, x, mid, 1.5, alleys[k].hi - mid, true, Yard, 2, true);
+            }
             // The two home chests on the platforms, either side of the crossing.
             b.Chest(new Vec3d(CrossX0 - 4, Yard + 1.5, (P1Z0 + P1Z1) / 2), Math.PI / 2);
             b.Chest(new Vec3d(CrossX1 + 4, Yard + 1.5, (P1Z0 + P1Z1) / 2), -Math.PI / 2);
@@ -302,7 +315,7 @@ namespace Sculpt.Core
                 var f = new GreyboxBlock.Building(p.x, p.z, 2, 3, 1);
                 b.Foot(f, 2);
                 f.AlongX[0, 0, 0] = WallKind.WideDoor;
-                f.AlongX[0, 3, 1] = WallKind.ShutDoor;
+                f.AlongX[0, 3, 0] = WallKind.ShutDoor;
                 f.AlongX[0, 2, 1] = WallKind.Wall;   // the office (east lane, back cell): sealed
                 f.AlongZ[0, 1, 2] = WallKind.Wall;
                 b.Variant = v++;
@@ -411,6 +424,28 @@ namespace Sculpt.Core
 
         private static void BuildFill(BrBuild b)
         {
+            // The coal yard on the station's east flank: walls three tiles tall (too tall to climb), one gate, a hut.
+            double cy = b.Foot(700, 1030, 722.5, 1052.5, 2.5, Base);
+            b.Style = BrStyle.Industrial; b.Variant = 4;
+            BrKit.Compound(b, 700, cy, 1030);
+            b.Poi("Coal Yard", new Vec3d(711, cy, 1041));
+
+            // South of the embankment, the permanent way depot: sleeper stacks (one tile, crouch cover) and rail stacks
+            // (two tiles, full cover you can climb), and three sealed tool huts, so crossing to the bank isn't a run in the open.
+            (double x, double z, double len, bool alongX, int rows)[] stacks =
+            {
+                (488, 896, 6, true, 2), (520, 902, 4.5, false, 1), (548, 894, 7.5, true, 1), (585, 900, 6, true, 2),
+                (612, 893, 4.5, false, 2), (676, 898, 6, true, 1), (700, 893, 4.5, false, 2), (728, 900, 7.5, true, 2),
+                (770, 895, 6, true, 1), (800, 901, 4.5, false, 2),
+            };
+            b.Style = BrStyle.Timber; b.Variant = 2;
+            foreach (var st in stacks) b.LowWall(st.x, st.z, st.len, st.alongX, st.rows);
+            foreach (double hx in new[] { 560.0, 745.0, 818.0 })
+            {
+                double hy = b.Foot(hx, 891, hx + M + Col, 891 + M + Col, 2.5);
+                BrKit.Shed(b, hx, hy, 891);
+            }
+
             b.Style = BrStyle.Plaster; b.Variant = 0;
             // The railway village south of the embankment and round the edges.
             BrKit.Villages(b, new Rect2(b.Area.X0, b.Area.Z0, b.Area.X1, 916), 1, stopAtChests: BrLayout.MaxChests - 6);
