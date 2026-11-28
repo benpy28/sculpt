@@ -119,6 +119,9 @@ namespace Sculpt.Core.Net
             {
                 victim.LastHurtBy = attacker.Id; // a fall soon after still credits them (OnKilled)
                 victim.LastHurtTick = Tick;
+                attacker.HitVictim = victim.Id;
+                attacker.HitTick = Tick;
+                attacker.HitVictimHealth = victim.State.Health(Weapons);
                 NotePingHurt(attacker, victim);
             }
             if (attacker != null && attacker != victim && attacker.Team != victim.Team && dealt > 0 && Walls != null)

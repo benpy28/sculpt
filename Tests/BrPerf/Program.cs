@@ -85,6 +85,11 @@ internal static class Program
                 {
                     ServerPlayer v = null, a = null;
                     foreach (ServerPlayer p in s.Players) { if (p.Id == ce.Victim) v = p; if (p.Id == ce.Attacker) a = p; }
+                    {
+                        ServerPlayer v2 = null, a2 = null;
+                        foreach (ServerPlayer p in s.Players) { if (p.Id == ce.Victim) v2 = p; if (p.Id == ce.Attacker) a2 = p; }
+                        if (a2 != null && v2 != null && a2 != v2) KillDist.Add((a2.State.Position - v2.State.Position).Length);
+                    }
                     Deaths.Add($"{(ticks - playStartTick) / (double)SimTime.TicksPerSecond,6:0.0}s {s.Match.Phase,-9} {ce.Source,-8} victim {ce.Victim} attacker {ce.Attacker}" +
                         (a != null && v != null ? $" dist {(a.State.Position - v.State.Position).Length:0.0} m" : "") +
                         (v != null && (ticks - playStartTick) < 30 * SimTime.TicksPerSecond ? $" at {v.State.Position} (pad {v.Spawn}{(a != null ? $", attacker's pad {a.Spawn}" : "")})" : ""));
@@ -144,6 +149,12 @@ internal static class Program
         foreach (string d in Deaths.GetRange(0, Math.Min(40, Deaths.Count))) Console.WriteLine("  " + d);
         Console.WriteLine($"deaths with no killer ({OtherDeaths.Count}):");
         foreach (string d in OtherDeaths) Console.WriteLine("  " + d);
+        KillDist.Sort();
+        double Q(double q) => KillDist.Count == 0 ? 0 : KillDist[Math.Min(KillDist.Count - 1, (int)(KillDist.Count * q))];
+        Console.WriteLine($"kills by a player: {KillDist.Count}, distance median {Q(0.5):0} m, 25% {Q(0.25):0} m, 75% {Q(0.75):0} m, 90% {Q(0.9):0} m");
+        int covers = 0, rotations = 0, thirds = 0;
+        foreach (var kv in s.Bots) if (kv.Value is DuelBot b) { covers += b.CoverCount; rotations += b.RotateCount; thirds += b.ThirdPartyCount; }
+        Console.WriteLine($"bot tactics: cover {covers}, rotations {rotations}, third-party {thirds}");
         Console.WriteLine("alive every 30 s:");
         foreach (string a in Alive) Console.WriteLine("  " + a);
         Console.WriteLine("timeline (half seconds: phase, server ms avg/worst per tick, interest/simulate/bots avg):");
@@ -158,6 +169,7 @@ internal static class Program
 
     private static readonly List<double[]> Timeline = new List<double[]>();
     private static readonly List<string> Deaths = new List<string>();
+    private static readonly List<double> KillDist = new List<double>();
     private static readonly List<string> Alive = new List<string>();
     private static readonly List<string> OtherDeaths = new List<string>();
     private static readonly HashSet<int> WasDead = new HashSet<int>();

@@ -31,6 +31,7 @@ namespace Sculpt.Core.Net
         {
             foreach (ServerPlayer p in _players)
             {
+                if (p.Shots.Count > 0) p.LastShotTick = Tick;
                 for (int k = 0; k < p.Shots.Count; k++)
                 {
                     WeaponShot shot = p.Shots[k];
