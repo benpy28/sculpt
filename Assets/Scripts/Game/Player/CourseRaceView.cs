@@ -36,6 +36,7 @@ namespace Sculpt.Game.Player
             _gl.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
             _gl.SetInt("_Cull", 0);
             _gl.SetInt("_ZWrite", 0);
+            _gl.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always); // HUD: never hidden behind the world's depth (walls covered the minimap)
 
             Shader shader = Shader.Find("SCULPT/Voxel");
             if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");

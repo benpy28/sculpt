@@ -35,6 +35,7 @@ namespace Sculpt.Game.UI
             _gl.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
             _gl.SetInt("_Cull", 0);
             _gl.SetInt("_ZWrite", 0);
+            _gl.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always); // HUD: never hidden behind the world's depth (walls covered the minimap)
         }
 
         private void LateUpdate()
