@@ -256,9 +256,10 @@ namespace Sculpt.Game.UI
                 $"NET {mode}: {_session.Status}\n" +
                 $"Round trip ~{System.Math.Max(0, n.RttTicks) * tickMs:0} ms   Input lead {lead} ticks   Clock {n.Dilation * 100:+0.0;-0.0;0}%\n" +
                 $"Corrections {n.Corrections} ({_corrPerSec:0.0}/s, last {n.LastCorrectionMeters * 100:0} cm)   Remote players {n.RemoteCount}\n";
-            ServerPlayer sp = _session.LocalServerPlayer;
+            ServerPlayer sp = _session.Server != null ? _session.LocalServerPlayer : null; // a read across threads: numbers only
             if (n.Sculpt != null) t += $"Sculpt: bar {n.Sculpt.DisplayBar / 100}%   pending {n.Sculpt.Local.Count}   mispredicted {n.Sculpt.Mispredictions}   server refused {n.Sculpt.ServerRejections}\n";
-            if (sp != null) t += $"Server: tick {_session.Server.Tick}, players {_session.Server.Players.Count}, your missed inputs {sp.MissedInputs}, late {sp.LateInputs}\n";
+            if (sp != null) t += $"Server: tick {_session.Server.Tick}, players {_session.Server.Players.Count}, your missed inputs {sp.MissedInputs}, late {sp.LateInputs}" +
+                (_session.ServerThreadRunning ? $", own thread {_session.ServerTickAvgMs:0.00} ms a tick (worst {_session.ServerTickWorstMs:0.0}), late ticks {_session.ServerLateTicks}" : "") + "\n";
             t += $"Sim: ping {SimPingMs} ms (F8)  loss {_session.SimUp.LossPercent:0}% (F9)  jitter +/-{_session.SimUp.JitterMs:0} ms (F10)\n" +
                  $"F11 {(_session.Mode == NetMode.Offline ? "host on port " + _session.Port : "go offline")}   F12 join a server";
             return t;

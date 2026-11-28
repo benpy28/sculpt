@@ -264,10 +264,9 @@ namespace Sculpt.Core.Net
         /// Order inside a tick: death/respawn timer, hand, movement (fall damage), own grenades (flights, blast push,
         /// throw), then the gun. Grenade events go into <paramref name="grenades"/> (null while replaying). Punch hits go into <paramref name="punches"/> (null while replaying). <paramref name="charge"/> breaks tiles you charge through (null: no charging). Shots fired go into
         /// <paramref name="shots"/> (null while replaying). Damage from other players is applied by the server only.
-        /// <paramref name="fallOutKills"/> (battle royale): falling below the kill height is a death, not a respawn.
         /// </summary>
         public static void Simulate(ITerrain grid, MovementConfig mc, NetConfig nc, ref MotorState s, in InputCmd cmd, Vec3d spawn, List<MoveEvent> events, List<WeaponShot> shots = null,
-            List<GrenadeEvent> grenades = null, List<PunchSwing> punches = null, IChargeBreaker charge = null, bool fallOutKills = false)
+            List<GrenadeEvent> grenades = null, List<PunchSwing> punches = null, IChargeBreaker charge = null)
         {
             if (cmd.Respawn && (nc.AllowDevRespawn || cmd.ForcedRespawn))
             {
@@ -310,15 +309,13 @@ namespace Sculpt.Core.Net
 
             if (s.Position.Y < nc.KillY)
             {
-                // A battle royale has one life: falling off the world is a death like any other (the server drops your bag
-                // at your last footing). Elsewhere it puts you straight back at your spawn.
-                if (fallOutKills)
-                {
-                    WeaponRules.Kill(ref s, cmd.Tick, mc.Weapons);
-                    events?.Add(new MoveEvent { Type = MoveEventType.Died, Tick = cmd.Tick });
-                    return;
-                }
-                Respawn(ref s, spawn, cmd.Tick, events, grenades);
+                // Fell out of the world: book it as a death (3 s respawn like any fall, credited by the server's OnKilled
+                // with DamageSource.Fall), not a free instant full-health reset. Dead players are frozen until RespawnTick,
+                // then respawn at spawn. Without this a map with an open pit would let a losing player escape a fight with
+                // no penalty and no death recorded.
+                GrenadeRules.Fizzle(ref s, cmd.Tick, grenades, false);
+                WeaponRules.Kill(ref s, cmd.Tick, mc.Weapons);
+                events?.Add(new MoveEvent { Type = MoveEventType.Died, Tick = cmd.Tick });
                 return;
             }
             if (s.Dead) return;

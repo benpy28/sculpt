@@ -53,7 +53,8 @@ namespace Sculpt.Game.UI
                 _player.FaceTowards(new Vec3d(BrMap.Size / 2, 0, BrMap.Size / 2));
             }
             if (m.Phase != MatchPhase.Countdown) _facedBr = false;
-            if (m.Phase != _lastPhase) Debug.Log($"[SCULPT] Match: {m.Phase}" + (m.Phase == MatchPhase.Ended ? $" (you {m.ScoreOf(_session.Client.PlayerId).Kills} kills, leader {m.Leader()})" : ""));
+            if (m.Phase != _lastPhase) Debug.Log($"[SCULPT] Match: {m.Phase}" + (m.Phase == MatchPhase.Ended ? $" (you {m.ScoreOf(_session.Client.PlayerId).Kills} kills, leader {m.Leader()})" : "")
+                + $" (you: player {_session.Client.PlayerId}, team {_session.Client.Team}, {(_session.Client.Predicted.Dead ? "dead" : "alive")})");
             _lastPhase = m.Phase;
         }
 

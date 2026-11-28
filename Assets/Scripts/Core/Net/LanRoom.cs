@@ -72,6 +72,20 @@ namespace Sculpt.Core.Net
 
         public static bool IsCode(string typed) => Normalize(typed) != null;
 
+        /// <summary>
+        /// "Whatever you host": asked straight to an address the player typed, so joining by IP loads the map the host
+        /// really runs (it used to load the map of the menu tab it was typed into). Never a real code: 0 is not in the
+        /// alphabet. The answer carries the host's real code.
+        /// </summary>
+        public const string AnyCode = "0000";
+
+        public static byte[] AskAny(uint nonce)
+        {
+            var w = new ByteWriter(AskLength);
+            Head(w, AskMagic, AnyCode, nonce);
+            return w.ToArray();
+        }
+
         public static byte[] Ask(string code, uint nonce)
         {
             string c = Normalize(code) ?? throw new ArgumentException("not a room code", nameof(code));
@@ -138,9 +152,10 @@ namespace Sculpt.Core.Net
             for (int i = 0; i < CodeLength; i++)
             {
                 c[i] = (char)r.U8();
-                if (Alphabet.IndexOf(c[i]) < 0) return false;
+                if (Alphabet.IndexOf(c[i]) < 0 && c[i] != '0') return false;
             }
             code = new string(c);
+            if (code.IndexOf('0') >= 0 && code != AnyCode) return false; // 0 only ever as the whole "any" code
             nonce = unchecked((uint)r.I32());
             return true;
         }

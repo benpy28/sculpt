@@ -35,10 +35,30 @@ namespace Sculpt.Game.Net
         private readonly System.Random _nonces = new System.Random();
         private double _nextAsk;
 
+        /// <summary>Asking one address what it hosts (joining by IP), not a code on the whole network.</summary>
+        public readonly bool ByAddress;
+        /// <summary>For an address lookup: give up sooner (it is one host, close by or not answering at all).</summary>
+        private readonly float _giveUp = GiveUpSeconds;
+
         public LanRoomFinder(string code)
         {
             Code = LanRoom.Normalize(code) ?? throw new ArgumentException("not a room code", nameof(code));
             _targets = BroadcastTargets();
+            Open();
+        }
+
+        /// <summary>Asks <paramref name="address"/> (only) what it is hosting.</summary>
+        public LanRoomFinder(IPAddress address)
+        {
+            Code = LanRoom.AnyCode;
+            ByAddress = true;
+            _giveUp = 1.2f;
+            _targets = new List<IPAddress> { address };
+            Open();
+        }
+
+        private void Open()
+        {
             try
             {
                 _udp = new UdpClient(new IPEndPoint(IPAddress.Any, 0)) { EnableBroadcast = true };
@@ -57,12 +77,12 @@ namespace Sculpt.Game.Net
             double t = _clock.Elapsed.TotalSeconds;
             try
             {
-                if (t >= _nextAsk && t < GiveUpSeconds)
+                if (t >= _nextAsk && t < _giveUp)
                 {
                     _nextAsk = t + AskEverySeconds;
                     uint nonce = (uint)_nonces.Next() ^ ((uint)_nonces.Next() << 16);
                     _sentAt[nonce] = t;
-                    byte[] ask = LanRoom.Ask(Code, nonce);
+                    byte[] ask = ByAddress ? LanRoom.AskAny(nonce) : LanRoom.Ask(Code, nonce);
                     foreach (IPAddress a in _targets)
                     {
                         try { _udp.Send(ask, ask.Length, new IPEndPoint(a, LanRoom.DiscoveryPort)); }
@@ -73,7 +93,7 @@ namespace Sculpt.Game.Net
                 {
                     IPEndPoint from = null;
                     byte[] got = _udp.Receive(ref from);
-                    if (!LanRoom.TryReadAnswer(got, got.Length, out LanRoomReply r) || r.Code != Code) continue;
+                    if (!LanRoom.TryReadAnswer(got, got.Length, out LanRoomReply r) || (!ByAddress && r.Code != Code)) continue;
                     if (!_sentAt.TryGetValue(r.Nonce, out double sent)) continue; // not ours, or a stale search
                     Reply = r;
                     Host = from.Address;
@@ -81,7 +101,9 @@ namespace Sculpt.Game.Net
                     if (r.Protocol != Protocol.Version)
                     {
                         Now = State.WrongBuild;
-                        Error = $"Room {Code} runs a {(r.Protocol > Protocol.Version ? "newer" : "older")} build of SCULPT: both need the same version.";
+                        Error = ByAddress
+                            ? $"That host runs a {(r.Protocol > Protocol.Version ? "newer" : "older")} build of SCULPT: both need the same version."
+                            : $"Room {Code} runs a {(r.Protocol > Protocol.Version ? "newer" : "older")} build of SCULPT: both need the same version.";
                     }
                     else Now = State.Found;
                     return;
@@ -94,10 +116,11 @@ namespace Sculpt.Game.Net
                 Error = "Couldn't search the network: " + e.Message;
                 return;
             }
-            if (t >= GiveUpSeconds + 0.5)
+            if (t >= _giveUp + 0.5)
             {
                 Now = State.NotFound;
-                Error = $"No room {Code} found on this network. Check the code and that you're on the same Wi-Fi, or type the host's address instead.";
+                Error = ByAddress ? "That address didn't say what it is hosting."
+                    : $"No room {Code} found on this network. Check the code and that you're on the same Wi-Fi, or type the host's address instead.";
             }
         }
 

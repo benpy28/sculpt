@@ -115,6 +115,7 @@ namespace Sculpt.Core.Tests.Net
                 if (p.Team == x.Team && y == null) y = p;
                 if (p.Team != x.Team && z == null) z = p;
             }
+            x.Viewer = y.Viewer = z.Viewer = true; // stand-ins for people: interest is worked out for viewers
             // x falls to its death at its spawn (the real rules); its body stays there.
             x.State.Damage = s.Movement.Weapons.MaxHealth - 1;
             Place(x, x.State.Position + new Vec3d(0, 40, 0));

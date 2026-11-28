@@ -228,7 +228,7 @@ namespace Sculpt.Game.UI
 
             // The death card, only when you will respawn: a battle royale death (or sitting a match out) never does
             // (RespawnTick = int.MaxValue) and has its own "you're out" card in BrHud.
-            if (s.Dead && Respawns(s))
+            if (s.Dead && !net.Match.IsBr && Respawns(s))
             {
                 int tenths = Mathf.Max(0, Mathf.CeilToInt((s.RespawnTick - net.Tick) * 10f / SimTime.TicksPerSecond));
                 if (tenths != _deathTenths) { _deathTenths = tenths; _deathLeft = $"respawning in {tenths / 10}.{tenths % 10} s"; }

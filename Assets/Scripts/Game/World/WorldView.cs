@@ -19,6 +19,13 @@ namespace Sculpt.Game.World
         private Material _material;
         private Mesh[] _meshes;
         private GameObject[] _chunkObjects;
+        // Chunks are drawn in groups of G x G columns (all heights): flat maps have tens of thousands of nearly empty
+        // ground chunks, and a renderer each cost the render thread more than drawing them. A change re-meshes its
+        // group. Maps with sculptable detail keep one chunk per group (an edit re-meshes only its own chunk).
+        private int _group = 1, _groupsX, _groupsZ;
+        private readonly HashSet<int> _dirtyGroups = new HashSet<int>();
+        private readonly List<Int3> _groupChunks = new List<Int3>();
+        private readonly List<Vector3> _groupOffsets = new List<Vector3>();
         private readonly List<int> _dirty = new List<int>();
         private SculptClient _sculpt;
         private float _tintTimer;
@@ -57,15 +64,23 @@ namespace Sculpt.Game.World
         }
 
         private GrassField _grass;
+        private bool _fixedGround;
+
+        /// <summary>The terrain material (props drawn apart from the chunks share it).</summary>
+        public Material TerrainMaterial => _material;
         private LocalPlayer _localPlayer;
         private NetSession _session;
         private readonly List<Vector3> _actors = new List<Vector3>();
         private readonly List<int> _remoteIds = new List<int>();
 
         /// <summary>map: optional, for trees (anchors drawn as bark and leaves).</summary>
-        public void Init(SubGrid grid, SculptConfig sculpt, MapInfo map = null, GroundCover cover = null)
+        /// <param name="decorOf">Optional: how props on the ground are drawn (the battle royale plains), see
+        /// <see cref="ChunkMesher.DecorOf"/>. With it the ground is never edited in play, so chunks are drawn in groups
+        /// even though the props give them their own sub-cells.</param>
+        public void Init(SubGrid grid, SculptConfig sculpt, MapInfo map = null, GroundCover cover = null, System.Func<Int3, byte> decorOf = null)
         {
-            _mesher = new ChunkMesher { Cover = cover };
+            _mesher = new ChunkMesher { Cover = cover, DecorOf = decorOf, SkipAnchors = decorOf != null }; // props: PropsView
+            _fixedGround = decorOf != null;
             if (map != null && map.Trees.Count > 0)
             {
                 _mesher.Decor = new Dictionary<Int3, byte>();
@@ -87,6 +102,7 @@ namespace Sculpt.Game.World
                 shader = Shader.Find("Universal Render Pipeline/Unlit");
             }
             _material = new Material(shader) { name = "Terrain (runtime)" };
+            _material.SetFloat("_Scenery", 1f); // takes the picture settings (shadows, AO, lighting, atmosphere)
             _material.SetFloat(IdRange, (float)sculpt.RangeMeters);
         }
 
@@ -102,19 +118,24 @@ namespace Sculpt.Game.World
             {
                 if (_chunkObjects != null) foreach (var go in _chunkObjects) Destroy(go);
                 if (_meshes != null) foreach (var m in _meshes) Destroy(m);
-                _meshes = new Mesh[grid.ChunkCount];
-                _chunkObjects = new GameObject[grid.ChunkCount];
-                for (int i = 0; i < grid.ChunkCount; i++)
+                _group = grid.AllocatedChunks == 0 || _fixedGround ? 4 : 1;
+                _groupsX = (grid.ChunksX + _group - 1) / _group;
+                _groupsZ = (grid.ChunksZ + _group - 1) / _group;
+                int groups = _groupsX * _groupsZ * (_group == 1 ? grid.ChunksY : 1);
+                if (_group == 1) groups = grid.ChunkCount;
+                _meshes = new Mesh[groups];
+                _chunkObjects = new GameObject[groups];
+                for (int i = 0; i < groups; i++)
                 {
-                    Int3 cc = grid.ChunkCoordFromIndex(i);
-                    var go = new GameObject($"Chunk {cc.X},{cc.Y},{cc.Z}");
+                    Int3 cc = _group == 1 ? grid.ChunkCoordFromIndex(i) : new Int3((i % _groupsX) * _group, 0, (i / _groupsX) * _group);
+                    var go = new GameObject(_group == 1 ? $"Chunk {cc.X},{cc.Y},{cc.Z}" : $"Chunks {cc.X},{cc.Z} +{_group}");
                     go.transform.SetParent(transform, false);
                     go.transform.localPosition = grid.ChunkOrigin(cc).ToUnity() * (float)SubGrid.SubSize;
                     var mf = go.AddComponent<MeshFilter>();
                     var mr = go.AddComponent<MeshRenderer>();
                     mr.sharedMaterial = _material;
-                    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                    mr.receiveShadows = false;
+                    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; // scenery casts sun shadows when that setting is on (players never do)
+                    mr.receiveShadows = true;
                     _meshes[i] = new Mesh { name = go.name };
                     mf.sharedMesh = _meshes[i];
                     _chunkObjects[i] = go;
@@ -127,7 +148,23 @@ namespace Sculpt.Game.World
             _grass?.Bind(grid);
             if (same) return;
             grid.MarkAllDirty();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             RebuildDirty();
+            long tris = 0, verts = 0;
+            if (_meshes != null) foreach (Mesh m in _meshes) if (m != null) { verts += m.vertexCount; tris += m.GetIndexCount(0) / 3; }
+            Debug.Log($"[SCULPT] Ground meshed: {grid.ChunkCount} chunks in {sw.ElapsedMilliseconds} ms, {tris / 1000} thousand triangles, {verts / 1000} thousand vertices (about {verts * 64 / (1024 * 1024)} MB).");
+            if (Debug.isDebugBuild && System.Array.Exists(System.Environment.GetCommandLineArgs(), a => a == "-meshcheck"))
+            {
+                int bad = 0, done = 0;
+                for (int i = 0; i < grid.ChunkCount && done < 400; i += 7)
+                {
+                    Int3 cc = grid.ChunkCoordFromIndex(i);
+                    string p = _mesher.CheckFlat(grid, cc);
+                    done++;
+                    if (p != null) { bad++; if (bad <= 5) Debug.LogWarning($"[SCULPT] Mesh check: chunk {cc.X},{cc.Y},{cc.Z}: {p}"); }
+                }
+                Debug.Log($"[SCULPT] Mesh check: {done} chunks compared, {bad} differ.");
+            }
         }
 
         /// <summary>Players whose feet flatten the grass (the local player and everyone drawn remotely).</summary>
@@ -163,12 +200,97 @@ namespace Sculpt.Game.World
             if (!_grid.HasDirtyChunks) return 0;
             _dirty.Clear();
             _grid.DrainDirtyChunks(_dirty);
+            if (_group == 1)
+            {
+                foreach (int i in _dirty)
+                {
+                    _mesher.Build(_grid, _grid.ChunkCoordFromIndex(i), _meshes[i]);
+                    _grass?.Rebuild(i);
+                }
+                return _dirty.Count;
+            }
+            _dirtyGroups.Clear();
             foreach (int i in _dirty)
             {
-                _mesher.Build(_grid, _grid.ChunkCoordFromIndex(i), _meshes[i]);
+                Int3 cc = _grid.ChunkCoordFromIndex(i);
+                _dirtyGroups.Add((cc.Z / _group) * _groupsX + cc.X / _group);
                 _grass?.Rebuild(i);
             }
+            float sub = (float)SubGrid.SubSize;
+            if (_dirtyGroups.Count >= 64)
+            {
+                // A whole map at load (or a reload): fill the groups on every core, upload here.
+                BuildGroupsInParallel(sub);
+                return _dirty.Count;
+            }
+            foreach (int gi in _dirtyGroups)
+            {
+                Int3 g0 = new Int3((gi % _groupsX) * _group, 0, (gi / _groupsX) * _group);
+                Vector3 origin = _grid.ChunkOrigin(g0).ToUnity() * sub;
+                _groupChunks.Clear();
+                _groupOffsets.Clear();
+                for (int cy = 0; cy < _grid.ChunksY; cy++)
+                    for (int dz = 0; dz < _group; dz++)
+                        for (int dx = 0; dx < _group; dx++)
+                        {
+                            var cc = new Int3(g0.X + dx, cy, g0.Z + dz);
+                            if (cc.X >= _grid.ChunksX || cc.Z >= _grid.ChunksZ) continue;
+                            _groupChunks.Add(cc);
+                            _groupOffsets.Add(_grid.ChunkOrigin(cc).ToUnity() * sub - origin);
+                        }
+                _mesher.BuildGroup(_grid, _groupChunks, _groupOffsets, _meshes[gi]);
+            }
             return _dirty.Count;
+        }
+
+        private void BuildGroupsInParallel(float sub)
+        {
+            var groups = new List<int>(_dirtyGroups);
+            int workers = Mathf.Max(1, System.Environment.ProcessorCount - 1);
+            var twins = new ChunkMesher[workers];
+            for (int w = 0; w < workers; w++) twins[w] = _mesher.Twin();
+            const int Batch = 256;
+            var filled = new ChunkMesher.Filled[Batch];
+            for (int start = 0; start < groups.Count; start += Batch)
+            {
+                int count = Mathf.Min(Batch, groups.Count - start);
+                int next = -1;
+                var tasks = new System.Threading.Tasks.Task[workers];
+                for (int w = 0; w < workers; w++)
+                {
+                    ChunkMesher m = twins[w];
+                    tasks[w] = System.Threading.Tasks.Task.Run(() =>
+                    {
+                        var chunks = new List<Int3>();
+                        var offsets = new List<Vector3>();
+                        int k;
+                        while ((k = System.Threading.Interlocked.Increment(ref next)) < count)
+                        {
+                            int gi = groups[start + k];
+                            Int3 g0 = new Int3((gi % _groupsX) * _group, 0, (gi / _groupsX) * _group);
+                            Vector3 origin = _grid.ChunkOrigin(g0).ToUnity() * sub;
+                            chunks.Clear();
+                            offsets.Clear();
+                            for (int cy = 0; cy < _grid.ChunksY; cy++)
+                                for (int dz = 0; dz < _group; dz++)
+                                    for (int dx = 0; dx < _group; dx++)
+                                    {
+                                        var cc = new Int3(g0.X + dx, cy, g0.Z + dz);
+                                        if (cc.X >= _grid.ChunksX || cc.Z >= _grid.ChunksZ) continue;
+                                        chunks.Add(cc);
+                                        offsets.Add(_grid.ChunkOrigin(cc).ToUnity() * sub - origin);
+                                    }
+                            filled[k] = m.FillGroup(_grid, chunks, offsets);
+                        }
+                    });
+                }
+                System.Threading.Tasks.Task.WaitAll(tasks);
+                for (int k = 0; k < count; k++)
+                {
+                    ChunkMesher.Upload(filled[k], _meshes[groups[start + k]]);
+                    filled[k] = null;
+                }
+            }
         }
 
         /// <summary>The team tint is baked into vertex colours; re-mesh tinted pieces a few times a second while it fades.</summary>

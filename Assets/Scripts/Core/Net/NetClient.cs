@@ -191,6 +191,24 @@ namespace Sculpt.Core.Net
 
         public void Receive(byte[] data, int offset, int count)
         {
+            global::Sculpt.Core.Diagnostics.Prof.Begin(global::Sculpt.Core.Diagnostics.Prof.Section.ClientReceive);
+            MsgType type = count > 0 ? Protocol.PeekType(data, offset, count) : MsgType.Welcome;
+            var part = type == MsgType.Snapshot ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientSnapshot
+                : type == MsgType.Tiles ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientTiles
+                : type == MsgType.Items ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientItems
+                : type == MsgType.Match ? global::Sculpt.Core.Diagnostics.Prof.Section.ClientMatch
+                : global::Sculpt.Core.Diagnostics.Prof.Section.ClientOther;
+            global::Sculpt.Core.Diagnostics.Prof.Begin(part);
+            try { ReceiveInner(data, offset, count); }
+            finally
+            {
+                global::Sculpt.Core.Diagnostics.Prof.End(part);
+                global::Sculpt.Core.Diagnostics.Prof.End(global::Sculpt.Core.Diagnostics.Prof.Section.ClientReceive);
+            }
+        }
+
+        private void ReceiveInner(byte[] data, int offset, int count)
+        {
             try
             {
                 var r = new ByteReader(data, offset, count);
@@ -395,6 +413,9 @@ namespace Sculpt.Core.Net
             if (serverTick < _clockHoldUntilServerTick) { Dilation = 0; return; }
 
             int err = lead - Config.TargetLeadTicks;
+            // The report saturates at 127 ticks: then we are at least as far ahead as our own tick is past the server's
+            // (taking the round trip as nothing errs toward behind, which the next report corrects at once).
+            if (lead >= sbyte.MaxValue) err = Math.Max(err, Tick - serverTick - Config.TargetLeadTicks);
             // Late inputs (lead below zero) cost a correction on every snapshot, so jump straight to the target
             // however small the error; slewing at a few percent would take seconds (ISSUE-5).
             if (Math.Abs(err) > Config.ClockSnapTicks || lead < 0)
@@ -405,7 +426,8 @@ namespace Sculpt.Core.Net
                 ClockSnaps++;
                 // The server's window still holds leads from before the snap. Commands sent after it reach the server
                 // about one round trip after serverTick; wait until those fill the whole window.
-                int rtt = Math.Max(0, Tick - serverTick) + Math.Max(0, -err);
+                // (Our tick less the lead we just gave back: far ahead, the old figure held the clock for seconds.)
+                int rtt = Math.Max(0, Tick - serverTick - Math.Max(0, err)) + Math.Max(0, -err);
                 _clockHoldUntilServerTick = serverTick + rtt + Config.LeadWindowTicks + rtt + 4;
                 return;
             }
@@ -444,7 +466,7 @@ namespace Sculpt.Core.Net
                 ApplyLanding(ref s, _histMoved[k], _histMoveTo[k], _histKick[k]);
                 InputCmd hc = _histCmd[k];
                 if (Freeze.Covers(t)) CountdownFreeze.Apply(ref hc, ref s);
-                NetSim.Simulate(Grid, Movement, Config, ref s, hc, Spawn, null, null, null, null, Walls != null ? Charges : null, Match.IsBr);
+                NetSim.Simulate(Grid, Movement, Config, ref s, hc, Spawn, null, null, null, null, Walls != null ? Charges : null);
                 if (_histLock[k] != int.MinValue) HandRules.LockGun(ref s.Hand, _histLock[k]);
                 _histState[k] = s;
             }
@@ -549,7 +571,7 @@ namespace Sculpt.Core.Net
             if (LocalShots.Count > 1024) LocalShots.Clear(); // nobody is draining (tests)
             if (LocalGrenades.Count > 1024) LocalGrenades.Clear();
             int shotsBefore = LocalShots.Count;
-            NetSim.Simulate(Grid, Movement, Config, ref _pred, sim, Spawn, events, LocalShots, LocalGrenades, null, Walls != null ? Charges : null, Match.IsBr);
+            NetSim.Simulate(Grid, Movement, Config, ref _pred, sim, Spawn, events, LocalShots, LocalGrenades, null, Walls != null ? Charges : null);
             for (int k = shotsBefore; k < LocalShots.Count; k++)
             {
                 WeaponShot sh = LocalShots[k];

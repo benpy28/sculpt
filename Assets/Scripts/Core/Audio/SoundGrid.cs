@@ -27,7 +27,14 @@ namespace Sculpt.Core.Audio
         public readonly double CellSize;
         /// <summary>Everything below this height is solid for sound (metres).</summary>
         public readonly double FloorY;
-        private readonly int _floorCell;
+        private int _floorCell;
+        /// <summary>Sub-cell grids that are plain flat ground (solid below one height, air above): no need to rasterise
+        /// them, the floor cell covers them exactly (a 614 m map has millions of ground columns).</summary>
+        private readonly List<SubGrid> _flat = new List<SubGrid>();
+        /// <summary>On flat ground: the chunk columns (cx, cz) that hold props above it (trees, rocks: chunks with their own
+        /// sub-cells above the ground's top), rasterised cell by cell like any other terrain.</summary>
+        private readonly List<(int cx, int cz)> _propColumns = new List<(int cx, int cz)>();
+        private int _flatTopSub;
         private readonly List<BrushWorld> _brushes = new List<BrushWorld>();
         private readonly List<SubGrid> _subs = new List<SubGrid>();
         private readonly Dictionary<long, ushort[]> _chunks = new Dictionary<long, ushort[]>();
@@ -42,12 +49,15 @@ namespace Sculpt.Core.Audio
         /// <summary>Lines set blocked by the last build or rebuild (stats).</summary>
         public long LinesMarked { get; private set; }
 
-        public SoundGrid(ITerrain world, double cellSize = 0.5, double floorY = -3.0)
+        /// <param name="flatGroundAsFloor">Plain flat ground is covered by the floor instead of marked cell by cell (the
+        /// same result, tested; false only to check that).</param>
+        public SoundGrid(ITerrain world, double cellSize = 0.5, double floorY = -3.0, bool flatGroundAsFloor = true)
         {
             CellSize = cellSize;
             FloorY = floorY;
             _floorCell = (int)Math.Floor(floorY / cellSize);
             Supported = Collect(world);
+            if (Supported && flatGroundAsFloor) FindFlatGround();
         }
 
         private bool Collect(ITerrain t)
@@ -139,7 +149,64 @@ namespace Sculpt.Core.Audio
             var all = new CellBox(int.MinValue / 4, _floorCell, int.MinValue / 4, int.MaxValue / 4, int.MaxValue / 4, int.MaxValue / 4);
             foreach (BrushWorld w in _brushes)
                 for (int i = 0; i < w.Count; i++) Rasterize(w[i], all);
-            foreach (SubGrid g in _subs) RasterizeSubs(g, all, null);
+            foreach (SubGrid g in _subs)
+                if (!_flat.Contains(g)) RasterizeSubs(g, all, null);
+                else RasterizeProps(g, all, null);
+        }
+
+        /// <summary>
+        /// Plain flat ground (plain chunks solid below one height and empty above it, its top on this grid's cell lattice;
+        /// chunks with their own sub-cells are props above the top, or solid all through below it):
+        /// marking it cell by cell gives exactly what a floor at its top gives, so it is not marked at all. Only when it
+        /// is the only sub-cell grid, so the floor is right everywhere it matters.
+        /// </summary>
+        private void FindFlatGround()
+        {
+            _flat.Clear();
+            _propColumns.Clear();
+            if (_subs.Count != 1) return;
+            SubGrid g = _subs[0];
+            int n = SubGrid.ChunkSize, top = int.MinValue;
+            var mixed = new List<(int cx, int cy, int cz)>();
+            for (int cy = 0; cy < g.ChunksY; cy++)
+            {
+                // Plain chunks of a layer must all be solid or all be empty; chunks with their own sub-cells (props, and
+                // roots sunk into the ground) are checked below.
+                int layer = -2;
+                for (int cx = 0; cx < g.ChunksX; cx++)
+                    for (int cz = 0; cz < g.ChunksZ; cz++)
+                    {
+                        int sol = g.ChunkSolidity(cx, cy, cz);
+                        if (sol < 0) { mixed.Add((cx, cy, cz)); continue; }
+                        if (layer == -2) layer = sol;
+                        else if (sol != layer) return;
+                    }
+                if (layer == -2) return; // a layer with nothing plain in it: not plain ground
+                bool solid = layer == 1;
+                int y0 = g.MinY + cy * n;
+                if (solid) { if (top != int.MinValue) return; } // solid above air: not plain ground
+                else if (top == int.MinValue) top = y0;
+            }
+            if (top == int.MinValue) top = g.MaxYExclusive;
+            double topY = top * SubGrid.SubSize;
+            double cells = topY / CellSize;
+            if (Math.Abs(cells - Math.Round(cells)) > 1e-9 || topY < FloorY) return;
+            // Mixed chunks below the top must be solid all through (the floor stands for them); above it they are props.
+            var cols = new HashSet<(int, int)>();
+            foreach (var (cx, cy, cz) in mixed)
+            {
+                int y0 = g.MinY + cy * n;
+                if (y0 >= top) { cols.Add((cx, cz)); continue; }
+                for (int y = y0; y < y0 + n; y++)
+                    for (int z = cz * n; z < cz * n + n; z++)
+                        for (int x = cx * n; x < cx * n + n; x++)
+                            if (!g.IsSolid(x, y, z)) return;
+            }
+            _floorCell = (int)Math.Round(cells);
+            _flatTopSub = top;
+            _propColumns.AddRange(cols);
+            _propColumns.Sort();
+            _flat.Add(g);
         }
 
         /// <summary>Works out again every face that a change inside <paramref name="region"/> can touch (a tile broke,
@@ -166,7 +233,29 @@ namespace Sculpt.Core.Audio
                 w.BrushesNear(reach, _near);
                 for (int i = 0; i < _near.Count; i++) Rasterize(w[_near[i]], box);
             }
-            foreach (SubGrid g in _subs) RasterizeSubs(g, box, reach);
+            foreach (SubGrid g in _subs)
+                if (!_flat.Contains(g)) RasterizeSubs(g, box, reach);
+                else RasterizeProps(g, box, reach);
+        }
+
+        /// <summary>Flat ground with props on it: only the columns that hold props, from the ground's top up (below it the
+        /// floor covers everything, roots included: they are solid like the ground round them).</summary>
+        private void RasterizeProps(SubGrid g, CellBox clip, Aabb? reach)
+        {
+            if (_propColumns.Count == 0) return;
+            double s = SubGrid.SubSize, w = SubGrid.ChunkSize * s;
+            foreach (var (cx, cz) in _propColumns)
+            {
+                var col = new Aabb(new Vec3d(cx * w, _flatTopSub * s, cz * w), new Vec3d((cx + 1) * w - 1e-9, g.MaxYExclusive * s, (cz + 1) * w - 1e-9));
+                if (reach.HasValue)
+                {
+                    Aabb r = reach.Value;
+                    if (r.Max.X < col.Min.X || r.Min.X > col.Max.X || r.Max.Z < col.Min.Z || r.Min.Z > col.Max.Z || r.Max.Y < col.Min.Y) continue;
+                    col = new Aabb(new Vec3d(Math.Max(col.Min.X, r.Min.X), Math.Max(col.Min.Y, r.Min.Y), Math.Max(col.Min.Z, r.Min.Z)),
+                                   new Vec3d(Math.Min(col.Max.X, r.Max.X), Math.Min(col.Max.Y, r.Max.Y), Math.Min(col.Max.Z, r.Max.Z)));
+                }
+                RasterizeSubs(g, clip, col);
+            }
         }
 
         private readonly struct CellBox
@@ -268,11 +357,17 @@ namespace Sculpt.Core.Audio
         private void Mark(int x, int y, int z, int bit)
         {
             long k = Key(x >> ChunkBits, y >> ChunkBits, z >> ChunkBits);
-            if (!_chunks.TryGetValue(k, out ushort[] c))
+            ushort[] c;
+            if (k == _lastKey && _last != null) c = _last;
+            else
             {
-                c = new ushort[ChunkSize * ChunkSize * ChunkSize];
-                _chunks[k] = c;
-                if (k == _lastKey) _last = c;
+                if (!_chunks.TryGetValue(k, out c))
+                {
+                    c = new ushort[ChunkSize * ChunkSize * ChunkSize];
+                    _chunks[k] = c;
+                }
+                _lastKey = k; // the same cache Blocked reads (key to chunk, kept in step)
+                _last = c;
             }
             int i = Index(x, y, z);
             if ((c[i] & bit) == 0) LinesMarked++;

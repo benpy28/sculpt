@@ -1,3 +1,4 @@
+using Sculpt.Core.Diagnostics;
 using System;
 using System.Collections.Generic;
 using Sculpt.Core.AntiCheat;
@@ -9,6 +10,12 @@ namespace Sculpt.Core.Net
     {
         public int Id;
         public int ConnectionId;
+        /// <summary>
+        /// Someone looks through this player's eyes (a person: snapshots go to them). Bots and the practice dummy are not
+        /// viewers: interest (what each viewer is sent) is never worked out between two of them, and their hits are not
+        /// checked against it. A replay re-run sets it from the recorded join.
+        /// </summary>
+        public bool Viewer = true;
         public int Team;
         public Vec3d Spawn;
         public double SpawnYaw;
@@ -238,6 +245,7 @@ namespace Sculpt.Core.Net
                 Spawn = spawn,
                 SpawnYaw = spawnYaw,
                 State = MotorState.At(spawn),
+                Viewer = kind == Replay.JoinKind.Human,
             };
             p.LastCmd = new InputCmd { Tick = Tick, Move = new MoveInput { Yaw = InputCmd.QuantizeYaw(spawnYaw) } };
             p.Body = new PlayerBody(p.Id, team, spawn);
@@ -328,8 +336,11 @@ namespace Sculpt.Core.Net
         {
             int newest = cmds[cmds.Count - 1].Tick;
             int lead = newest - Tick;
-            // Too far ahead: a broken or cheating clock. Ignore the whole packet.
-            if (lead > Config.MaxCommandLeadTicks) { Flag(p, FlagKind.ClockAhead, lead); return; }
+            // Too far ahead: a broken or cheating clock. Ignore the whole packet, but tell the client how far ahead it is
+            // (its clock jumps back on the next snapshot). Without the report it never heard a lead at all and stayed
+            // ahead for good, every input ignored: a local server that stalled over a second at start (the client's
+            // clock ran on) left the player that way.
+            if (lead > Config.MaxCommandLeadTicks) { Flag(p, FlagKind.ClockAhead, lead); RecordLead(p, lead); return; }
 
             RecordLead(p, lead);
             if (newest > p.NewestReceived) p.NewestReceived = newest;
@@ -430,9 +441,18 @@ namespace Sculpt.Core.Net
         /// </summary>
         public void Step(List<MoveEvent> events = null)
         {
+            Prof.Begin(Prof.Section.ServerTick);
+            try { StepInner(events); }
+            finally { Prof.End(Prof.Section.ServerTick); }
+        }
+
+        private void StepInner(List<MoveEvent> events)
+        {
             Tick++;
             Stream?.BeginTick(Tick);
+            Prof.Begin(Prof.Section.BrMatch);
             StepMatch();
+            Prof.End(Prof.Section.BrMatch);
             _combat.Clear();
             ItemActions.Clear();
             if (Walls != null)
@@ -456,7 +476,10 @@ namespace Sculpt.Core.Net
                 }
             }
 
+            Prof.Begin(Prof.Section.Bots);
             FeedBots();
+            Prof.End(Prof.Section.Bots);
+            Prof.Begin(Prof.Section.Players);
             foreach (ServerPlayer p in _players)
             {
                 // Slots for ticks in the lead window must be cleared lazily; a slot is valid only if its tick matches.
@@ -520,7 +543,9 @@ namespace Sculpt.Core.Net
                 Before before = TakeBefore(p);
                 // The match countdown: only looking and slot changes (the client's prediction does the same on the same ticks).
                 if (Match.Phase == MatchPhase.Countdown) CountdownFreeze.Apply(ref cmd, ref p.State);
-                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches, Walls != null ? _charge : null, Br != null);
+                Prof.Begin(Prof.Section.Simulate);
+                NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches, Walls != null ? _charge : null);
+                Prof.End(Prof.Section.Simulate);
                 CheckIntegrity(p, before);
                 if (p.State.Grounded && !p.State.Dead) { p.LastGround = p.State.Position; p.HasLastGround = true; }
                 if (p.BrLoadout && !p.State.Dead) { GiveBrLoadout(p); p.BrLoadout = false; }
@@ -544,12 +569,21 @@ namespace Sculpt.Core.Net
                 p.DeadHistory[h] = p.State.Dead;
             }
 
+            Prof.End(Prof.Section.Players);
+            Prof.Begin(Prof.Section.Shots);
             ResolveShots();
             ResolvePunches();
+            Prof.End(Prof.Section.Shots);
+            Prof.Begin(Prof.Section.Grenades);
             ResolveGrenades();
+            Prof.End(Prof.Section.Grenades);
+            Prof.Begin(Prof.Section.Healing);
             StepHealing();
+            Prof.End(Prof.Section.Healing);
             if (Br == null) StepPing(); // no anti-hiding ping in a battle royale (the circle does that job)
+            Prof.Begin(Prof.Section.Interest);
             StepInterest();
+            Prof.End(Prof.Section.Interest);
 
             if (Sculpt != null)
             {
@@ -559,19 +593,27 @@ namespace Sculpt.Core.Net
                 SendWorldDelta();
             }
 
+            Prof.Begin(Prof.Section.Send);
             StepBrEnd();
             SendCombat();
             SendTiles();
             if (Items.Version != _itemsSentVersion) { _itemsSentVersion = Items.Version; SendItems(-1); }
             SendMatch();
+            Prof.End(Prof.Section.Send);
+            Prof.Begin(Prof.Section.Snapshots);
             if (Config.SnapshotEveryTicks <= 1 || Tick % Config.SnapshotEveryTicks == 0)
                 SendSnapshots();
+            Prof.End(Prof.Section.Snapshots);
+            Prof.Begin(Prof.Section.Replay);
             if (Stream != null)
             {
                 Stream.EndTick(this);
                 StepSpectators();
             }
-            BrBetweenTicks(); // bots join and leave between ticks, like people (a re-run adds them back at the same place)
+            Prof.End(Prof.Section.Replay);
+            Prof.Begin(Prof.Section.BrMatch);
+            BrBetweenTicks();
+            Prof.End(Prof.Section.BrMatch); // bots join and leave between ticks, like people (a re-run adds them back at the same place)
         }
 
         // ================================================================ Items
@@ -675,6 +717,8 @@ namespace Sculpt.Core.Net
         /// <summary>Lock end for a windup that keeps the gun away: its completion, plus follow-through for a throw.</summary>
         public static int GunLockUntil(SculptConfig cfg, in SculptCheck c, int startTick) =>
             startTick + c.WindupTicks + (c.Type == SculptActionType.Throw ? cfg.ThrowFollowThroughTicks : 0);
+
+        internal ServerPlayer FindPlayer(int id) => FindById(id);
 
         private ServerPlayer FindById(int id)
         {

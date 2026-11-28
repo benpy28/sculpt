@@ -44,7 +44,7 @@ namespace Sculpt.Game.Net
                 {
                     IPEndPoint from = null;
                     byte[] got = _udp.Receive(ref from);
-                    if (!LanRoom.TryReadAsk(got, got.Length, out string code, out uint nonce) || code != Code) continue;
+                    if (!LanRoom.TryReadAsk(got, got.Length, out string code, out uint nonce) || (code != Code && code != LanRoom.AnyCode)) continue;
                     byte[] answer = LanRoom.Answer(Reply(nonce));
                     _udp.Send(answer, answer.Length, from);
                 }
@@ -62,7 +62,8 @@ namespace Sculpt.Game.Net
                 : GameBootstrap.CurrentMap == GameBootstrap.MapChoice.Breach ? LanRoomMap.Breach : LanRoomMap.Duel;
             int players = 0;
             if (_session.Server != null)
-                foreach (ServerPlayer p in _session.Server.Players) if (!NetServer.IsBotConnection(p.ConnectionId)) players++;
+                lock (_session.ServerLock) // the server thread adds and removes bots between ticks
+                    foreach (ServerPlayer p in _session.Server.Players) if (!NetServer.IsBotConnection(p.ConnectionId)) players++;
             return new LanRoomReply
             {
                 Code = Code, Nonce = nonce, Protocol = Protocol.Version, GamePort = _session.Port, Map = map,

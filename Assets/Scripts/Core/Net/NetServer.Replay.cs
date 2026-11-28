@@ -18,6 +18,21 @@ namespace Sculpt.Core.Net
         /// </summary>
         public int SpectatorDelayTicks = 120 * SimTime.TicksPerSecond;
 
+        /// <summary>
+        /// The smallest live spectator delay a non-<see cref="Dedicated"/> (listen/home) host may use, in ticks. The live
+        /// spectator stream is the full state of every player with no interest masking, so a near-zero delay on a listen
+        /// server would let a friend call out live positions (a ghosting wallhack). A modified build could skip the
+        /// command-line clamp, so the floor is enforced here, where the delay is actually consumed. Default 30 s.
+        /// </summary>
+        public int MinSpectatorDelayTicks = 30 * SimTime.TicksPerSecond;
+
+        /// <summary>A trusted dedicated server (ranked/official) sets its own spectator policy; the floor does not apply.</summary>
+        public bool Dedicated = false;
+
+        /// <summary>The delay actually used for spectators: the host's value, floored on a non-dedicated host.</summary>
+        public int EffectiveSpectatorDelayTicks =>
+            Dedicated ? SpectatorDelayTicks : (SpectatorDelayTicks > MinSpectatorDelayTicks ? SpectatorDelayTicks : MinSpectatorDelayTicks);
+
         private readonly List<Spectator> _spectators = new List<Spectator>();
         private readonly List<CombatEvent> _combatAll = new List<CombatEvent>();
 
@@ -71,7 +86,7 @@ namespace Sculpt.Core.Net
             if (_byConn.ContainsKey(connectionId) || IsSpectator(connectionId)) return;
             if (Stream == null) StartStream();
             _spectators.Add(new Spectator { ConnectionId = connectionId });
-            Send(connectionId, SpectatorWelcome(SpectatorDelayTicks), true);
+            Send(connectionId, SpectatorWelcome(EffectiveSpectatorDelayTicks), true);
         }
 
         public void RemoveSpectator(int connectionId)
@@ -98,7 +113,7 @@ namespace Sculpt.Core.Net
         /// <summary>Everything a spectator joining now needs, as packets (a key frame): who they are, match, sculpted pieces, tiles, items.</summary>
         internal void WriteSpectatorJoin(List<byte[]> into)
         {
-            into.Add(SpectatorWelcome(SpectatorDelayTicks));
+            into.Add(SpectatorWelcome(EffectiveSpectatorDelayTicks));
             into.Add(MatchBytes());
             if (Sculpt != null) into.Add(JoinStateBytes());
             byte[] tiles = TileJoinBytes();
@@ -134,7 +149,7 @@ namespace Sculpt.Core.Net
         private void StepSpectators()
         {
             MatchStream m = Stream;
-            int upTo = Tick - SpectatorDelayTicks;
+            int upTo = Tick - EffectiveSpectatorDelayTicks;
             List<StreamSegment> segs = m.Segments;
             int keepFrom = int.MaxValue;
             foreach (Spectator s in _spectators)

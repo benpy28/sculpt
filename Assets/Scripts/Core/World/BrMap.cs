@@ -59,13 +59,16 @@ namespace Sculpt.Core
     }
 
     /// <summary>
-    /// The battle royale map, first playable (Ben 2026-11-26). A 307 m square. Eight spawn regions round the edge, two per
-    /// side; each is a two-storey building (4 x 9 modules) with four pad rooms along its front, a stairwell hall in the
-    /// middle and very little loot: one chest outside each pad room's doorway. Every pad has the same straight walk out
-    /// of its doorway to its chest, and the same distance to its big POI. The four big POIs sit inward of the corners,
-    /// each shared by the two regions either side of that corner: two three-storey-high halls mirrored across the
-    /// diagonal, chests inside. In the middle a town of eight buildings round a plaza. Hills between, and a rim berm
-    /// with a cliff round the edge so nobody walks off.
+    /// The battle royale map (Ben 2026-11-26; grown 2026-11-27 for 10-15 minute games), a 921.6 m square: 2.25 times
+    /// the area of the 614 m one. Eight spawn regions round the edge, two per side, each beside a corner; each is a
+    /// two-storey building (4 x 9 modules) with four pad rooms along its front, a stairwell hall in the middle and very
+    /// little loot: one chest outside each pad room's doorway. Every pad has the same straight walk out of its doorway to
+    /// its chest, and the same distance to its big POI. The four big POIs sit on the diagonals, each shared by the two
+    /// regions either side of that corner: two halls mirrored across the diagonal, chests inside. In the middle a town of
+    /// sixteen buildings round a plaza. Between them, in every eighth: a farmhouse (two storeys) in the middle ring, an
+    /// outpost (two storeys) and a lodge on the way out to the edge, a barn and a cottage near the edge, hills (one with
+    /// a chest on top), low walls, and the plains (<see cref="BrNature"/>: groves, lone trees, boulders, bushes). A rim
+    /// berm with a cliff round the edge so nobody walks off.
     ///
     /// Fairness by construction: everything is designed once in one eighth of the map (east edge, north half) and
     /// stamped eight times by the eight symmetries of the square (four turns, four mirrors), so every region, pad, chest
@@ -74,20 +77,43 @@ namespace Sculpt.Core
     /// </summary>
     public static class BrMap
     {
-        public const int ChunksAcross = 64;   // 64 x 4.8 m = 307.2 m square
+        // 192 x 4.8 m = 921.6 m square (2026-11-27: Ben wants 10-15 minute games with 32 players; the 614 m map gave a
+        // player about 109 m of map each way, a 11 s sprint, so fights came too fast for a long game. This is 2.25x the
+        // area: about 163 m each, as long a run per player as in the big battle royales, at this game's sprint speed).
+        public const int ChunksAcross = 192;
 
         // Layout in the design eighth, in metres from the map centre: u toward the east edge, v toward the north (0 <= v <= u).
-        public const double RegionFront = 106, RegionMidV = 60;
-        public const double PoiAt = 60.1;           // the shared POI centre sits on the diagonal (u = v)
-        public const double RimStart = 135.6, RimTop = 4.5, CliffStart = 149.1, CliffTop = 9.0;
+        public const double RegionFront = 360, RegionMidV = 210;
+        public const double PoiAt = 210.2;          // the shared POI centre sits on the diagonal (u = v)
+        public const double RimStart = 407.4, RimTop = 4.5, CliffStart = 434.4, CliffTop = 9.0;
 
         public static double Size => ChunksAcross * SubGrid.ChunkSize * SubGrid.SubSize;
 
+        /// <summary>The ground: flat, with the plains on it (trees, boulders, bushes; <see cref="BrNature"/>). Two chunk
+        /// layers of air over it hold the props (canopies up to 9.6 m); plain air chunks cost nothing.</summary>
         public static SubGrid BuildGround()
         {
-            var g = new SubGrid(ChunksAcross, 1, ChunksAcross, -16);
+            var g = new SubGrid(ChunksAcross, 3, ChunksAcross, -16);
             g.FillBaseGround();
+            BrNature.Stamp(g);
             return g;
+        }
+
+        /// <summary>The design eighth on its own (for placing the plains round it): its world, buildings, the spots that
+        /// must stay clear (chests, items, pads, loot spots) and the spawn region's building.</summary>
+        internal static BrushWorld BuildDesignEighth(out GreyboxInfo part, out List<Vec3d> keepClear, out Aabb region)
+        {
+            var src = new BrushWorld();
+            part = new GreyboxInfo();
+            var e = new Eighth();
+            BuildEighth(src, part, Size / 2, e);
+            keepClear = new List<Vec3d>();
+            foreach (BrChestSpot ch in e.Chests) keepClear.Add(ch.Position);
+            foreach (GroundItem g in e.Items) keepClear.Add(g.Position);
+            keepClear.AddRange(e.Pads);
+            keepClear.AddRange(e.Loot);
+            region = e.Region;
+            return src;
         }
 
         public static CompositeTerrain Terrain(SubGrid ground, BrushWorld brushes) => new CompositeTerrain(ground, brushes);
@@ -147,6 +173,7 @@ namespace Sculpt.Core
                     br.Pois.Add(poi);
                 }
                 br.Town.Add(Tr(eighth.Town, m, c));
+                br.Town.Add(Tr(eighth.Town2, m, c));
                 foreach (GroundItem g in eighth.Items)
                 {
                     GroundItem t = g;
@@ -170,14 +197,14 @@ namespace Sculpt.Core
         {
             BrushWorld w = BuildBrushes(out BreachMapInfo info, out _);
             foreach (int d in info.Block.Doors) w.Tiles.Set(d, TileState.DoorOpen, w.Tiles[d].Health, TileCause.Built);
-            return BotNav.Build(Terrain(BuildGround(), w), 0, 0, info.SizeX, info.SizeZ, cell);
+            return BotNav.Build(Terrain(BuildGround(), w), 0, 0, info.SizeX, info.SizeZ, cell, groundTop: 0); // flat base ground at y 0
         }
 
         // ================================================================ The design eighth
 
         private sealed class Eighth
         {
-            public Aabb Region, Poi, Town;
+            public Aabb Region, Poi, Town, Town2;
             public readonly Vec3d[] Pads = new Vec3d[4], Loot = new Vec3d[4], Squad = new Vec3d[4];
             public double PadYaw;
             public Vec3d PoiCentre;
@@ -259,7 +286,7 @@ namespace Sculpt.Core
 
             // ---- Big POI (half of it: its twin across the diagonal comes from the mirror). A 3 x 3 hall, stairwell in
             //      the west column, a first-floor room, chests on both floors. ----
-            var p = new GreyboxBlock.Building(c + 62, c + 39, 3, 3);
+            var p = new GreyboxBlock.Building(c + PoiAt + 1.9, c + PoiAt - 21.1, 3, 3);
             GreyboxBlock.Stairwell(w, info, p, 0, true, +1);
             p.AlongX[0, 0, 1] = WallKind.WideDoor;  // south, toward the edge-middle hill
             p.AlongX[0, 0, 2] = WallKind.Window;
@@ -288,7 +315,7 @@ namespace Sculpt.Core
 
             // ---- The town in the middle: one of eight 2 x 3 buildings round the plaza; the stairwell in the outer lane,
             //      the room column facing the plaza. ----
-            var t = new GreyboxBlock.Building(c + 23, c + 1.5, 2, 3);
+            var t = new GreyboxBlock.Building(c + 30, c + 2, 2, 3);
             GreyboxBlock.Stairwell(w, info, t, 1, true, +1);
             t.AlongZ[0, 0, 1] = WallKind.WideDoor;  // onto the plaza
             t.AlongZ[0, 0, 0] = WallKind.Window;
@@ -308,28 +335,135 @@ namespace Sculpt.Core
             Chest(e, t, 0, 0, 0, Math.PI / 2);
             Chest(e, t, 0, 1, F1, Math.PI / 2);
 
+            // A second, single-storey town block behind it (2 x 2, one open room): the town's outer ring.
+            var t2 = new GreyboxBlock.Building(c + 50, c + 22, 2, 2, 1);
+            t2.AlongZ[0, 0, 0] = WallKind.Door;      // toward the plaza
+            t2.AlongZ[0, 0, 1] = WallKind.Window;
+            t2.AlongX[0, 0, 1] = WallKind.Window;
+            t2.AlongX[0, 2, 0] = WallKind.Door;      // the far side
+            t2.AlongZ[0, 2, 1] = WallKind.ShutDoor;
+            GreyboxBlock.Raise(w, info, t2, "Town");
+            e.Town2 = t2.Bounds;
+            Chest(e, t2, 1, 1, 0, -Math.PI / 2);
+
+            // ---- Outpost: a two-storey 3 x 3 building on the way from the middle to the edge (inside the circle for
+            //      longer than the regions, so a mid-map fight). Stairwell in the west column, rooms upstairs. ----
+            var o = new GreyboxBlock.Building(c + 225, c + 45, 3, 3);
+            GreyboxBlock.Stairwell(w, info, o, 0, true, +1);
+            o.AlongZ[0, 0, 1] = WallKind.WideDoor;  // west, toward the middle
+            o.AlongZ[0, 0, 0] = WallKind.Window;
+            o.AlongX[0, 0, 2] = WallKind.Door;      // south
+            o.AlongZ[0, 3, 1] = WallKind.Door;      // east, toward the edge
+            o.AlongZ[0, 3, 2] = WallKind.Window;
+            o.AlongX[0, 3, 1] = WallKind.ShutDoor;  // north
+            o.AlongZ[0, 2, 0] = WallKind.Wall;      // a ground-floor room in the south-east corner
+            o.AlongX[0, 1, 2] = WallKind.Door;
+            o.AlongZ[1, 1, 0] = WallKind.Wall;      // first floor: the stairwell's side wall, door where the stairs arrive
+            o.AlongZ[1, 1, 1] = WallKind.Wall;
+            o.AlongZ[1, 1, 2] = WallKind.Door;
+            o.AlongX[1, 2, 1] = WallKind.Door;
+            o.AlongX[1, 2, 2] = WallKind.Wall;
+            foreach (int i in new[] { 1, 2 }) o.AlongX[1, 0, i] = WallKind.Window;
+            o.AlongZ[1, 3, 0] = WallKind.Window;
+            o.AlongZ[1, 3, 2] = WallKind.Window;
+            GreyboxBlock.Raise(w, info, o, "Outpost");
+            Chest(e, o, 1, 1, 0, 0);
+            Chest(e, o, 2, 0, 0, Math.PI / 2);
+            Chest(e, o, 2, 2, F1, Math.PI);
+            e.Items.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = new Vec3d(o.Cx(1) + Col + 1.5, 0, o.Cz(2) + Col + 3) });
+
+            // ---- Barn near the edge, between the outpost and the spawn region: one big room, two chests. ----
+            var b = new GreyboxBlock.Building(c + 300, c + 66, 2, 2, 1);
+            b.AlongX[0, 0, 0] = WallKind.WideDoor;  // south
+            b.AlongZ[0, 0, 1] = WallKind.Door;      // west
+            b.AlongZ[0, 2, 0] = WallKind.Window;    // east
+            b.AlongX[0, 2, 1] = WallKind.ShutDoor;  // north
+            GreyboxBlock.Raise(w, info, b, "Barn");
+            Chest(e, b, 0, 1, 0, Math.PI / 2);
+            Chest(e, b, 1, 0, 0, -Math.PI / 2);
+
+            // ---- Farmhouse: a two-storey 3 x 3 building in the ring between the town and the big POIs (the 921 m map:
+            //      something worth walking to in the middle ring). Stairwell in the north column, a room each floor. ----
+            var f = new GreyboxBlock.Building(c + 130, c + 80, 3, 3);
+            GreyboxBlock.Stairwell(w, info, f, 2, true, +1); // the east column, rising north
+            f.AlongZ[0, 0, 1] = WallKind.WideDoor;  // west, toward the town
+            f.AlongZ[0, 0, 0] = WallKind.Window;
+            f.AlongX[0, 0, 1] = WallKind.Door;      // south
+            f.AlongZ[0, 3, 0] = WallKind.ShutDoor;  // east, by the foot of the stairs
+            f.AlongZ[0, 3, 1] = WallKind.Window;
+            f.AlongX[0, 2, 0] = WallKind.Wall;      // a ground-floor room in the north-west corner
+            f.AlongZ[0, 1, 2] = WallKind.Door;
+            f.AlongZ[1, 2, 0] = WallKind.Wall;      // first floor: the stairwell's side wall, door where the stairs arrive
+            f.AlongZ[1, 2, 1] = WallKind.Wall;
+            f.AlongZ[1, 2, 2] = WallKind.Door;
+            f.AlongX[1, 1, 0] = WallKind.Wall;      // a room in the south-west corner
+            f.AlongX[1, 1, 1] = WallKind.Door;
+            foreach (int j in new[] { 0, 1 }) f.AlongZ[1, 0, j] = WallKind.Window;
+            foreach (int i in new[] { 0, 1 }) f.AlongX[1, 0, i] = WallKind.Window;
+            f.AlongX[1, 3, 0] = WallKind.Window;
+            f.AlongZ[1, 3, 2] = WallKind.Window;
+            GreyboxBlock.Raise(w, info, f, "Farmhouse");
+            Chest(e, f, 0, 2, 0, Math.PI / 2);
+            Chest(e, f, 0, 0, F1, Math.PI / 2);
+            e.Items.Add(new GroundItem { Kind = Item.Grenade, Count = 2, Position = new Vec3d(f.Cx(1) + Col + 3, 0, f.Cz(1) + Col + 3) });
+
+            // ---- Lodge: a long single-storey 2 x 3 building near the edge-middle line, on the way from the town out. ----
+            var l = new GreyboxBlock.Building(c + 150, c + 15, 2, 3, 1);
+            l.AlongZ[0, 0, 1] = WallKind.Door;      // west, toward the town
+            l.AlongZ[0, 0, 0] = WallKind.Window;
+            l.AlongZ[0, 2, 1] = WallKind.ShutDoor;  // east
+            l.AlongZ[0, 2, 2] = WallKind.Window;
+            l.AlongX[0, 3, 0] = WallKind.Window;    // north
+            l.AlongX[0, 1, 0] = WallKind.Wall;      // two rooms: a doorway between them
+            l.AlongX[0, 1, 1] = WallKind.Door;
+            GreyboxBlock.Raise(w, info, l, "Lodge");
+            Chest(e, l, 0, 0, 0, Math.PI / 2);
+            Chest(e, l, 1, 2, 0, -Math.PI / 2);
+
+            // ---- Cottage: a small single-storey 2 x 2 house in the field between the barn and the spawn region. ----
+            var ct = new GreyboxBlock.Building(c + 296, c + 118, 2, 2, 1);
+            ct.AlongX[0, 0, 1] = WallKind.Door;     // south
+            ct.AlongZ[0, 0, 0] = WallKind.Window;   // west
+            ct.AlongZ[0, 2, 1] = WallKind.ShutDoor; // east
+            ct.AlongX[0, 2, 0] = WallKind.Window;   // north
+            GreyboxBlock.Raise(w, info, ct, "Cottage");
+            Chest(e, ct, 0, 1, 0, Math.PI);
+
             // ---- Hills (exact wedges, unbreakable ground green). ----
             // Between the two regions on one edge: a 3 m berm across the edge's middle (it is its own mirror image).
-            info.Hills.Add(w.AddRamp(new Vec3d(c + 94, 0, c - 13.5), new Vec3d(c + 128, 3, c - 4.5), Dir.North, BrushKind.Ground));
-            info.Hills.Add(w.AddBox(new Vec3d(c + 94, 0, c - 4.5), new Vec3d(c + 128, 3, c + 4.5), BrushKind.Ground));
-            info.Hills.Add(w.AddRamp(new Vec3d(c + 94, 0, c + 4.5), new Vec3d(c + 128, 3, c + 13.5), Dir.South, BrushKind.Ground));
-            // Between the town and the POIs: a hill up 3 m over 12 m, 6 m flat top, down over 12 m; a chest on top.
-            info.Hills.Add(w.AddRamp(new Vec3d(c + 38, 0, c + 8), new Vec3d(c + 50, 3, c + 26), Dir.East, BrushKind.Ground));
-            info.Hills.Add(w.AddBox(new Vec3d(c + 50, 0, c + 8), new Vec3d(c + 56, 3, c + 26), BrushKind.Ground));
-            info.Hills.Add(w.AddRamp(new Vec3d(c + 56, 0, c + 8), new Vec3d(c + 68, 3, c + 26), Dir.West, BrushKind.Ground));
-            e.Chests.Add(new BrChestSpot { Position = new Vec3d(c + 53, 3, c + 17), Yaw = Math.PI, Region = -1 });
+            info.Hills.Add(w.AddRamp(new Vec3d(c + 285, 0, c - 13.5), new Vec3d(c + 345, 3, c - 4.5), Dir.North, BrushKind.Ground));
+            info.Hills.Add(w.AddBox(new Vec3d(c + 285, 0, c - 4.5), new Vec3d(c + 345, 3, c + 4.5), BrushKind.Ground));
+            info.Hills.Add(w.AddRamp(new Vec3d(c + 285, 0, c + 4.5), new Vec3d(c + 345, 3, c + 13.5), Dir.South, BrushKind.Ground));
+            // Between the town and the farmhouse: a hill up 3 m over 12 m, 6 m flat top, down over 12 m; a chest on top.
+            info.Hills.Add(w.AddRamp(new Vec3d(c + 84, 0, c + 40), new Vec3d(c + 96, 3, c + 58), Dir.East, BrushKind.Ground));
+            info.Hills.Add(w.AddBox(new Vec3d(c + 96, 0, c + 40), new Vec3d(c + 102, 3, c + 58), BrushKind.Ground));
+            info.Hills.Add(w.AddRamp(new Vec3d(c + 102, 0, c + 40), new Vec3d(c + 114, 3, c + 58), Dir.West, BrushKind.Ground));
+            e.Chests.Add(new BrChestSpot { Position = new Vec3d(c + 99, 3, c + 49), Yaw = Math.PI, Region = -1 });
+            // In the corner field between the POI and the spawn region: a taller hill, up 4.5 m over 15 m, 6 m top.
+            info.Hills.Add(w.AddRamp(new Vec3d(c + 274, 0, c + 168), new Vec3d(c + 289, 4.5, c + 190), Dir.East, BrushKind.Ground));
+            info.Hills.Add(w.AddBox(new Vec3d(c + 289, 0, c + 168), new Vec3d(c + 295, 4.5, c + 190), BrushKind.Ground));
+            info.Hills.Add(w.AddRamp(new Vec3d(c + 295, 0, c + 168), new Vec3d(c + 310, 4.5, c + 190), Dir.West, BrushKind.Ground));
+            e.Chests.Add(new BrChestSpot { Position = new Vec3d(c + 292, 4.5, c + 179), Yaw = -Math.PI / 2, Region = -1 });
+            // Between the outpost and the farmhouse: a long low ridge (3 m) running north-south, cover in the open field.
+            info.Hills.Add(w.AddRamp(new Vec3d(c + 180, 0, c + 70), new Vec3d(c + 192, 3, c + 106), Dir.East, BrushKind.Ground));
+            info.Hills.Add(w.AddRamp(new Vec3d(c + 192, 0, c + 70), new Vec3d(c + 204, 3, c + 106), Dir.West, BrushKind.Ground));
             // The rim: a berm up 4.5 m toward the edge, then a 9 m cliff (too tall to climb). Its corner piece is its
             // own diagonal mirror.
             info.Hills.Add(w.AddRamp(new Vec3d(c + RimStart, 0, c), new Vec3d(c + CliffStart, RimTop, c + RimStart), Dir.East, BrushKind.Ground));
             info.Hills.Add(w.AddBox(new Vec3d(c + CliffStart, 0, c), new Vec3d(c * 2, CliffTop, c + RimStart), BrushKind.Ground));
             info.Hills.Add(w.AddBox(new Vec3d(c + RimStart, 0, c + RimStart), new Vec3d(c * 2, CliffTop, c * 2), BrushKind.Ground));
 
-            // ---- Low cover (one tile, vaultable) in the field between the region and the POI. ----
-            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 92, 0, c + 30), 6, false, 1));
-            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 86, 0, c + 66), 4.5, true, 1));
-            // A two-tile wall in the corner field: cover, and it cuts the one sight line from the corner pads straight
-            // across the map to the pads on the far edge (220 m, tested: no pad sees another).
-            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 88, 0, c + 80), 6, false, 2));
+            // ---- Low cover (one tile, vaultable) in the fields. ----
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 276, 0, c + 90), 6, false, 1));
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 258, 0, c + 150), 4.5, true, 1));
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 195, 0, c + 30), 6, false, 1));
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 165, 0, c + 120), 4.5, true, 1));
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 110, 0, c + 20), 4.5, true, 1));
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 70, 0, c + 6), 4.5, false, 1));
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 330, 0, c + 100), 6, true, 1));
+            // A two-tile wall in the corner field: cover, and it cuts the one sight line out of the pad doorways that
+            // nothing else blocks, across the corner to the neighbouring region's pads (tested: no pad sees another).
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 327, 0, c + 233), 6, false, 2));
         }
 
         /// <summary>A chest in the middle of a building cell (i, j) at floor height y.</summary>

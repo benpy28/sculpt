@@ -129,6 +129,23 @@ namespace Sculpt.Core.Net
             }
             p.Watch.PushLook(Tick, cmd.Move.Yaw, cmd.Pitch);
             if (p.Watch.SnapPending) FinishSnap(p);
+            // View lag of real commands, so MedianLag has samples and the ViewLagJump backtracking check (NoteHit) can
+            // run. Only real (not guessed/repeated) commands from real connections: a repeat carries a stale view tick,
+            // and bots don't backtrack. Without this, MedianLag stays int.MinValue and ViewLagJump never fires.
+            if (AC.Checks && p.LastCmdWasReal && !IsBotConnection(p.ConnectionId))
+            {
+                p.Watch.PushLag(Tick - cmd.ViewTick, AC.ViewLagWindow);
+                // The view a real command claims should sit ~InterpDelay behind that client's own acked snapshot. A view
+                // much further behind its own ack is backtracking, whether or not a shot lands this tick (the ack-rewind
+                // clamp may already have stopped the hit). Flag the input itself. Loss-safe: under loss the ack and the
+                // view lag together, so the gap stays small.
+                if (p.AckTick > int.MinValue / 2)
+                {
+                    int behindAck = p.AckTick - cmd.ViewTick;
+                    if (behindAck > (int)System.Math.Ceiling(Config.InterpDelayTicks) + AC.ViewBehindAckTicks)
+                        Flag(p, FlagKind.ViewBehindAck, behindAck);
+                }
+            }
         }
 
         /// <summary>A packet's commands as they arrived: lead, sanitizing, and the view tick against the packet's ack.</summary>
@@ -240,7 +257,9 @@ namespace Sculpt.Core.Net
             }
 
             // Interest: the shooter must have been sent the victim around the view the hit was checked against.
-            if (AC.Interest.Enabled && TryPair(p.Id, victim.Id, out InterestPair pair))
+            // (A bot is sent nothing and sees with its own checks: nothing to compare.)
+            if (!p.Viewer) { }
+            else if (AC.Interest.Enabled && TryPair(p.Id, victim.Id, out InterestPair pair))
             {
                 int sent = pair.A == p.Id ? pair.SentToA : pair.SentToB;
                 double view = Math.Max(Tick - Weapons.MaxRewindTicks, Math.Min(Tick, cmd.ViewTick + cmd.ViewFrac / 256.0));
@@ -333,6 +352,12 @@ namespace Sculpt.Core.Net
             public int LastTest = int.MinValue;
             public int SentToA = int.MinValue;       // last tick B was relevant to A
             public int SentToB = int.MinValue;
+            // Phantom-track: one streak per direction (A aiming at hidden B, and B aiming at hidden A). Streak = ticks the
+            // aim stayed on the hidden enemy's head; Sweep = how far the bearing to them moved across the streak; Bearing
+            // = the previous tick's bearing (NaN when the streak is broken).
+            public int TrackA, TrackB;
+            public double SweepA, SweepB;
+            public double BearingA = double.NaN, BearingB = double.NaN;
         }
 
         private readonly Dictionary<long, InterestPair> _interest = new Dictionary<long, InterestPair>();
@@ -423,6 +448,9 @@ namespace Sculpt.Core.Net
                 for (int j = i + 1; j < n; j++)
                 {
                     ServerPlayer b = _players[j];
+                    // Nobody looks through either's eyes (two bots): nothing to send, nothing to test. With 31 bots and
+                    // one person this leaves 31 pairs of 496.
+                    if (!a.Viewer && !b.Viewer) continue;
                     InterestPair pair = InterestOf(a, b);
                     bool friends = a.Team == b.Team && !Weapons.FriendlyFire;
                     if (friends) { pair.SentToA = pair.SentToB = Tick; continue; }
@@ -439,7 +467,62 @@ namespace Sculpt.Core.Net
                     bool held = pair.LastSeen != int.MinValue && Tick - pair.LastSeen <= ic.HoldTicks;
                     if (toA || held) pair.SentToA = Tick;
                     if (toB || held) pair.SentToB = Tick;
+
+                    // Phantom-track honeypot: now that we know who is withheld from whom this tick, check each direction.
+                    if (AC.PhantomTrack && AC.Checks)
+                    {
+                        // A aiming at B: only interesting when B is withheld from A (A provably wasn't sent B's position).
+                        PhantomStep(a, b, pair.SentToA != Tick, ref pair.TrackA, ref pair.SweepA, ref pair.BearingA);
+                        PhantomStep(b, a, pair.SentToB != Tick, ref pair.TrackB, ref pair.SweepB, ref pair.BearingB);
+                    }
                 }
+            }
+        }
+
+        /// <summary>
+        /// One direction of the phantom-track honeypot: is <paramref name="viewer"/>'s aim locked on hidden
+        /// <paramref name="target"/>'s head while the bearing to it sweeps? Streaks only while the target is withheld;
+        /// any break (lost lock, target seen, either dead, out of range) resets. A sustained streak with enough bearing
+        /// sweep is flagged once (logged only). Reads the simulation, so a replay re-run decides the same.
+        /// </summary>
+        private void PhantomStep(ServerPlayer viewer, ServerPlayer target, bool targetWithheld,
+            ref int streak, ref double sweep, ref double prevBearing)
+        {
+            double yaw = 0, pitch = 0;
+            bool broken = !targetWithheld || viewer.State.Dead || target.State.Dead
+                || !viewer.Watch.TryLook(Tick, out yaw, out pitch);
+            double dist = 0, angle = 0, bearing = 0;
+            if (!broken)
+            {
+                Vec3d eye = viewer.State.Position + new Vec3d(0, PlayerMovement.EyeOf(viewer.State, Movement), 0);
+                double th = PlayerMovement.HeightOf(target.State, Movement);
+                Vec3d head = target.State.Position + new Vec3d(0, th - Weapons.HeadHeight * 0.5, 0);
+                Vec3d to = head - eye;
+                dist = to.Length;
+                if (dist < 1e-3 || dist > AC.PhantomMaxRange) broken = true;
+                else
+                {
+                    Vec3d aim = WeaponRules.AimDir(yaw, pitch, 0, 0); // unit length
+                    double cos = (aim.X * to.X + aim.Y * to.Y + aim.Z * to.Z) / dist;
+                    angle = Math.Acos(Math.Max(-1, Math.Min(1, cos))) * (180.0 / Math.PI);
+                    bearing = Math.Atan2(to.X, to.Z) * (180.0 / Math.PI); // horizontal bearing to the target
+                    if (angle > AC.PhantomAngleDegrees) broken = true;
+                }
+            }
+            if (broken) { streak = 0; sweep = 0; prevBearing = double.NaN; return; }
+
+            if (!double.IsNaN(prevBearing))
+            {
+                double d = Math.Abs(bearing - prevBearing);
+                if (d > 180) d = 360 - d;
+                sweep += d;
+            }
+            prevBearing = bearing;
+            streak++;
+            if (streak >= AC.PhantomWindowTicks && sweep >= AC.PhantomMinBearingSweepDegrees)
+            {
+                Flag(viewer, AntiCheat.FlagKind.PhantomTrack, (int)Math.Round(sweep), target.Id);
+                streak = 0; sweep = 0; prevBearing = double.NaN; // one flag per sustained lock; FlagLog's rate limit also applies
             }
         }
 
@@ -505,18 +588,26 @@ namespace Sculpt.Core.Net
         private bool _sightTried;
 
         /// <summary>
+        /// Builds the sight grid now if it isn't built yet (it is otherwise built on first use). A threaded local server
+        /// calls this before its first tick: on the 921 m battle royale map the build takes seconds, and a server that
+        /// stalls that long mid-run loses the ticks while its client's clock runs on.
+        /// </summary>
+        public void PrepareSight()
+        {
+            if (_sightTried) return;
+            _sightTried = true;
+            var g = new Audio.SoundGrid(Grid);
+            if (g.Supported) { g.Build(); _sight = g; }
+        }
+
+        /// <summary>
         /// The sight tests walk an air grid (the same one sound is routed on: 0.5 m cells read straight from the shapes)
         /// instead of casting rays: about fifty times cheaper, and it only ever errs toward "can see". Built on first use,
         /// and redone where a tile changed this tick.
         /// </summary>
         private void UpdateSightGrid()
         {
-            if (!_sightTried)
-            {
-                _sightTried = true;
-                var g = new Audio.SoundGrid(Grid);
-                if (g.Supported) { g.Build(); _sight = g; }
-            }
+            PrepareSight();
             if (_sight == null || Walls == null) return;
             foreach (TileChange c in Walls.Changes) _sight.Rebuild(Walls.BoundsOf(c.Tile));
         }

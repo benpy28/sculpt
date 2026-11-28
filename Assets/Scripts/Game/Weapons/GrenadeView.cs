@@ -62,6 +62,9 @@ namespace Sculpt.Game.Weapons
             Shader s = Shader.Find("SCULPT/Viewmodel");
             if (s == null) s = Shader.Find("Universal Render Pipeline/Unlit");
             _mat = new Material(s) { name = "Thrown grenades" };
+            // The viewmodel shader squashes depth toward the near plane so the gun never clips into walls. Anything in the
+            // world must keep its real depth, or it draws through walls (it did: chests and guns showed through buildings).
+            _mat.SetFloat("_DepthSquash", 1f);
             _debris = new GameObject("Blast Debris").AddComponent<TileDebris>();
             _debris.transform.SetParent(transform, false);
             for (int i = 0; i < _own.Length; i++) _own[i] = new Own { Kind = ThrowKind.Grenade, View = Take(ThrowKind.Grenade) };

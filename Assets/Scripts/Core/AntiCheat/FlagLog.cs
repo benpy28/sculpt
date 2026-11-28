@@ -14,7 +14,8 @@ namespace Sculpt.Core.AntiCheat
         BadView = 1,            // pitch outside +-89 or a yaw that wasn't wrapped (clamped)
         DevRespawnRefused = 2,  // a respawn press on a server that doesn't allow dev respawns (refused)
         DevWarpRefused = 3,     // a dev warp on a server that doesn't allow it (refused)
-        PickupOffAim = 4,       // a pickup or chest open of something far outside the crosshair's cone (refused)
+        DoorNoSight = 4,        // a door interact for a leaf the eye has no line of sight to (refused)
+        PickupOffAim = 5,       // a pickup or chest open of something far outside the crosshair's cone (refused)
 
         // Network: timing the server can see. Packet loss and ping changes look a bit like these, so they are weak alone.
         ClockAhead = 10,        // commands further ahead than the server accepts (the packet was ignored)
@@ -35,6 +36,7 @@ namespace Sculpt.Core.AntiCheat
         // Aim statistics: legit players do these sometimes; only a pattern over a match means anything.
         AimSnap = 40,           // a fast turn that stopped dead on the tick of a hit
         FastReaction = 41,      // a first shot hitting someone who came into sight under 90 ms before
+        PhantomTrack = 42,      // the aim stayed locked on a hidden enemy's head while the bearing swept (through-wall tracking)
     }
 
     public enum FlagCategory : byte { Input, Network, Integrity, Interest, Aim }
@@ -138,6 +140,7 @@ namespace Sculpt.Core.AntiCheat
             switch (k)
             {
                 case FlagKind.BadView: return $"(pitch {v / 10.0:0.#} deg)";
+                case FlagKind.DoorNoSight: return $"(door tile {v}, no line of sight)";
                 case FlagKind.PickupOffAim: return $"({v / 10.0:0.#} deg off the crosshair)";
                 case FlagKind.ClockAhead: return $"({v} ticks ahead)";
                 case FlagKind.ViewBehindAck: return $"({v} ticks behind its ack)";
@@ -149,6 +152,7 @@ namespace Sculpt.Core.AntiCheat
                 case FlagKind.HitUnseen: return $"(last sent {v} ticks before the view)";
                 case FlagKind.AimSnap: return $"({v / 10.0:0.#} deg in a flick)";
                 case FlagKind.FastReaction: return $"({v} ms after coming into sight)";
+                case FlagKind.PhantomTrack: return $"(locked on a hidden enemy through walls while bearing swept {v} deg)";
                 default: return v != 0 ? $"({v})" : "";
             }
         }

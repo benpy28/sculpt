@@ -26,6 +26,7 @@ namespace Sculpt.Game.UI
         private bool _dragging;
 
         // Text rebuilt only when what it says changes.
+        private readonly System.Collections.Generic.List<MatchScore> _top = new System.Collections.Generic.List<MatchScore>();
         private string _topText = "", _timeText = "", _whoText = "", _hpText = "", _itemText = "", _scoreText = "", _clockText = "", _hint;
         private long _whoKey = -1;
         private int _topKey = -1, _timeKey = -1, _hpKey = -1, _itemKey = -1, _scoreKey = -1, _clockKey = -1;
@@ -138,19 +139,28 @@ namespace Sculpt.Game.UI
 
             // Top centre: match clock and scores.
             MatchState m = net.Match;
-            int secs = m.Phase == MatchPhase.Playing ? Mathf.Max(0, Mathf.CeilToInt((float)((m.PhaseEndTick - net.ServerTimeEstimate) / SimTime.TicksPerSecond))) : -1;
+            int secs = m.IsBr ? m.AlivePlayers : m.Phase == MatchPhase.Playing ? Mathf.Max(0, Mathf.CeilToInt((float)((m.PhaseEndTick - net.ServerTimeEstimate) / SimTime.TicksPerSecond))) : -1;
             int clockKey = (int)m.Phase * 100000 + secs;
             if (clockKey != _clockKey)
             {
                 _clockKey = clockKey;
-                _clockText = m.Phase == MatchPhase.Playing ? $"{secs / 60}:{secs % 60:00}" : m.Phase == MatchPhase.Off ? "Free play" : m.Phase.ToString();
+                _clockText = m.IsBr && m.Phase == MatchPhase.Playing ? $"{secs} alive" // the battle royale has no match clock
+                    : m.Phase == MatchPhase.Playing ? $"{secs / 60}:{secs % 60:00}" : m.Phase == MatchPhase.Off ? "Free play" : m.Phase.ToString();
             }
             int scoreKey = m.Version;
             if (scoreKey != _scoreKey)
             {
                 _scoreKey = scoreKey;
                 var sb = new System.Text.StringBuilder();
-                foreach (MatchScore s in m.Scores) { if (sb.Length > 0) sb.Append("   "); sb.Append('P').Append(s.PlayerId).Append(' ').Append(s.Kills); }
+                if (m.IsBr)
+                {
+                    // 32 players don't fit: the three with the most kills.
+                    _top.Clear();
+                    foreach (MatchScore s in m.Scores) if (s.Kills > 0) _top.Add(s);
+                    _top.Sort((a, b) => b.Kills != a.Kills ? b.Kills.CompareTo(a.Kills) : a.PlayerId.CompareTo(b.PlayerId));
+                    for (int i = 0; i < _top.Count && i < 3; i++) { if (sb.Length > 0) sb.Append("   "); sb.Append('P').Append(_top[i].PlayerId).Append(' ').Append(_top[i].Kills); }
+                }
+                else foreach (MatchScore s in m.Scores) { if (sb.Length > 0) sb.Append("   "); sb.Append('P').Append(s.PlayerId).Append(' ').Append(s.Kills); }
                 _scoreText = sb.ToString();
             }
             HudDraw.Label(HudDraw.ToGui(w / 2 - 160, h - Margin - 40, 110, 40), _clockText, 18, HudDraw.Text, TextAnchor.MiddleLeft, true);

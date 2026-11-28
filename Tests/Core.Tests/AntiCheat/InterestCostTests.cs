@@ -38,7 +38,7 @@ namespace Sculpt.Core.Tests.AntiCheat
             for (int i = 0; i < 32; i++)
             {
                 var spots = info.TeamSpawns[i % 2];
-                s.AddBot(new Runner(i, still), 1 + i % 2, spots[i / 2 % spots.Count] + new Vec3d((i / 2) * 0.9, 0, 0), 0);
+                s.AddBot(new Runner(i, still), 1 + i % 2, spots[i / 2 % spots.Count] + new Vec3d((i / 2) * 0.9, 0, 0), 0).Viewer = true; // 32 people: the worst case
             }
             return s;
         }

@@ -155,8 +155,9 @@ namespace Sculpt.Core.Tests.AntiCheat
             s.MatchConfig.Enabled = true;
             // Seeds 3/5: how much two bots fight in 90 s depends on the seeds. Since the countdown freeze (2026-11-28) the
             // old pair 2/9 wandered apart for most of the match (37 shots); 3/5 fights (114 shots, 45 hits).
-            s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Hard), 3), 1, info.TeamSpawns[0][0], info.SpawnYaw[0]);
-            s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Hard), 5), 2, info.TeamSpawns[1][0], info.SpawnYaw[1]);
+            s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Hard), 3), 1, info.TeamSpawns[0][0], info.SpawnYaw[0]).Viewer = true;
+            s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Hard), 5), 2, info.TeamSpawns[1][0], info.SpawnYaw[1]).Viewer = true;
+            // Viewers stand in for two people, so their hits are checked against what each was being sent.
             for (int t = 0; t < 90 * SimTime.TicksPerSecond; t++) s.Step();
             TestContext.WriteLine(s.Flags.Report());
             foreach (Flag f in s.Flags.Flags) TestContext.WriteLine(f.ToString());
@@ -236,6 +237,7 @@ namespace Sculpt.Core.Tests.AntiCheat
             ServerPlayer a = s.AddBot(new Brain { F = (sv, me) => Cmd(sv) }, 1, info.TeamSpawns[0][0], 0);
             ServerPlayer b = s.AddBot(new Brain { F = (sv, me) => { var c = Cmd(sv); c.Move.FireHeld = shoot; return c; } }, 2, info.TeamSpawns[1][0], 0);
             ServerPlayer mate = s.AddBot(new Brain { F = (sv, me) => Cmd(sv) }, 1, info.TeamSpawns[1][1], 0);
+            a.Viewer = b.Viewer = mate.Viewer = true; // stand-ins for people: interest is worked out for viewers
             for (int i = 0; i < 60; i++) s.Step();
             Assert.That(s.IsSentTo(a.Id, b.Id), Is.False, "standing still behind the divide: not sent");
             Assert.That(s.IsSentTo(b.Id, a.Id), Is.False);
@@ -315,7 +317,9 @@ namespace Sculpt.Core.Tests.AntiCheat
                 var at = new Vec3d(18 + rng.NextDouble() * 60, 0.02, 18 + rng.NextDouble() * 60);
                 if (s.Grid.BoxOverlapsSolid(new Aabb(at - box, at + box + new Vec3d(0, 1.8, 0)))) continue;
                 int i = bots.Count;
-                bots.Add(s.AddBot(new Prowler(i), 1 + i % 2, at, 0));
+                ServerPlayer prowler = s.AddBot(new Prowler(i), 1 + i % 2, at, 0);
+                prowler.Viewer = true; // stand-ins for people: interest is worked out for viewers
+                bots.Add(prowler);
             }
             const int lead = 15;
             var sent = new Dictionary<long, int[]>(); // pair -> ring of ticks it was sent

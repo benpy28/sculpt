@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Battle royale server cost on .NET: 32 bots play a match; time and garbage per server-tick section. dotnet run -c Release, then: seconds mode seed -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <TieredPGO>false</TieredPGO>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(CoreSourceDir)**\*.cs" LinkBase="Core" />
+  </ItemGroup>
+</Project>
