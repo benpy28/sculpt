@@ -435,10 +435,10 @@ namespace Sculpt.Core
             info.Hills.Add(w.AddBox(new Vec3d(c + 285, 0, c - 4.5), new Vec3d(c + 345, 3, c + 4.5), BrushKind.Ground));
             info.Hills.Add(w.AddRamp(new Vec3d(c + 285, 0, c + 4.5), new Vec3d(c + 345, 3, c + 13.5), Dir.South, BrushKind.Ground));
             // Between the town and the farmhouse: a hill up 3 m over 12 m, 6 m flat top, down over 12 m; a chest on top.
-            info.Hills.Add(w.AddRamp(new Vec3d(c + 84, 0, c + 40), new Vec3d(c + 96, 3, c + 58), Dir.East, BrushKind.Ground));
-            info.Hills.Add(w.AddBox(new Vec3d(c + 96, 0, c + 40), new Vec3d(c + 102, 3, c + 58), BrushKind.Ground));
-            info.Hills.Add(w.AddRamp(new Vec3d(c + 102, 0, c + 40), new Vec3d(c + 114, 3, c + 58), Dir.West, BrushKind.Ground));
-            e.Chests.Add(new BrChestSpot { Position = new Vec3d(c + 99, 3, c + 49), Yaw = Math.PI, Region = -1 });
+            info.Hills.Add(w.AddRamp(new Vec3d(c + 100, 0, c + 30), new Vec3d(c + 112, 3, c + 48), Dir.East, BrushKind.Ground));
+            info.Hills.Add(w.AddBox(new Vec3d(c + 112, 0, c + 30), new Vec3d(c + 118, 3, c + 48), BrushKind.Ground));
+            info.Hills.Add(w.AddRamp(new Vec3d(c + 118, 0, c + 30), new Vec3d(c + 130, 3, c + 48), Dir.West, BrushKind.Ground));
+            e.Chests.Add(new BrChestSpot { Position = new Vec3d(c + 115, 3, c + 39), Yaw = Math.PI, Region = -1 });
             // In the corner field between the POI and the spawn region: a taller hill, up 4.5 m over 15 m, 6 m top.
             info.Hills.Add(w.AddRamp(new Vec3d(c + 274, 0, c + 168), new Vec3d(c + 289, 4.5, c + 190), Dir.East, BrushKind.Ground));
             info.Hills.Add(w.AddBox(new Vec3d(c + 289, 0, c + 168), new Vec3d(c + 295, 4.5, c + 190), BrushKind.Ground));
@@ -457,13 +457,223 @@ namespace Sculpt.Core
             info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 276, 0, c + 90), 6, false, 1));
             info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 258, 0, c + 150), 4.5, true, 1));
             info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 195, 0, c + 30), 6, false, 1));
-            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 165, 0, c + 120), 4.5, true, 1));
-            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 110, 0, c + 20), 4.5, true, 1));
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 176, 0, c + 132), 4.5, true, 1));
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 88, 0, c + 28), 4.5, true, 1));
             info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 70, 0, c + 6), 4.5, false, 1));
             info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 330, 0, c + 100), 6, true, 1));
             // A two-tile wall in the corner field: cover, and it cuts the one sight line out of the pad doorways that
             // nothing else blocks, across the corner to the neighbouring region's pads (tested: no pad sees another).
             info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(c + 327, 0, c + 233), 6, false, 2));
+
+            // ---- Villages (Ben 2026-11-28: "way more buildings designed to reward breaking holes in them", the open
+            //      fields between buildings weren't safe to be in): the rest of the eighth is a grid of village blocks
+            //      with narrow streets between them, so cover is never far, and every building is made so a hole pays:
+            //      sealed loot rooms with no door, long sides with no door (a hole is the short way through), party
+            //      walls between row houses (holes make a covered route along the row), compound walls too tall to
+            //      climb with one gate. ----
+            BuildVillages(w, info, e, c);
+        }
+
+        // ================================================================ Villages
+
+        /// <summary>Village blocks: squares this wide, this far apart (the rest is street); then small lots in the gaps.</summary>
+        public const double BlockSize = 30, BlockPitch = 40, LotSize = 14, LotPitch = 19;
+
+        /// <summary>
+        /// Fills the eighth with village blocks on a grid, then small lots (a short row of houses, a shed, low walls) in
+        /// the gaps left between the blocks, the landmarks and the eighth's edges. A block or lot goes wherever its
+        /// square (and a street's width round it) is clear of everything already built (the landmarks, hills, walls,
+        /// other blocks, the spawn region and its pad walks, chests), stays inside the eighth so its twins never touch it,
+        /// and is inside the rim. What it holds comes from a fixed hash of its place on the grid.
+        /// </summary>
+        private static void BuildVillages(BrushWorld w, GreyboxInfo info, Eighth e, double c)
+        {
+            var keep = new List<Vec3d>();
+            foreach (BrChestSpot ch in e.Chests) keep.Add(ch.Position);
+            foreach (GroundItem g in e.Items) keep.Add(g.Position);
+            bool Fits(double x, double z, double size, double street)
+            {
+                double u0 = x - c, v0 = z - c;
+                if (v0 < 2 || v0 + size > u0 - 2) return false;     // inside the eighth, with room: its twins never touch it
+                if (u0 + size > RimStart - 6) return false;         // inside the rim
+                var clear = new Aabb(new Vec3d(x - street, -1, z - street), new Vec3d(x + size + street, 12, z + size + street));
+                if (w.BoxOverlapsSolid(clear)) return false;
+                foreach (Aabb bd in info.Buildings)                  // nor in a building's yard (doors open onto it)
+                    if (bd.Max.X > clear.Min.X && bd.Min.X < clear.Max.X && bd.Max.Z > clear.Min.Z && bd.Min.Z < clear.Max.Z) return false;
+                Aabb r = e.Region;                                  // the spawn region, its pad walks and chests
+                if (x + size > r.Min.X - 26 && x < r.Max.X + 8 && z + size > r.Min.Z - 8 && z < r.Max.Z + 8) return false;
+                foreach (Vec3d k in keep) if (k.X > clear.Min.X && k.X < clear.Max.X && k.Z > clear.Min.Z && k.Z < clear.Max.Z) return false;
+                return true;
+            }
+            uint Hash(int i, int j, uint salt)
+            {
+                uint h = (uint)(i * 73856093) ^ (uint)(j * 19349663) ^ salt * 83492791u;
+                h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+                return h;
+            }
+            for (int i = 0; 12 + i * BlockPitch < RimStart; i++)
+                for (int j = 0; 3 + j * BlockPitch < RimStart; j++)
+                {
+                    double x = c + 12 + i * BlockPitch, z = c + 3 + j * BlockPitch;
+                    if (!Fits(x, z, BlockSize, 4)) continue;
+                    uint h = Hash(i, j, 1);
+                    Block(w, info, e, x, z, (int)(h % 6), (int)(h >> 8));
+                }
+            for (int i = 0; 4 + i * LotPitch < RimStart; i++)
+                for (int j = 0; 2.5 + j * LotPitch < RimStart; j++)
+                {
+                    double x = c + 4 + i * LotPitch, z = c + 2.5 + j * LotPitch;
+                    if (!Fits(x, z, LotSize, 3)) continue;
+                    uint h = Hash(i, j, 2);
+                    Lot(w, info, e, x, z, (int)(h % 5), (int)(h >> 8));
+                }
+        }
+
+        /// <summary>One small lot in a 14 m square at (x, z).</summary>
+        private static void Lot(BrushWorld w, GreyboxInfo info, Eighth e, double x, double z, int kind, int h)
+        {
+            switch (kind)
+            {
+                case 0: Terrace(w, info, e, x + 0.5, z + 3.7, 2, true, h % 2); break;   // two rooms along x
+                case 1: Terrace(w, info, e, x + 3.7, z + 0.5, 2, false, h % 2); break;  // two rooms along z
+                case 2:                                                                   // a shed behind a low wall
+                    Shed(w, info, e, x + 3.7, z + 6.5);
+                    info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x + 2, 0, z + 1.5), 9, true, 1));
+                    break;
+                case 3:                                                                   // an L of two-tile walls
+                    info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x + 2, 0, z + 2), 9, true, 2));
+                    info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x + 2, 0, z + 2.3), 9, false, 2));
+                    break;
+                default: Shed(w, info, e, x + 3.7, z + 3.7); break;                       // a sealed shed
+            }
+        }
+
+        /// <summary>One village block in a 30 m square at (x, z).</summary>
+        private static void Block(BrushWorld w, GreyboxInfo info, Eighth e, double x, double z, int kind, int h)
+        {
+            switch (kind)
+            {
+                case 0: // two rows of houses back to back across a yard, a low wall in the yard
+                    Terrace(w, info, e, x + 2, z + 1, 4, true, h % 4);
+                    Terrace(w, info, e, x + 2, z + 22.4, 4, true, (h / 4 + 2) % 4);
+                    info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x + 9, 0, z + 14.6), 6, true, 1));
+                    break;
+                case 1: // a warehouse
+                    Warehouse(w, info, e, x + 2, z + 5);
+                    break;
+                case 2: // a house, a short row along z, a shed
+                    House(w, info, e, x, z + 5);
+                    Terrace(w, info, e, x + 18, z + 15, 2, false, h % 2);
+                    Shed(w, info, e, x + 18, z + 2);
+                    break;
+                case 3: // a walled compound
+                    Compound(w, info, e, x + 3, z + 3);
+                    break;
+                case 4: // a house and a row of three along z
+                    House(w, info, e, x + 17, z + 5);
+                    Terrace(w, info, e, x + 2, z + 3, 3, false, h % 3);
+                    break;
+                default: // a yard: a shed and low walls to fight from
+                    Shed(w, info, e, x + 11.7, z + 11.7);
+                    info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x + 2, 0, z + 4), 7.5, true, 1));
+                    info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x + 20, 0, z + 26), 7.5, true, 1));
+                    info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x + 4, 0, z + 16), 6, false, 2));
+                    info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x + 25, 0, z + 8), 6, false, 2));
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// A row of one-room houses, one storey, one module deep: each room has its own shut door on the front (or on
+        /// the east side for a row along z) except room <paramref name="sealedRoom"/>, which has no way in at all and two
+        /// chests: break in through the next room's party wall or from outside. The long back has no doors.
+        /// </summary>
+        private static void Terrace(BrushWorld w, GreyboxInfo info, Eighth e, double x, double z, int rooms, bool alongX, int sealedRoom)
+        {
+            var b = alongX ? new GreyboxBlock.Building(x, z, rooms, 1, 1) : new GreyboxBlock.Building(x, z, 1, rooms, 1);
+            for (int k = 0; k < rooms; k++)
+            {
+                if (k > 0)
+                {
+                    if (alongX) b.AlongZ[0, k, 0] = WallKind.Wall; else b.AlongX[0, k, 0] = WallKind.Wall; // party walls
+                }
+                if (k == sealedRoom) continue;
+                if (alongX) b.AlongX[0, 0, k] = WallKind.ShutDoor; else b.AlongZ[0, 1, k] = WallKind.ShutDoor;
+                if (alongX && k % 2 == 0) b.AlongX[0, 1, k] = WallKind.Window; // a few back windows
+            }
+            GreyboxBlock.Raise(w, info, b, "Row houses");
+            int si = alongX ? sealedRoom : 0, sj = alongX ? 0 : sealedRoom;
+            const double Col = GreyboxBlock.Column;
+            e.Chests.Add(new BrChestSpot { Position = new Vec3d(b.Cx(si) + Col + 1.6, 0, b.Cz(sj) + Col + 3), Yaw = Math.PI / 2, Region = -1 });
+            e.Chests.Add(new BrChestSpot { Position = new Vec3d(b.Cx(si) + Col + 4.4, 0, b.Cz(sj) + Col + 3), Yaw = -Math.PI / 2, Region = -1 });
+        }
+
+        /// <summary>
+        /// A one-storey warehouse, 4 x 3 modules: a wide door and a shut door at its ends only (the long sides have only
+        /// two windows: a hole is the short way through). The back row is four storerooms; only the first opens onto
+        /// the hall, the other three are sealed with a chest each.
+        /// </summary>
+        private static void Warehouse(BrushWorld w, GreyboxInfo info, Eighth e, double x, double z)
+        {
+            var b = new GreyboxBlock.Building(x, z, 4, 3, 1);
+            b.AlongZ[0, 0, 0] = WallKind.WideDoor;  // west end
+            b.AlongZ[0, 4, 1] = WallKind.ShutDoor;  // east end
+            for (int i = 0; i < 4; i++) b.AlongX[0, 2, i] = i == 0 ? WallKind.Door : WallKind.Wall; // the storerooms' front
+            for (int i = 1; i < 4; i++) b.AlongZ[0, i, 2] = WallKind.Wall;                           // between storerooms
+            b.AlongX[0, 0, 1] = WallKind.Window;    // two windows on the south side
+            b.AlongX[0, 0, 2] = WallKind.Window;
+            GreyboxBlock.Raise(w, info, b, "Warehouse");
+            Chest(e, b, 2, 0, 0, 0);                // in the hall
+            for (int i = 1; i < 4; i++) Chest(e, b, i, 2, 0, Math.PI);
+        }
+
+        /// <summary>A two-storey house, 2 x 3 modules: stairs in the east lane, a room on each floor, a chest on each.</summary>
+        private static void House(BrushWorld w, GreyboxInfo info, Eighth e, double x, double z)
+        {
+            var t = new GreyboxBlock.Building(x, z, 2, 3);
+            GreyboxBlock.Stairwell(w, info, t, 1, true, +1);
+            t.AlongZ[0, 0, 1] = WallKind.ShutDoor;  // west door
+            t.AlongZ[0, 0, 2] = WallKind.Window;
+            t.AlongX[0, 3, 0] = WallKind.Window;    // north
+            t.AlongZ[0, 1, 0] = WallKind.Wall;      // room column | stair lane, open in the middle
+            t.AlongZ[0, 1, 2] = WallKind.Wall;
+            t.AlongZ[1, 1, 0] = WallKind.Wall;
+            t.AlongZ[1, 1, 1] = WallKind.Wall;
+            t.AlongZ[1, 1, 2] = WallKind.Door;      // where the stairs arrive
+            t.AlongZ[1, 0, 0] = WallKind.Window;
+            t.AlongZ[1, 0, 2] = WallKind.Window;
+            t.AlongX[1, 0, 0] = WallKind.Window;
+            GreyboxBlock.Raise(w, info, t, "House");
+            Chest(e, t, 0, 2, 0, Math.PI / 2);
+            Chest(e, t, 0, 0, GreyboxBlock.StoreyHeight, Math.PI / 2);
+        }
+
+        /// <summary>A sealed one-module shed: no door, no window, a chest inside. Pure breach loot.</summary>
+        private static void Shed(BrushWorld w, GreyboxInfo info, Eighth e, double x, double z)
+        {
+            var b = new GreyboxBlock.Building(x, z, 1, 1, 1);
+            GreyboxBlock.Raise(w, info, b, "Shed");
+            Chest(e, b, 0, 0, 0, 0);
+        }
+
+        /// <summary>
+        /// A walled yard, 22.5 m square: walls three tiles (4.5 m) tall, too tall to climb, one 3 m gate on the south
+        /// side; a one-room hut inside with a chest, another chest in the yard. Break the wall to get in anywhere else.
+        /// </summary>
+        private static void Compound(BrushWorld w, GreyboxInfo info, Eighth e, double x, double z)
+        {
+            const double size = 22.5, gate = 3.0, th = 0.3;
+            double half = (size - gate) / 2;
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x, 0, z), half, true, 3));                          // south, west of the gate
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x + half + gate, 0, z), half, true, 3));             // south, east of the gate
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x, 0, z + size - th), size, true, 3));               // north
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x, 0, z + th), size - 2 * th, false, 3));            // west
+            info.Tiles.AddRange(GreyboxBlock.StripWall(w.Tiles, new Vec3d(x + size - th, 0, z + th), size - 2 * th, false, 3)); // east
+            var hut = new GreyboxBlock.Building(x + 12, z + 12, 1, 1, 1);
+            hut.AlongX[0, 0, 0] = WallKind.ShutDoor;
+            GreyboxBlock.Raise(w, info, hut, "Compound");
+            Chest(e, hut, 0, 0, 0, 0);
+            e.Chests.Add(new BrChestSpot { Position = new Vec3d(x + 5, 0, z + 6), Yaw = 0, Region = -1 });
         }
 
         /// <summary>A chest in the middle of a building cell (i, j) at floor height y.</summary>

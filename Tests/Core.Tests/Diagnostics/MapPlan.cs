@@ -13,7 +13,7 @@ namespace Sculpt.Core.Tests
     /// </summary>
     public class MapPlan
     {
-        private const double Px = 0.15; // metres per pixel
+        private static double Px = 0.15; // metres per pixel
 
         [Test]
         public void WritePlans()
@@ -23,12 +23,17 @@ namespace Sculpt.Core.Tests
             Directory.CreateDirectory(dir);
             BrushWorld w = DuelMap.BuildBrushes(out BreachMapInfo info);
             File.WriteAllBytes(Path.Combine(dir, "duel_plan.png"), Render(w, info));
+            // The battle royale map: ground floor only, coarser (it is 921 m across).
+            BrushWorld br = BrMap.BuildBrushes(out BreachMapInfo brInfo, out _);
+            Px = 0.6;
+            try { File.WriteAllBytes(Path.Combine(dir, "br_plan.png"), Render(br, brInfo, 1)); }
+            finally { Px = 0.15; }
         }
 
-        public static byte[] Render(BrushWorld w, BreachMapInfo info)
+        public static byte[] Render(BrushWorld w, BreachMapInfo info, int levels = 3)
         {
             int n = (int)Math.Ceiling(info.SizeX / Px), m = (int)Math.Ceiling(info.SizeZ / Px);
-            const int levels = 3, gap = 12;
+            const int gap = 12;
             int width = levels * n + (levels - 1) * gap;
             var img = new byte[width * m * 3];
             for (int i = 0; i < img.Length; i++) img[i] = 30;

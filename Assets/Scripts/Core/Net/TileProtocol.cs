@@ -17,11 +17,11 @@ namespace Sculpt.Core.Net
     /// Wire format of <see cref="TilesMsg"/>: per change the tile id, new state, health, cause and who caused it
     /// (8 bytes), plus for a wall or floor tile its cells (flag 0x80 on the state byte): open, patched and reinforced masks (24 bytes) and one health byte per standing cell. The From
     /// state is not sent: the client reads it from its own copy when it applies the change.
-    /// Then the heal events: type and kind, player, tile, aimed cell, ticks to the heal's end, result (9 bytes each).
+    /// Then the heal events: type and kind, player, tile, aimed cell, ticks to the heal's end, result (10 bytes each; tile ids are 24-bit since protocol 39).
     /// </summary>
     public static class TileProtocol
     {
-        public const int MaxChanges = ushort.MaxValue;
+        public const int MaxChanges = ByteWriter.MaxU24;
 
         public static void Write(ByteWriter w, in TilesMsg m)
         {
@@ -30,11 +30,11 @@ namespace Sculpt.Core.Net
             w.U8((byte)MsgType.Tiles);
             w.I32(m.Tick);
             w.Bool(m.Join);
-            w.U16((ushort)n);
+            w.U24(n);
             for (int i = 0; i < n; i++)
             {
                 TileChange c = m.Changes[i];
-                w.U16((ushort)c.Tile);
+                w.U24(c.Tile);
                 w.U8((byte)((byte)c.To | (c.Hp != null ? 0x80 : 0)));
                 w.U16((ushort)System.Math.Max(0, System.Math.Min(ushort.MaxValue, c.Health)));
                 w.U8((byte)c.Cause);
@@ -51,13 +51,13 @@ namespace Sculpt.Core.Net
             }
             int hn = m.Heals?.Count ?? 0;
             if (hn > MaxChanges) throw new System.ArgumentException("Too many heal events.");
-            w.U16((ushort)hn);
+            w.U24(hn);
             for (int i = 0; i < hn; i++)
             {
                 HealEvent e = m.Heals[i];
                 w.U8((byte)((byte)e.Type | ((byte)e.Kind << 4)));
                 w.U16((ushort)e.Player);
-                w.U16((ushort)e.Tile);
+                w.U24(e.Tile);
                 w.U8((byte)System.Math.Max(0, System.Math.Min(63, e.Cell)));
                 w.U16((ushort)System.Math.Max(0, System.Math.Min(ushort.MaxValue, e.EndTick - m.Tick)));
                 w.U8((byte)e.Result);
@@ -70,10 +70,10 @@ namespace Sculpt.Core.Net
             into.Clear();
             heals.Clear();
             var m = new TilesMsg { Tick = r.I32(), Join = r.Bool(), Changes = into, Heals = heals };
-            int n = r.U16();
+            int n = r.U24();
             for (int i = 0; i < n; i++)
             {
-                var c = new TileChange { Tick = m.Tick, Tile = r.U16() };
+                var c = new TileChange { Tick = m.Tick, Tile = r.U24() };
                 byte s = r.U8();
                 bool holed = (s & 0x80) != 0;
                 s &= 0x7F;
@@ -97,14 +97,14 @@ namespace Sculpt.Core.Net
                 }
                 into.Add(c);
             }
-            int hn = r.U16();
+            int hn = r.U24();
             for (int i = 0; i < hn; i++)
             {
                 byte tk = r.U8();
                 var e = new HealEvent { Type = (HealEventType)(tk & 15), Kind = (HealKind)(tk >> 4), Tick = m.Tick };
                 if (e.Type > HealEventType.Rejected || e.Kind > HealKind.Reinforce) throw new NetFormatException("Bad heal event.");
                 e.Player = r.U16();
-                e.Tile = r.U16();
+                e.Tile = r.U24();
                 e.Cell = r.U8();
                 if (e.Cell > 63) throw new NetFormatException("Bad heal cell.");
                 e.EndTick = m.Tick + r.U16();

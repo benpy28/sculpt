@@ -23,8 +23,14 @@ namespace Sculpt.Core.Tests
                 int a = n.Nearest(at);
                 Assert.That(a, Is.GreaterThanOrEqualTo(0), $"no walking spot at {at}");
                 Assert.That(n.Feet(a).Y, Is.EqualTo(4.8).Within(0.7), $"{at} is upstairs");
-                int b = n.Nearest(new Vec3d(at.X > 460 ? at.X + 40 : at.X - 40, 0, at.Z), 8);
-                Assert.That(n.FindPath(a, b, path), Is.True, $"no way down from {at}");
+                // Somewhere on the ground 40 m off (not every spot is reachable: sealed rooms are only for breakers).
+                bool found = false;
+                foreach (var off in new[] { new Vec3d(40, 0, 0), new Vec3d(-40, 0, 0), new Vec3d(0, 0, 40), new Vec3d(0, 0, -40) })
+                {
+                    int b = n.Nearest(new Vec3d(at.X + off.X, 0, at.Z + off.Z), 8);
+                    if (b >= 0 && n.Feet(b).Y < 0.5 && n.FindPath(a, b, path)) { found = true; break; }
+                }
+                Assert.That(found, Is.True, $"no way down from {at}");
                 bool down = false;
                 for (int i = 1; i < path.Count; i++)
                 {

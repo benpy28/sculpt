@@ -189,6 +189,7 @@ namespace Sculpt.Game.Bootstrap
                 spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
                 yaw = new double[] { brInfo.Regions[0].PadYaw[0], brInfo.Regions[0].PadYaw[0] };
                 _brNav ??= System.Threading.Tasks.Task.Run(() => BrMap.BuildNav(1.0));
+                Sculpt.Game.UI.BrHud.SetBuildings(breachInfo.Block.Buildings); // the minimap
             }
             else if (NextMap == MapChoice.Duel)
             {

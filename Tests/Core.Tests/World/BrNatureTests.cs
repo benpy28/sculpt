@@ -28,8 +28,8 @@ namespace Sculpt.Core.Tests
             foreach (BrNature.Prop p in plan.Props)
                 if (p.Kind == "tree") trees++; else if (p.Kind == "rocks") rocks++; else bushes++;
             TestContext.WriteLine($"per eighth: {trees} trees, {rocks} boulder groups, {bushes} bushes, {plan.Cells.Count} sub-cells; grid chunks with props {_g.AllocatedChunks}");
-            Assert.That(trees, Is.InRange(30, 80));
-            Assert.That(rocks, Is.InRange(8, 30));
+            Assert.That(trees, Is.InRange(20, 80)); // fewer since the villages (2026-11-28) took most of the open fields
+            Assert.That(rocks, Is.InRange(5, 30));
             Assert.That(bushes, Is.InRange(15, 60));
         }
 

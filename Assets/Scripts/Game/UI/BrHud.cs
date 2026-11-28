@@ -226,6 +226,10 @@ namespace Sculpt.Game.UI
 
         private static List<Aabb> _buildings;
 
+        /// <summary>The map's building footprints from the map the game already built (building the 921 m map again for
+        /// the minimap took seconds on the first frame it was drawn).</summary>
+        public static void SetBuildings(IEnumerable<Aabb> buildings) => _buildings = new List<Aabb>(buildings);
+
         /// <summary>The map's building footprints (built once from the same code the world uses).</summary>
         private static List<Aabb> BuildingsOnMap()
         {
