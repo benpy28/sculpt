@@ -25,6 +25,9 @@ namespace Sculpt.Game.UI
         private long _endKey = long.MinValue;
         private int _nextSecs = -1;
         private string _endLine = "", _nextText = "";
+        // The match length comes from the server (MatchState.PlayTicks); its rules line is rebuilt only when it changes.
+        private int _rulesTicks = -1;
+        private string _rulesText = "";
 
         public void Init(LocalPlayer player, NetSession session)
         {
@@ -90,7 +93,8 @@ namespace Sculpt.Game.UI
                 finally { GL.PopMatrix(); }
             }
             Rect panel = HudDraw.ToGui(px, py, pw, ph);
-            int secs = m.Phase == MatchPhase.Playing ? SecondsLeft(m) : m.Phase == MatchPhase.Countdown ? 5 * 60 : 0;
+            int playSecs = Mathf.CeilToInt((float)m.PlayTicks / SimTime.TicksPerSecond);
+            int secs = m.Phase == MatchPhase.Playing ? SecondsLeft(m) : m.Phase == MatchPhase.Countdown ? playSecs : 0;
             if (secs != _timeSecs) { _timeSecs = secs; _timeText = $"{secs / 60}:{secs % 60:00}"; }
             if (me.Kills != _youKills) { _youKills = me.Kills; _youText = $"YOU  {me.Kills}"; }
             if (hasThem && them.Kills != _themKills) { _themKills = them.Kills; _themText = $"{them.Kills}  THEM"; }
@@ -117,7 +121,14 @@ namespace Sculpt.Game.UI
                 {
                     int c = Mathf.Max(1, SecondsLeft(m));
                     HudDraw.Label(new Rect(mid.x, mid.y, mid.width, mid.height), HudDraw.Num(c), Mathf.RoundToInt(96 * s), HudDraw.Text, TextAnchor.MiddleCenter, true);
-                    HudDraw.Label(new Rect(mid.x, mid.yMax, mid.width, 34 * s), "Most kills in 5 minutes wins", Mathf.RoundToInt(20 * s), HudDraw.Dim, TextAnchor.MiddleCenter);
+                    if (m.PlayTicks != _rulesTicks)
+                    {
+                        _rulesTicks = m.PlayTicks;
+                        _rulesText = playSecs % 60 == 0
+                            ? $"Most kills in {playSecs / 60} minute{(playSecs == 60 ? "" : "s")} wins"
+                            : $"Most kills in {playSecs / 60}:{playSecs % 60:00} wins";
+                    }
+                    HudDraw.Label(new Rect(mid.x, mid.yMax, mid.width, 34 * s), _rulesText, Mathf.RoundToInt(20 * s), HudDraw.Dim, TextAnchor.MiddleCenter);
                     break;
                 }
                 case MatchPhase.Playing:

@@ -86,6 +86,9 @@ namespace Sculpt.Core.Net
         public int PhaseEndTick;
         /// <summary>Server tick the current phase began (Countdown starts are when the map was reset).</summary>
         public int PhaseStartTick;
+        /// <summary>How long Playing lasts (ticks), the server's <see cref="MatchConfig.DurationTicks"/>: the HUD shows it
+        /// during the countdown and in "most kills in N minutes".</summary>
+        public int PlayTicks = new MatchConfig().DurationTicks;
         /// <summary>Bumped on every change, so views can tell something happened.</summary>
         public int Version;
         public readonly List<MatchScore> Scores = new List<MatchScore>();
@@ -126,6 +129,7 @@ namespace Sculpt.Core.Net
             Phase = o.Phase;
             PhaseEndTick = o.PhaseEndTick;
             PhaseStartTick = o.PhaseStartTick;
+            PlayTicks = o.PlayTicks;
             Version++;
             Scores.Clear();
             Scores.AddRange(o.Scores);
@@ -157,6 +161,7 @@ namespace Sculpt.Core.Net
             w.U8((byte)m.Phase);
             w.I32(m.PhaseStartTick);
             w.I32(m.PhaseEndTick);
+            w.I32(System.Math.Max(0, m.PlayTicks));
             w.U8((byte)n);
             for (int i = 0; i < n; i++)
             {
@@ -192,6 +197,9 @@ namespace Sculpt.Core.Net
             into.Phase = (MatchPhase)phase;
             into.PhaseStartTick = r.I32();
             into.PhaseEndTick = r.I32();
+            int play = r.I32();
+            if (play < 0) throw new NetFormatException("Bad match length.");
+            into.PlayTicks = play;
             int n = r.U8();
             if (n > MaxScores) throw new NetFormatException("Too many scores.");
             into.Scores.Clear();

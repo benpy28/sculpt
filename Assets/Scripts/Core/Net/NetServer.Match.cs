@@ -137,6 +137,7 @@ namespace Sculpt.Core.Net
         private void FillScores()
         {
             Match.Scores.Clear();
+            Match.PlayTicks = MatchConfig.DurationTicks;
             foreach (ServerPlayer p in _players)
                 if (CountsForMatch(p))
                     Match.Scores.Add(new MatchScore { PlayerId = p.Id, Team = p.Team, Kills = p.MatchKills, Deaths = p.MatchDeaths, Place = Br != null && _brIn.Contains(p.Id) ? PlaceOf(p.Team) : 0 });
