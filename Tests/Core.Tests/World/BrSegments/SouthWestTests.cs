@@ -77,7 +77,7 @@ namespace Sculpt.Core.Tests
             BrBuild b = BrMap.Template.Segments[0];
             foreach (BrBuilding bd in b.Buildings) top = Math.Max(top, bd.Bounds.Max.Y);
             TestContext.WriteLine($"tallest: {top:0.0} m");
-            Assert.That(top, Is.GreaterThan(55), "the boiler stack is the landmark");
+            Assert.That(top, Is.GreaterThan(45), "the boiler stack is the factory's landmark (ten storeys: only the Old Spire has twelve)");
             Assert.That(top, Is.LessThan(85));
         }
     }

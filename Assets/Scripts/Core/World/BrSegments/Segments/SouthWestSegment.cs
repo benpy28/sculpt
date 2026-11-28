@@ -284,8 +284,9 @@ namespace Sculpt.Core
             b.Chest(bh, 1, 1, 0, 0);
             b.Chest(bh, 0, 2, 0, Math.PI / 2);
             double stackX = bh.Cx(3) + C + 1.5;
-            var st = BrKit.TowerPlan(b, stackX, y, 258, 2, 3, 12);
-            for (int s = 1; s < 12; s++)
+            // Ten storeys: only the Old City's spire has twelve (Ben: the landmark is the tallest).
+            var st = BrKit.TowerPlan(b, stackX, y, 258, 2, 3, 10);
+            for (int s = 1; s < 10; s++)
             {
                 st.AlongX[s, 0, 1] = s % 3 == 0 ? WallKind.Window : WallKind.Wall;
                 for (int j = 0; j < 3; j++) st.AlongZ[s, 2, j] = s % 4 == 2 && j == 1 ? WallKind.Window : WallKind.Wall;
@@ -302,9 +303,9 @@ namespace Sculpt.Core
             FactoryKit.Deck(b, bh.Cx(3) + C, dz0, stackX, dz1, bh.Top);
             b.Chest(st, 1, 2, 5, Math.PI);
             b.Chest(st, 1, 0, 7, 0);
-            b.Chest(st, 1, 0, 9, 0);
-            b.Chest(st, 1, 2, 12, Math.PI);
-            HighSpots.Add(("boiler stack roof", Cell(st, 1, 1, 12)));
+            b.Chest(st, 1, 0, 9, 0); // the top floor
+            b.Chest(st, 1, 2, st.Storeys, Math.PI); // on the roof
+            HighSpots.Add(("boiler stack roof", Cell(st, 1, 1, st.Storeys)));
             HighSpots.Add(("boiler house roof", Cell(bh, 1, 1, 2)));
 
             // ---- The water tower in the works yard: the tank room 35 m up.
