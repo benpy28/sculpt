@@ -162,9 +162,10 @@ namespace Sculpt.Core
                 double s = h.Point.Y - 0.05;
                 // Down through the solid to the air under it, as far as the bottom (a tree's canopy can be over 4 m
                 // thick, with ground to walk on under it).
-                int k = 0;
-                while (k < 120 && s > bottom && t.BoxOverlapsSolid(new Aabb(new Vec3d(x - 0.01, s - 0.01, z - 0.01), new Vec3d(x + 0.01, s + 0.01, z + 0.01)))) { s -= 0.1; k++; }
-                if (k >= 120 || s <= bottom) return; // solid all the way down: the ground
+                // (No cap but the bottom: a column inside a tall wall, e.g. a solid three-storey wall over a door, used to
+                // give up after 12 m and lose the floor under it.)
+                while (s > bottom && t.BoxOverlapsSolid(new Aabb(new Vec3d(x - 0.01, s - 0.01, z - 0.01), new Vec3d(x + 0.01, s + 0.01, z + 0.01)))) s -= 0.1;
+                if (s <= bottom) return; // solid all the way down: the ground
                 y = s;
             }
         }

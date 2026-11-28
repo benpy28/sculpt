@@ -62,5 +62,22 @@ namespace Sculpt.Core.Tests
             foreach (BotNav.Node node in n.Nodes) levels.Add(Math.Round(node.Y, 2));
             Assert.That(levels.Count, Is.EqualTo(slabs + 1), "the ground and every slab");
         }
+
+        [Test]
+        public void AFloorUnderATallSolidWall_IsFound()
+        {
+            // A doorway 3 m high under 18 m of solid wall: the column through the wall still finds the floor under it.
+            var w = new BrushWorld();
+            w.AddBox(new Vec3d(-5, -1, -5), new Vec3d(5, 0, 5), BrushKind.Ground);
+            w.AddBox(new Vec3d(-5, 3, -0.3), new Vec3d(5, 21, 0.3), BrushKind.Wall);
+            BotNav n = BotNav.Build(w, -2, -2, 4, 4, 0.5, topY: 25, floorY: -2);
+            bool underWall = false;
+            for (int k = 0; k < n.Nodes.Count; k++)
+            {
+                Vec3d f = n.Feet(k);
+                if (Math.Abs(f.Z) < 0.3 && Math.Abs(f.Y) < 0.01) underWall = true;
+            }
+            Assert.That(underWall, Is.True, "a walking spot in the doorway under the wall");
+        }
     }
 }
