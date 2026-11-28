@@ -38,14 +38,14 @@ namespace Sculpt.Core.Net
         /// was down to about 10 alive 10 seconds in, bots on neighbouring pads shooting each other on sight). It still
         /// fights back when hurt, and fights anyone who comes within <see cref="BrCalmCloseMetres"/>.
         /// </summary>
-        public double BrCalmSeconds = 45;
+        public double BrCalmSeconds = 60;
         public double BrCalmCloseMetres = 3;
         /// <summary>Battle royale after the opening: the farthest enemy it starts a fight with (unless hurt).</summary>
-        public double BrEngageMetres = 35;
+        public double BrEngageMetres = 28;
         /// <summary>The farthest it can make anyone out.</summary>
         public double SightMetres = 160;
-        /// <summary>Battle royale: how long it holds a spot it roamed to before moving on (seconds, random in between).</summary>
-        public double BrHoldMin = 6, BrHoldMax = 20;
+        /// <summary>Battle royale: how long it holds a spot it roamed to before moving on (seconds, random in between; careful bots up to 1.4x, pushy ones down to 0.6x).</summary>
+        public double BrHoldMin = 8, BrHoldMax = 28;
         /// <summary>Battle royale temperament spread: each bot gets an aggression between these (0 careful, 1 pushy).</summary>
         public double BrAggroMin = 0.1, BrAggroMax = 0.95;
         /// <summary>Battle royale: gunfire this far away tells it there is a fight (third-partying, an enemy's health guess).</summary>
@@ -59,7 +59,7 @@ namespace Sculpt.Core.Net
         /// <summary>Battle royale: chance to go after a fight it hears (careful .. pushy), and how long it keeps at it.</summary>
         public double BrThirdPartyMin = 0.1, BrThirdPartyMax = 0.65, BrThirdPartySeconds = 30;
         /// <summary>Battle royale: after the calm opening, the fights it starts grow from half range to full over this long.</summary>
-        public double BrSettleSeconds = 90;
+        public double BrSettleSeconds = 180;
 
         public static DuelBotConfig For(BotLevel level)
         {
@@ -169,7 +169,9 @@ namespace Sculpt.Core.Net
         /// <summary>Why the last route ask got nothing: 0 none, 1 waited for the shared budget, 2 search failed, 3 no spot near the goal.</summary>
         public int PathNote { get; private set; }
         public double WishLength { get; private set; }
-        public int PathFails, PathAsks;
+        public int PathFails, PathAsks, PathNoSpot;
+        public int PathAt => _pathAt;
+        public Vec3d GoalPos { get; private set; }
 
         public DuelBot(BotNav nav, DuelBotConfig config = null, int seed = 1)
         {
@@ -252,9 +254,30 @@ namespace Sculpt.Core.Net
                 bool hurtLately = tick - _hurtTick <= 4 * SimTime.TicksPerSecond;
                 bool fighting = _engaged && tick - _lastSeenTick < 30 * SimTime.Per60;
                 double seenAt = p.Seen ? (p.Pos - s.Position).Length : 0;
-                if (p.Seen && !fighting && !hurtLately && !TakeFight(server, me, s, seenAt, p.Id, tick)) p.Seen = false;
+                if (p.Seen && !fighting && !hurtLately && !TakeFight(server, me, s, seenAt, p.Id, tick))
+                {
+                    // Placement play: someone it won't take on. Most players get out of their sight and move on the other
+                    // way rather than walk on into them (careful bots nearly always, pushy ones seldom). With every bot
+                    // ignoring each other and carrying on, they met at point blank and the lobby was down to a handful
+                    // by five minutes (2026-11-28).
+                    if (seenAt < 50 && tick >= _avoidRollTick && Doing != Tactic.Cover && !(_rotating && _rotUrgent))
+                    {
+                        _avoidRollTick = tick + 8 * SimTime.TicksPerSecond;
+                        if (_tac.NextDouble() < 1.1 - Aggression)
+                        {
+                            _avoidPos = p.Pos;
+                            _avoidTick = tick;
+                            _hasRoam = false;
+                            if (StartCover(server, s.Position, p.Pos, tick)) AvoidCount++;
+                        }
+                    }
+                    p.Seen = false;
+                }
                 if (p.Seen && hurtLately && !fighting && seenAt > EngageRange(s) + 15) p.Seen = false; // too far to win: cover instead
                 if (p.Heard && (p.HeardPos - s.Position).Length > (hurtLately ? EngageRange(s) : Config.BrEngageMetres)) p.Heard = false;
+                // Footsteps or shots nearby: pushy players go and look, careful ones keep to their own business unless
+                // it is right on top of them (it hunted every noise, so careful bots walked into fights too).
+                if (p.Heard && !hurtLately && Aggression < 0.5 && (p.HeardPos - s.Position).Length > 15) p.Heard = false;
                 // Hit by someone it can't see or can't reach: get out of their line.
                 if (p.Hurt && !p.Seen && Doing != Tactic.Cover) StartCover(server, s.Position, p.HeardPos, tick);
             }
@@ -372,10 +395,11 @@ namespace Sculpt.Core.Net
                 else
                 {
                     goal = br ? RoamInCircle(server, s.Position, tick) : RoamGoal(s.Position);
-                    Goal = goal.Equals(s.Position) ? GoalKind.Hold : GoalKind.Roam;
+                    Goal = goal.Equals(s.Position) || _shuffling && goal.Equals(_shuffleGoal) ? GoalKind.Hold : GoalKind.Roam;
                 }
                 if (br && server.Match.Phase == MatchPhase.Countdown) { goal = s.Position; Goal = GoalKind.Countdown; } // waits on its pad
                 if (Doing == Tactic.Rotate && !(rotate && goal.Equals(rotGoal))) Doing = Tactic.None;
+                GoalPos = goal;
                 wish = FollowPath(s, goal, tick, ref jump, out Vec3d lookAt, out bool arrived);
                 if (arrived)
                 {
@@ -383,15 +407,26 @@ namespace Sculpt.Core.Net
                     if (goal.Equals(_pingPos)) _pingTick = int.MinValue / 2;
                     else if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
                     else if (goal.Equals(_lastHeardPos)) _lastHeardTick = int.MinValue / 2;
-                    else if (_lootId == 0)
+                    else if (Goal == GoalKind.Roam)
                     {
+                        // Reached its roam point: hold it a while. Only a real arrival starts a hold: "arriving" at the spot
+                        // it is holding (its own feet) used to restart the hold every tick, so a bot with nothing near to
+                        // loot stood in one place for minutes (2026-11-28: half of all bot time in a 32-bot match).
                         _hasRoam = false;
-                        if (br) _holdUntil = tick + (int)((Config.BrHoldMin + _rng.NextDouble() * (Config.BrHoldMax - Config.BrHoldMin)) * SimTime.TicksPerSecond);
+                        if (br) _holdUntil = tick + (int)((Config.BrHoldMin + _rng.NextDouble() * (Config.BrHoldMax - Config.BrHoldMin)) * (1.4 - 0.8 * Aggression) * SimTime.TicksPerSecond);
                     }
                 }
+                if (Goal == GoalKind.Hold && !aimEnemy) LookAround(tick, ref wantYaw, ref wantPitch, ref gain, ref crouch);
                 if (br && _lootId != 0) TakeLoot(server, s, tick, ref cmd);
-                sprint = wish.LengthSquared > 0.01;
-                if (!aimEnemy && wish.LengthSquared > 0.01)
+                // At the end of its route and the item still out of reach (on a ledge or a floor the walking grid doesn't
+                // reach): leave it rather than stand under it until the 25 s give-up.
+                if (br && arrived && Goal == GoalKind.Loot && _lootId != 0)
+                {
+                    Vec3d ld = _lootPos - s.Position;
+                    if (ld.HorizontalLength > 1.7 || Math.Abs(ld.Y) > 1.2) { _lootGaveUp.Add(_lootId); _lootId = 0; }
+                }
+                sprint = wish.LengthSquared > 0.01 && Goal != GoalKind.Hold;
+                if (!aimEnemy && wish.LengthSquared > 0.01 && Goal != GoalKind.Hold)
                 {
                     Vec3d d = lookAt - eye;
                     wantYaw = Math.Atan2(d.X, d.Z);
@@ -779,6 +814,8 @@ namespace Sculpt.Core.Net
         /// <summary>Far goals are walked to in legs this long (see <see cref="FollowPath"/>).</summary>
         private const double LegMetres = 60;
         private bool _partial;
+        private int _pathWaitSince = int.MinValue / 2, _failRun, _legNode = -1;
+        private Vec3d _legGoal;
 
         private Vec3d FollowPath(in MotorState s, Vec3d goal, int tick, ref bool jump, out Vec3d lookAt, out bool arrived)
         {
@@ -794,9 +831,17 @@ namespace Sculpt.Core.Net
                 if ((next - feet).HorizontalLength > 4 || feet.Y < next.Y - 2.2) replan = true; // fell off or got pushed
             }
             double far = (goal - feet).HorizontalLength;
-            if (replan && !(tick - _pathTick >= 15 * SimTime.Per60 && (_server == null || _server.BotPathsThisTick < _server.BotPathsPerTick))) PathNote = 1;
-            if (replan && tick - _pathTick >= 15 * SimTime.Per60 && (_server == null || _server.BotPathsThisTick < _server.BotPathsPerTick))
+            // Bots share a small search budget per tick and are served in a fixed order, so one late in the order could
+            // wait for minutes while earlier bots kept asking (2026-11-28: bots stuck in a pit or rotating blind for 3 min).
+            // A bot that has waited a quarter second may go over the budget by two.
+            if (!replan) _pathWaitSince = int.MinValue / 2;
+            else if (_pathWaitSince == int.MinValue / 2) _pathWaitSince = tick;
+            int budget = _server == null ? int.MaxValue : _server.BotPathsPerTick + (tick - _pathWaitSince >= 30 * SimTime.Per60 ? 2 : 0);
+            bool mayAsk = tick - _pathTick >= 15 * SimTime.Per60 && (_server == null || _server.BotPathsThisTick < budget);
+            if (replan && !mayAsk) PathNote = 1;
+            if (replan && mayAsk)
             {
+                _pathWaitSince = int.MinValue / 2;
                 PathAsks++;
                 PathNote = 0;
                 if (_server != null) _server.BotPathsThisTick++;
@@ -807,29 +852,75 @@ namespace Sculpt.Core.Net
                 // LegMetres: one search over the whole map would give up before it got there (the search is capped).
                 _partial = false;
                 int a = Nav.Nearest(feet), b = -1;
+                // Several searches in a row found nothing: the spot it was matched to may be a dead end (a sill, a ledge,
+                // a corner). Start from a spot a step or two away instead.
+                if (_failRun >= 3)
+                {
+                    double ang = _rng.NextDouble() * Math.PI * 2;
+                    int alt = Nav.Nearest(new Vec3d(feet.X + Math.Sin(ang) * 1.5, feet.Y, feet.Z + Math.Cos(ang) * 1.5), 2);
+                    if (alt >= 0) a = alt;
+                }
+                bool found = false;
                 if (far > LegMetres)
                 {
+                    // Up to three tries, nearer each time. A leg's end at the bot's own height (not a roof over the
+                    // spot: one a 280 m walk round ran past the search cap every time, and the bot stood jumping at a
+                    // building corner until the circle came, 2026-11-28), in its own area (not a sealed room).
                     Vec3d dir = (goal - feet).WithY(0) / far;
-                    for (double leg = LegMetres; leg >= 20 && b < 0; leg -= 10)
+                    int tries = 0;
+                    // Keep the leg it is walking until it gets there: a fresh leg end every re-plan could fall on the
+                    // other side of a building, and it ran back and forth between two routes until the circle caught it.
+                    if (_legNode >= 0 && (goal - _legGoal).HorizontalLength < 30 && (Nav.Feet(_legNode) - feet).HorizontalLength > 6
+                        && Nav.SameArea(a, _legNode))
                     {
-                        b = Nav.Nearest(new Vec3d(feet.X + dir.X * leg, 0, feet.Z + dir.Z * leg), 8);
-                        if (!Nav.SameArea(a, b)) b = -1; // inside a sealed room: try nearer
+                        tries++;
+                        b = _legNode;
+                        found = Nav.FindPath(a, b, _path);
                     }
-                    _partial = b >= 0;
+                    for (double leg = LegMetres; leg >= 20 && !found && tries < 3; leg -= 10)
+                    {
+                        b = Nav.Nearest(new Vec3d(feet.X + dir.X * leg, feet.Y, feet.Z + dir.Z * leg), 8);
+                        if (!Nav.SameArea(a, b) || Nav.Feet(b).Y - feet.Y > 3.5 && leg > 20) { b = -1; continue; } // down from upstairs is fine
+                        if (tries > 0)
+                        {
+                            // Another search costs another share of this tick's budget; past it, try again next time.
+                            if (_server != null && _server.BotPathsThisTick >= budget) break;
+                            if (_server != null) _server.BotPathsThisTick++;
+                            PathAsks++;
+                        }
+                        tries++;
+                        found = Nav.FindPath(a, b, _path);
+                    }
+                    _partial = found;
+                    if (found) { _legNode = b; _legGoal = goal; } else _legNode = -1;
                 }
-                if (b < 0) b = Nav.Nearest(goal, 6);
-                if (!Nav.FindPath(a, b, _path))
+                else _legNode = -1;
+                if (!found && far <= LegMetres)
+                {
+                    b = Nav.Nearest(goal, 6);
+                    found = Nav.FindPath(a, b, _path);
+                }
+                // Loot whose walk round is far longer than it looks (the other side of a long wall, up a tower): not worth it.
+                if (found && !_partial && _lootId != 0 && goal.Equals(_lootPos) && _path.Count * Nav.Cell > 2.5 * far + 25)
+                {
+                    _lootGaveUp.Add(_lootId);
+                    _lootId = 0;
+                }
+                _failRun = found ? 0 : _failRun + 1;
+                if (!found)
                 {
                     PathFails++;
                     PathNote = a < 0 || b < 0 ? 3 : 2;
+                    if (PathNote == 3) PathNoSpot++;
                     _path.Clear();
                     _partial = false;
+                    _hasRoam = false; // unreachable (or a long way round): pick another roam point
                     if (far <= LegMetres)
                     {
-                        _hasRoam = false; // unreachable: pick something else
                         if (goal.Equals(_lastSeenPos)) _lastSeenTick = int.MinValue / 2;
                         if (goal.Equals(_lastHeardPos)) _lastHeardTick = int.MinValue / 2;
                         if (goal.Equals(_pingPos)) _pingTick = int.MinValue / 2;
+                        if (_lootId != 0 && goal.Equals(_lootPos)) { _lootGaveUp.Add(_lootId); _lootId = 0; } // can't get there: other loot
                     }
                 }
             }
@@ -839,7 +930,8 @@ namespace Sculpt.Core.Net
                 else if (_path.Count > 0) _path.Clear(); // the end of a leg: plan the next one
                 // No path yet (or none found) to a far goal: head straight for it rather than stand still (a bot stuck
                 // upstairs in the circle used to wait there until it died).
-                if (!arrived && far > LegMetres) return (goal - feet).WithY(0) / far;
+                // Same while it waits its turn for a route search (bots share a budget): a person doesn't stop to think.
+                if (!arrived && (far > LegMetres || PathNote == 1 && far > 1.2)) return (goal - feet).WithY(0) / far;
                 return Vec3d.Zero;
             }
 
@@ -858,6 +950,15 @@ namespace Sculpt.Core.Net
             int look = Math.Min(_path.Count - 1, _pathAt + 3);
             lookAt = Nav.Feet(_path[look]) + new Vec3d(0, 1.6, 0);
             Vec3d d = (tp - feet).WithY(0);
+            // Right above (or below) the next spot but not on it: standing on the lip of a drop, held up by the edge of
+            // the floor under one side of its box. Keep going the way the route runs so it steps off (it used to aim at
+            // the spot straight below its own feet and stand on a roof edge until the circle killed it).
+            if (d.Length < 0.35 && Math.Abs(tp.Y - feet.Y) >= 0.9 && _pathAt > 0)
+            {
+                Vec3d run = (tp - Nav.Feet(_path[_pathAt - 1])).WithY(0);
+                if (run.Length < 0.1 && _pathAt + 1 < _path.Count) run = (Nav.Feet(_path[_pathAt + 1]) - tp).WithY(0);
+                if (run.Length > 0.1) d = run;
+            }
             if (_pathAt == _path.Count - 1 && d.Length < 0.4)
             {
                 if (_partial) { _path.Clear(); return (goal - feet).WithY(0) / Math.Max(1e-6, far); } // next leg
@@ -970,6 +1071,10 @@ namespace Sculpt.Core.Net
                     if (_lootGaveUp.Contains(g.Id) || !Wants(g, bag)) continue;
                     Vec3d d = g.Position - s.Position;
                     double d2 = d.X * d.X + d.Z * d.Z + 4 * d.Y * d.Y; // another floor is further than it looks
+                    // What it is already heading for counts as nearer (to about 63 m): a route that first leads away
+                    // took it past 45 m, it dropped the loot, turned round, came back in range and took it up again,
+                    // running back and forth on one spot (2026-11-28).
+                    if (g.Id == _lootId) d2 *= 0.5;
                     if (d2 >= bestD) continue;
                     if (server.InStorm(g.Position)) continue;
                     if (Contested(server, me, g, tick, calm)) continue;
@@ -1026,19 +1131,47 @@ namespace Sculpt.Core.Net
             // Like a person playing a battle royale (2026-11-27): it holds a spot for a while, then moves on a short way,
             // drifting toward the middle of the circle, instead of crossing the map to random points (32 bots doing that
             // met each other constantly and the lobby was down to a handful three minutes in).
-            if (!_hasRoam && tick < _holdUntil) return from;
+            if (!_hasRoam && tick < _holdUntil)
+            {
+                // Holding: now and then it shifts a few steps (a new angle, out of a line it has been standing in),
+                // like a person waiting out a spot, rather than standing on one tile.
+                if (tick >= _shuffleTick)
+                {
+                    _shuffleTick = tick + (int)((4 + _rng.NextDouble() * 6) * SimTime.TicksPerSecond);
+                    _shuffling = false;
+                    double ang = _rng.NextDouble() * Math.PI * 2, d = 2 + _rng.NextDouble() * 3;
+                    int here = Nav.Nearest(from), node = Nav.Nearest(new Vec3d(from.X + Math.Sin(ang) * d, from.Y, from.Z + Math.Cos(ang) * d), 1);
+                    if (node >= 0 && Nav.SameArea(here, node) && Nav.Nodes[node].Open >= 4 && Math.Abs(Nav.Feet(node).Y - from.Y) < 1)
+                    {
+                        _shuffleGoal = Nav.Feet(node);
+                        _shuffling = true;
+                    }
+                }
+                return _shuffling ? _shuffleGoal : from;
+            }
+            _shuffling = false;
             _circleRoamTick = tick;
             for (int k = 0; k < 12; k++)
             {
-                double a = _rng.NextDouble() * Math.PI * 2, d = 25 + _rng.NextDouble() * 45;
+                double a = _rng.NextDouble() * Math.PI * 2, d = 20 + _rng.NextDouble() * (20 + 35 * Aggression); // careful bots move on a shorter way
                 double x = from.X + Math.Sin(a) * d, z = from.Z + Math.Cos(a) * d;
-                x += (cx - x) * 0.3;
-                z += (cz - z) * 0.3;
+                // Drift toward the middle: pushy bots head in, careful ones keep to the quieter edges of the circle (all of
+                // them pulling in 30% each move packed the lobby into the middle and made the middle minutes a brawl).
+                double pull = 0.06 + 0.24 * Aggression;
+                x += (cx - x) * pull;
+                z += (cz - z) * pull;
                 double fx = x - cx, fz = z - cz, lim = r * 0.8;
                 double fd = Math.Sqrt(fx * fx + fz * fz);
                 if (fd > lim && fd > 1e-6) { x = cx + fx / fd * lim; z = cz + fz / fd * lim; }
-                int node = Nav.Nearest(new Vec3d(x, 0, z), 6);
-                if (node < 0 || Nav.Nodes[node].Open < 8) continue;
+                int node = Nav.Nearest(new Vec3d(x, from.Y, z), 6);
+                // Open ground near its own level, not a roof it would need a long way round to reach.
+                if (node < 0 || Nav.Nodes[node].Open < 8 || Nav.Feet(node).Y - from.Y > 4) continue;
+                // Slipped away from someone lately: not back toward them.
+                if (k < 9 && tick - _avoidTick < 30 * SimTime.TicksPerSecond)
+                {
+                    Vec3d to = (Nav.Feet(node) - from).WithY(0), away = (_avoidPos - from).WithY(0);
+                    if (to.Length > 1 && away.Length > 1 && to.Dot(away) / (to.Length * away.Length) > 0.2) continue;
+                }
                 _roamGoal = Nav.Feet(node);
                 _hasRoam = true;
                 return _roamGoal;
@@ -1048,7 +1181,36 @@ namespace Sculpt.Core.Net
             return _roamGoal;
         }
 
-        private int _holdUntil = int.MinValue / 2;
+        private int _holdUntil = int.MinValue / 2, _shuffleTick = int.MinValue / 2;
+        private bool _shuffling;
+        private Vec3d _shuffleGoal;
+        private int _avoidRollTick = int.MinValue / 2, _avoidTick = int.MinValue / 2;
+        private Vec3d _avoidPos;
+        /// <summary>For measuring: enemies it chose to slip away from (Tests/BrPerf).</summary>
+        public int AvoidCount;
+        private int _lookUntil = int.MinValue / 2;
+        private double _lookYaw, _lookPitch;
+        private bool _holdCrouch;
+
+        /// <summary>
+        /// Holding a spot like a person: it checks the angles (a new heading every 1-3 s, mostly ahead and to the sides,
+        /// sometimes behind) and careful bots crouch, instead of staring at one wall.
+        /// </summary>
+        private void LookAround(int tick, ref double wantYaw, ref double wantPitch, ref double gain, ref bool crouch)
+        {
+            if (tick >= _lookUntil)
+            {
+                _lookUntil = tick + (int)((1.0 + _rng.NextDouble() * 2.0) * SimTime.TicksPerSecond);
+                double turn = _rng.NextDouble() < 0.2 ? Math.PI * (0.7 + _rng.NextDouble() * 0.3) : (_rng.NextDouble() - 0.5) * 2.2;
+                _lookYaw = Wrap(_yaw + (_rng.NextDouble() < 0.5 ? turn : -turn));
+                _lookPitch = (_rng.NextDouble() - 0.6) * 10;
+                _holdCrouch = _rng.NextDouble() < 0.6 * (1 - Aggression);
+            }
+            wantYaw = _lookYaw;
+            wantPitch = _lookPitch;
+            gain = 0.1;
+            crouch = _holdCrouch;
+        }
         private bool _push;
 
         private void Unstick(in MotorState s, int tick, Vec3d wish, ref bool jump)
@@ -1063,7 +1225,13 @@ namespace Sculpt.Core.Net
             _jumpUntil = tick + 2 * SimTime.Per60;
             _pathTick = int.MinValue / 2; // re-plan from here
             _path.Clear();
-            if (_stuckCount >= 3) { _hasRoam = false; _lastSeenTick = _lastHeardTick = int.MinValue / 2; _stuckCount = 0; }
+            if (_stuckCount >= 3)
+            {
+                _hasRoam = false;
+                _lastSeenTick = _lastHeardTick = int.MinValue / 2;
+                _stuckCount = 0;
+                if (_lootId != 0) { _lootGaveUp.Add(_lootId); _lootId = 0; } // stuck on the way to it (1.5 s x 3): other loot
+            }
         }
 
         // ================================================================ Helpers

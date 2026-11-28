@@ -57,7 +57,7 @@ namespace Sculpt.Core.Tests.Net
             {
                 DuelBot b = Bot(a);
                 string who = $"aggression {a}";
-                Assert.That(b.TakeFight(s, me, With(150, true, 0), 20, 0, 1000), who + ": healthy with an AR, 20 m: fights");
+                Assert.That(b.TakeFight(s, me, With(150, true, 0), 15, 0, 1000), who + ": healthy with an AR, 15 m: fights");
                 Assert.That(b.TakeFight(s, me, With(150, true, 0), 4, 0, 1000), who + ": an enemy right on top of it: always fights");
                 Assert.That(b.TakeFight(s, me, With(30, true, 3), 4, 0, 1000), who + ": even hurt, at point blank");
                 Assert.That(b.TakeFight(s, me, With(150, true, 0), 60, 0, 1000), Is.False, who + ": 60 m is too far to start a fight");
@@ -65,8 +65,9 @@ namespace Sculpt.Core.Tests.Net
                 Assert.That(b.TakeFight(s, me, With(60, true, 3), 15, 0, 1000), Is.False, who + ": hurt with bandages: heals before a fight");
             }
             // Careful players take shorter fights than pushy ones.
-            Assert.That(Bot(0).TakeFight(s, me, With(150, true, 0), 32, 0, 1000), Is.False, "careful: 32 m is too far");
+            Assert.That(Bot(0).TakeFight(s, me, With(150, true, 0), 25, 0, 1000), Is.False, "careful: 25 m is too far");
             Assert.That(Bot(1).TakeFight(s, me, With(150, true, 0), 32, 0, 1000), "pushy: takes a 32 m fight");
+            Assert.That(Bot(1).TakeFight(s, me, With(150, true, 0), 25, 0, 1000), "pushy: takes a 25 m fight");
         }
 
         [Test]

@@ -36,6 +36,60 @@ internal static class Program
         load.Restart();
         BotNav nav = BrMap.BuildNav(1.0);
         Console.WriteLine($"nav {nav.Nodes.Count} spots in {load.ElapsedMilliseconds} ms ({BotNav.LastBuildTimes})");
+        string probe = Environment.GetEnvironmentVariable("BRPERF_PROBE");
+        if (!string.IsNullOrEmpty(probe))
+        {
+            var ter = BrMap.Terrain(g, w);
+            var areaSize = new Dictionary<int, int>();
+            for (int i = 0; i < nav.Nodes.Count; i++) { int a = nav.AreaOf(i); areaSize.TryGetValue(a, out int c); areaSize[a] = c + 1; }
+            foreach (string pt in probe.Split(';'))
+            {
+                string[] xz = pt.Split(',');
+                double px = double.Parse(xz[0], System.Globalization.CultureInfo.InvariantCulture), pz = double.Parse(xz[1], System.Globalization.CultureInfo.InvariantCulture);
+                double py = xz.Length > 2 ? double.Parse(xz[2], System.Globalization.CultureInfo.InvariantCulture) : 1.5;
+                int n = nav.Nearest(new Vec3d(px, py, pz), 3);
+                string goalS = Environment.GetEnvironmentVariable("BRPERF_PROBE_GOAL");
+                if (!string.IsNullOrEmpty(goalS) && n >= 0)
+                {
+                    string[] gg = goalS.Split(',');
+                    var gp = new Vec3d(double.Parse(gg[0], System.Globalization.CultureInfo.InvariantCulture), double.Parse(gg[1], System.Globalization.CultureInfo.InvariantCulture), double.Parse(gg[2], System.Globalization.CultureInfo.InvariantCulture));
+                    var path = new List<int>();
+                    Vec3d feet = new Vec3d(px, py, pz);
+                    double far = (gp - feet).HorizontalLength;
+                    Vec3d dir = (gp - feet).WithY(0) / far;
+                    for (double leg = Math.Min(60, far); leg >= 10; leg -= 10)
+                    {
+                        int b = nav.Nearest(new Vec3d(feet.X + dir.X * leg, 0, feet.Z + dir.Z * leg), 8);
+                        bool ok = nav.FindPath(n, b, path);
+                        bool ok2 = nav.FindPath(n, b, path, 400000);
+                        Console.WriteLine($"  leg {leg}: b {b} {(b >= 0 ? nav.Feet(b).ToString() : "")} same {nav.SameArea(n, b)} found {ok} (big cap {ok2}, {path.Count} long)");
+                    }
+                    int nb = 0;
+                    foreach (int dz in new[] { -1, 0, 1 }) foreach (int dx in new[] { -1, 0, 1 })
+                    {
+                        int m = nav.Nearest(new Vec3d(px + dx, py, pz + dz), 0);
+                        if (m < 0 || m == n) continue;
+                        Console.WriteLine($"  neighbour {nav.Feet(m)} link to it {nav.LinkBetween(n, m)} back {nav.LinkBetween(m, n)} open {nav.Nodes[m].Open} found-from-it {nav.FindPath(m, nav.Nearest(gp, 6), path)}");
+                        nb++;
+                    }
+                }
+                Console.WriteLine($"PROBE ({px}, {py}, {pz}): node {n} {(n >= 0 ? nav.Feet(n).ToString() : "")} area {nav.AreaOf(n)} size {(n >= 0 ? areaSize[nav.AreaOf(n)] : 0)} open {(n >= 0 ? nav.Nodes[n].Open : -1)}");
+                for (int k = 0; k < 8; k++)
+                {
+                    double a = k * Math.PI / 4;
+                    string row = $"   dir {k * 45,3}:";
+                    for (double r = 1; r <= 12; r += r < 4 ? 1 : 2)
+                    {
+                        double x = px + Math.Sin(a) * r, z = pz + Math.Cos(a) * r;
+                        TerrainHit h = ter.Raycast(new Vec3d(x, py + 30, z), new Vec3d(0, -1, 0), 60);
+                        bool solidAtFeet = ter.BoxOverlapsSolid(new Aabb(new Vec3d(x - 0.2, py + 0.4, z - 0.2), new Vec3d(x + 0.2, py + 1.6, z + 0.2)));
+                        row += $" {r}m:{(h.Hit ? (py + 30 - h.Distance).ToString("0.0") : "-")}{(solidAtFeet ? "#" : "")}";
+                    }
+                    Console.WriteLine(row);
+                }
+            }
+            return 0;
+        }
         var cfg = new BrConfig { Mode = mode, Seed = seed, FillWithoutHumans = true };
         cfg.MakeBot = i => new DuelBot(nav, DuelBotConfig.For((BotLevel)(i % 3)), cfg.Seed + 31 * i);
         // One watching client (a human standing at its pad): its Receive is timed as the ClientReceive section.
@@ -43,6 +97,7 @@ internal static class Program
         TileWalls.Find(clientTerrain)?.Prepare();
         NetClient client = null;
         var queue = new List<byte[]>();
+        ProbeW = w; ProbeG = g;
         var s = new NetServer(BrMap.Terrain(g, w), new MovementConfig(), new NetConfig(), (c, d, r) => { if (c == 1) queue.Add(d); });
         TileWalls.Find(s.Grid)?.Prepare();
         s.EnableBattleRoyale(cfg, br);
@@ -115,6 +170,12 @@ internal static class Program
                     }
                     if ((ticks - playStartTick) % (10 * SimTime.TicksPerSecond) == 0) LastPos[p.Id] = p.State.Position;
                 }
+            if (TraceId != 0 && playStartTick >= 0 && s.Match.Phase == MatchPhase.Playing && (ticks - playStartTick) % (SimTime.TicksPerSecond / 4) == 0)
+            {
+                double ts = (ticks - playStartTick) / (double)SimTime.TicksPerSecond;
+                if (ts >= TraceFrom && ts <= TraceTo && s.FindPlayer(TraceId) is ServerPlayer tp && s.Bots.TryGetValue(TraceId, out var tb) && tb is DuelBot bb)
+                    Console.WriteLine($"TRACE {ts,7:0.00} pos {tp.State.Position} vel {tp.State.Velocity} goal {bb.Goal} {bb.GoalPos} path {bb.PathAt}/{bb.Path.Count} next {(bb.Path.Count > bb.PathAt ? bb.Nav.Feet(bb.Path[bb.PathAt]).ToString() : "-")} note {bb.PathNote} cmd {tp.LastCmd.Move.MoveX:0.00},{tp.LastCmd.Move.MoveZ:0.00} yaw {tp.LastCmd.Move.Yaw:0.00} jump {tp.LastCmd.Move.JumpHeld} eng {bb.Engaged} doing {bb.Doing}");
+            }
             if (playStartTick >= 0 && s.Match.Phase == MatchPhase.Playing && (ticks - playStartTick) % SimTime.TicksPerSecond == 0)
                 SampleIdle(s, (ticks - playStartTick) / SimTime.TicksPerSecond);
             if (playStartTick >= 0 && s.Match.Phase == MatchPhase.Playing && (ticks - playStartTick) % (30 * SimTime.TicksPerSecond) == 0)
@@ -130,6 +191,7 @@ internal static class Program
             {
                 TotalMs[i] += TickMs[i];
                 TotalAlloc[i] += TickAlloc[i];
+                if (TickMs[i] > 15) SlowTicks.Add($"{(ticks - playStartTick) / (double)SimTime.TicksPerSecond,7:0.00}s {(Prof.Section)i} {TickMs[i]:0.0} ms");
                 WorstMs[i] = Math.Max(WorstMs[i], TickMs[i]);
                 PerTick[i].Add(TickMs[i]);
             }
@@ -147,6 +209,8 @@ internal static class Program
             double P(double q) => l.Count == 0 ? 0 : l[Math.Min(l.Count - 1, (int)(l.Count * q))];
             Console.WriteLine($"{(Prof.Section)i,-13} {TotalMs[i] / Math.Max(1, playTicks),9:0.000} {P(0.99),8:0.00} {P(0.999),8:0.00} {WorstMs[i],8:0.00} {TotalAlloc[i] / 1024.0 / Math.Max(1, playTicks),8:0.00}");
         }
+        Console.WriteLine($"slow sections (over 15 ms): {SlowTicks.Count}");
+        foreach (string st in SlowTicks.GetRange(0, Math.Min(20, SlowTicks.Count))) Console.WriteLine("  " + st);
         Console.WriteLine($"deaths ({Deaths.Count}), seconds after play starts:");
         foreach (string d in Deaths.GetRange(0, Math.Min(40, Deaths.Count))) Console.WriteLine("  " + d);
         Console.WriteLine($"deaths with no killer ({OtherDeaths.Count}):");
@@ -154,12 +218,12 @@ internal static class Program
         KillDist.Sort();
         double Q(double q) => KillDist.Count == 0 ? 0 : KillDist[Math.Min(KillDist.Count - 1, (int)(KillDist.Count * q))];
         Console.WriteLine($"kills by a player: {KillDist.Count}, distance median {Q(0.5):0} m, 25% {Q(0.25):0} m, 75% {Q(0.75):0} m, 90% {Q(0.9):0} m");
-        int covers = 0, rotations = 0, thirds = 0;
-        foreach (var kv in s.Bots) if (kv.Value is DuelBot b) { covers += b.CoverCount; rotations += b.RotateCount; thirds += b.ThirdPartyCount; }
-        Console.WriteLine($"bot tactics: cover {covers}, rotations {rotations}, third-party {thirds}");
-        int asks = 0, fails = 0;
-        foreach (var kv in s.Bots) if (kv.Value is DuelBot b) { asks += b.PathAsks; fails += b.PathFails; }
-        Console.WriteLine($"path searches {asks}, failed {fails}");
+        int covers = 0, rotations = 0, thirds = 0, avoids = 0;
+        foreach (var kv in s.Bots) if (kv.Value is DuelBot b) { covers += b.CoverCount; rotations += b.RotateCount; thirds += b.ThirdPartyCount; avoids += b.AvoidCount; }
+        Console.WriteLine($"bot tactics: cover {covers} (of them slipping away unseen {avoids}), rotations {rotations}, third-party {thirds}");
+        int asks = 0, fails = 0, nospot = 0;
+        foreach (var kv in s.Bots) if (kv.Value is DuelBot b) { asks += b.PathAsks; fails += b.PathFails; nospot += b.PathNoSpot; }
+        Console.WriteLine($"path searches {asks}, failed {fails} (no walkable spot at an end: {nospot})");
         Console.WriteLine($"idle (alive, moved under {IdleMetres} m in {IdleWindow} s, not fighting or healing): {IdleSecs} of {AliveSecs} bot-seconds ({100.0 * IdleSecs / Math.Max(1, AliveSecs):0.0}%), longest stretch {LongestIdle} s");
         var keys = new List<string>(IdleWhy.Keys);
         keys.Sort((x, y) => IdleWhy[y].CompareTo(IdleWhy[x]));
@@ -191,7 +255,7 @@ internal static class Program
     {
         foreach (ServerPlayer p in s.Players)
         {
-            if (!s.InBrMatch(p.Id) || !(s.Bots.TryGetValue(p.ConnectionId, out var brain) && brain is DuelBot b)) continue;
+            if (!s.InBrMatch(p.Id) || !(s.Bots.TryGetValue(p.Id, out var brain) && brain is DuelBot b)) continue;
             if (!Track.TryGetValue(p.Id, out List<Vec3d> tr)) Track[p.Id] = tr = new List<Vec3d>();
             if (p.State.Dead) { tr.Clear(); IdleRun[p.Id] = 0; continue; }
             AliveSecs++;
@@ -206,7 +270,26 @@ internal static class Program
                 IdleWhy.TryGetValue(why, out int c);
                 IdleWhy[why] = c + 1;
                 run++;
-                if (run == 15) IdleEx.Add($"{sec,4}s player {p.Id} at {p.State.Position} {why} grounded {p.State.Grounded}");
+                if (run == 15)
+                {
+                    string next = "";
+                    if (b.Path.Count > 0 && b.PathAt < b.Path.Count)
+                    {
+                        int n = b.Path[b.PathAt];
+                        next = $" next {b.Nav.Feet(n)} ({b.PathAt}/{b.Path.Count}, link {(b.PathAt > 0 ? b.Nav.LinkBetween(b.Path[b.PathAt - 1], n).ToString() : "-")})";
+                        Vec3d nf = b.Nav.Feet(n);
+                        foreach (var (name, ter) in new (string, ITerrain)[] { ("all", s.Grid), ("brushes", ProbeW), ("props", ProbeG) })
+                        {
+                            if (ter == null) continue;
+                            bool atNext = ter.BoxOverlapsSolid(new Aabb(new Vec3d(nf.X - 0.35, nf.Y + 0.05, nf.Z - 0.35), new Vec3d(nf.X + 0.35, nf.Y + 1.8, nf.Z + 0.35)));
+                            Vec3d mid = (nf + p.State.Position) * 0.5;
+                            bool between = ter.BoxOverlapsSolid(new Aabb(new Vec3d(mid.X - 0.35, Math.Max(nf.Y, p.State.Position.Y) + 0.05, mid.Z - 0.35), new Vec3d(mid.X + 0.35, Math.Max(nf.Y, p.State.Position.Y) + 1.8, mid.Z + 0.35)));
+                            next += $" [{name}: next {(atNext ? "SOLID" : "clear")}, between {(between ? "SOLID" : "clear")}]";
+                        }
+                        if (b.PathAt + 1 < b.Path.Count) next += $" then {b.Nav.Feet(b.Path[b.PathAt + 1])} link {b.Nav.LinkBetween(n, b.Path[b.PathAt + 1])}";
+                    }
+                    IdleEx.Add($"{sec,4}s player {p.Id} at {p.State.Position} {why} grounded {p.State.Grounded} vel {p.State.Velocity} mode {p.State.Mode} hand {p.State.Hand.Mode} item {p.State.Hand.HeldItem} using {p.State.Hand.Using} doing {b.Doing} cmd {p.LastCmd.Move.MoveX:0.00},{p.LastCmd.Move.MoveZ:0.00} sprint {p.LastCmd.Move.SprintHeld} crouch {p.LastCmd.Move.CrouchHeld} jump {p.LastCmd.Move.JumpHeld}{next}");
+                }
                 LongestIdle = Math.Max(LongestIdle, run);
             }
             else run = 0;
@@ -214,8 +297,12 @@ internal static class Program
         }
     }
 
+    internal static ITerrain ProbeW, ProbeG;
+    private static readonly int TraceId = int.TryParse(Environment.GetEnvironmentVariable("BRPERF_TRACE") ?? "", out int ti) ? ti : 0;
+    private static readonly double TraceFrom = double.TryParse(Environment.GetEnvironmentVariable("BRPERF_FROM"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double tf) ? tf : 0, TraceTo = double.TryParse(Environment.GetEnvironmentVariable("BRPERF_TO"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double tt) ? tt : 1e9;
     private static readonly List<double[]> Timeline = new List<double[]>();
     private static readonly List<string> Deaths = new List<string>();
+    private static readonly List<string> SlowTicks = new List<string>();
     private static readonly List<double> KillDist = new List<double>();
     private static readonly List<string> Alive = new List<string>();
     private static readonly List<string> OtherDeaths = new List<string>();
