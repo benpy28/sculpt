@@ -171,6 +171,23 @@ namespace Sculpt.Trainer
             if (norm > MaxGradNorm) n.ScaleGrad((float)(MaxGradNorm / norm));
         }
 
+        /// <summary>
+        /// For the gradient check: the whole loss over the first n rows (as the update defines it, divided by n), with
+        /// its gradients left in the first thread's buffers (<see cref="PolicyGrad"/>, <see cref="ValueGrad"/>).
+        /// </summary>
+        public double Probe(Batch b, float[] adv, int n, bool ppo)
+        {
+            if (Reference != null) { _refNet ??= new TrainMlp(Reference.Policy); _rw[0] ??= new TrainMlp.Work(Reference.Policy, _chunk); }
+            var order = new int[n];
+            for (int i = 0; i < n; i++) order[i] = i;
+            LossStats st = Chunk(b, adv, order, 0, n, 0, n, ppo);
+            if (!ppo) return st.Policy / n;
+            return st.Policy / n - EntropyCoef * st.Entropy / n + (Reference != null ? RefCoef * st.Bc / n : 0) + ValueCoef * st.Value / n;
+        }
+
+        public TrainMlp.Work PolicyGrad => _pw[0];
+        public TrainMlp.Work ValueGrad => _vw[0];
+
         private LossStats Chunk(Batch b, float[] adv, int[] order, int start, int n, int t, int m, bool ppo)
         {
             var st = new LossStats { N = n };

@@ -38,6 +38,7 @@ namespace Sculpt.Trainer
             {
                 case "bench": Bench(D(Arg(1, "20"))); return 0;
                 case "profile": Profile.Run(D(Arg(1, "10"))); return 0;
+                case "check": return GradCheck.Run();
                 case "bc": Bc(Arg(1, "bc.sbm"), int.Parse(Arg(2, "300000")), int.Parse(Arg(3, "12"))); return 0;
                 case "ppo": Ppo(MlModel.Load(Arg(1, "bc.sbm")), Arg(2, "run"), int.Parse(Arg(3, "200")), MlModel.Load(Arg(1, "bc.sbm"))); return 0;
                 case "br": Ppo(MlModel.Load(Arg(1, "latest.sbm")), Arg(2, "run-br"), int.Parse(Arg(3, "200")), MlModel.Load(Arg(1, "latest.sbm")), br: true, brLearners: int.Parse(Arg(4, "16"))); return 0;
