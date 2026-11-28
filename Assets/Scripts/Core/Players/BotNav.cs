@@ -143,11 +143,15 @@ namespace Sculpt.Core
             new Aabb(new Vec3d(x - Half, y + Lift, z - Half), new Vec3d(x + Half, y + Head, z + Half));
 
         /// <summary>Every floor-like surface in a column, top down.</summary>
+        /// <summary>Floors looked for down one column, top first (a 12-storey tower has its slabs, stairs and roof in one
+        /// column; 12 was too few once the battle royale had towers: the lower floors went missing).</summary>
+        public const int MaxFloorsPerColumn = 48;
+
         private static void FindFloors(ITerrain t, double x, double z, double top, double bottom, List<double> into, double? groundTop = null)
         {
             into.Clear();
             double y = top;
-            for (int guard = 0; guard < 12 && y > bottom; guard++)
+            for (int guard = 0; guard < MaxFloorsPerColumn && y > bottom; guard++)
             {
                 TerrainHit h = t.Raycast(new Vec3d(x, y, z), new Vec3d(0, -1, 0), y - bottom);
                 if (!h.Hit) return;
@@ -158,9 +162,10 @@ namespace Sculpt.Core
                 double s = h.Point.Y - 0.05;
                 // Down through the solid to the air under it, as far as the bottom (a tree's canopy can be over 4 m
                 // thick, with ground to walk on under it).
-                int k = 0;
-                while (k < 120 && s > bottom && t.BoxOverlapsSolid(new Aabb(new Vec3d(x - 0.01, s - 0.01, z - 0.01), new Vec3d(x + 0.01, s + 0.01, z + 0.01)))) { s -= 0.1; k++; }
-                if (k >= 120 || s <= bottom) return; // solid all the way down: the ground
+                // (No cap but the bottom: a column inside a tall wall, e.g. a solid three-storey wall over a door, used to
+                // give up after 12 m and lose the floor under it.)
+                while (s > bottom && t.BoxOverlapsSolid(new Aabb(new Vec3d(x - 0.01, s - 0.01, z - 0.01), new Vec3d(x + 0.01, s + 0.01, z + 0.01)))) s -= 0.1;
+                if (s <= bottom) return; // solid all the way down: the ground
                 y = s;
             }
         }

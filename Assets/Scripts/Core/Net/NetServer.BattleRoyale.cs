@@ -61,7 +61,7 @@ namespace Sculpt.Core.Net
         /// <summary>Chests spill their loot this far in front of them.</summary>
         public double ChestSpill = 0.9;
         /// <summary>Ground item cap in a battle royale (chests, spills and everything the dead drop).</summary>
-        public int MaxGroundItems = 2600; // the 1,306 m map starts with 1,704 chests
+        public int MaxGroundItems = 3600; // the segmented map starts with up to about 2,200 chests (BrLayout budgets; the wire carries 4,096)
     }
 
     /// <summary>

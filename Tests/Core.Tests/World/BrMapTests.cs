@@ -5,7 +5,7 @@ using Sculpt.Core.Net;
 
 namespace Sculpt.Core.Tests
 {
-    /// <summary>The battle royale map: clean geometry, exact eight-way symmetry, and Ben's spawn rules.</summary>
+    /// <summary>The battle royale map: clean geometry, the same spawn region everywhere, and Ben's spawn rules.</summary>
     public class BrMapTests
     {
         private static BrushWorld _w;
@@ -30,10 +30,18 @@ namespace Sculpt.Core.Tests
             $"{k} {Math.Round(b.Min.X, 3)} {Math.Round(b.Min.Y, 3)} {Math.Round(b.Min.Z, 3)} {Math.Round(b.Max.X, 3)} {Math.Round(b.Max.Y, 3)} {Math.Round(b.Max.Z, 3)} {rise}";
 
         [Test]
-        public void EightRegions_FourPois_AllIntact_TileIdsFitTheWire()
+        public void EightRegions_OnePerOuterSegment_AllIntact_TileIdsFitTheWire()
         {
             Assert.That(_br.Regions.Count, Is.EqualTo(8));
-            Assert.That(_br.Pois.Count, Is.EqualTo(4));
+            var segs = new HashSet<int>();
+            foreach (BrRegion r in _br.Regions)
+            {
+                Assert.That(r.Segment, Is.Not.EqualTo(BrLayout.Centre));
+                Assert.That(segs.Add(r.Segment), Is.True, "one region per segment");
+                Assert.That(BrLayout.Owner(r.Building.Min.X, r.Building.Min.Z), Is.EqualTo(r.Segment));
+                Assert.That(BrLayout.Owner(r.Building.Max.X, r.Building.Max.Z), Is.EqualTo(r.Segment));
+                Assert.That(r.Poi, Is.GreaterThanOrEqualTo(0), $"{r.Name} names its home POI");
+            }
             Assert.That(_w.Tiles.Count, Is.LessThan(ByteWriter.MaxU24), "tile ids ride the wire in 24 bits");
             foreach (int t in B.Tiles) Assert.That(_w.Tiles[t].State, Is.EqualTo(TileState.Intact));
             Assert.That(_w.Tiles.Changes, Is.Empty);
@@ -43,28 +51,35 @@ namespace Sculpt.Core.Tests
                 Assert.That(b.Min.Z, Is.GreaterThan(10));
                 Assert.That(b.Max.X, Is.LessThan(_br.Size - 10));
                 Assert.That(b.Max.Z, Is.LessThan(_br.Size - 10));
+                Assert.That(b.Max.Y, Is.LessThan(BrMap.NavTop - 5), "under the walking grid's top");
             }
-            TestContext.WriteLine($"{_w.Count} brushes, {_w.Tiles.Count} tiles, {B.Buildings.Count} buildings, {_br.Chests.Count} chests");
-            for (int k = 0; k < 8; k++)
-            {
-                Assert.That(_br.Regions[k].Partner, Is.EqualTo(k ^ 1));
-                Assert.That(_br.Regions[_br.Regions[k].Partner].Poi, Is.EqualTo(_br.Regions[k].Poi), "partners share their POI");
-            }
+            TestContext.WriteLine($"{_w.Count} brushes, {_w.Tiles.Count} tiles, {B.Buildings.Count} buildings, {_br.Chests.Count} chests, {_br.Pois.Count} POIs");
         }
 
         [Test]
-        public void EveryBrushHasATwinUnderAllEightSymmetries()
+        public void EverySpawnRegion_IsTheSameBuilding_TurnedOrMirrored()
         {
-            var keys = new HashSet<string>();
-            for (int i = 0; i < _w.Count; i++) keys.Add(Key(_w[i].Kind, _w[i].Bounds, _w[i].IsRamp ? _w[i].Rise : Dir.Up));
+            // Each region's tiles, taken back to the template's frame and measured from its anchor, are the same set.
             double c = _br.Size / 2;
-            foreach (int[] m in BrMap.Sym)
-                for (int i = 0; i < _w.Count; i++)
+            HashSet<string> first = null;
+            foreach (BrRegion r in _br.Regions)
+            {
+                int[] m = BrLayout.KitSymmetry(r.Segment);
+                int[] inv = { m[0], m[2], m[1], m[3] }; // orthogonal: the inverse is the transpose
+                BrLayout.TemplateAnchor(BrLayout.IsCorner(r.Segment), out double au, out double av);
+                var set = new HashSet<string>();
+                Aabb area = r.Building.Expand(0.01);
+                for (int t = 0; t < _w.Tiles.Count; t++)
                 {
-                    Brush b = _w[i];
-                    string k = Key(b.Kind, BrMap.Tr(b.Bounds, m, c), b.IsRamp ? BrMap.TrDir(b.Rise, m) : Dir.Up);
-                    Assert.That(keys.Contains(k), Is.True, $"{b.Kind} at {b.Bounds.Min}..{b.Bounds.Max} has no twin");
+                    Aabb box = _w.Tiles.BoundsOf(t);
+                    if (box.Min.X < area.Min.X || box.Max.X > area.Max.X || box.Min.Z < area.Min.Z || box.Max.Z > area.Max.Z) continue;
+                    Aabb back = BrMap.Tr(box, inv, c);
+                    set.Add($"{Math.Round(back.Min.X - c - au, 3)} {Math.Round(back.Min.Y, 3)} {Math.Round(back.Min.Z - c - av, 3)} {Math.Round(back.Max.X - c - au, 3)} {Math.Round(back.Max.Y, 3)} {Math.Round(back.Max.Z - c - av, 3)} {_w.Tiles[t].Kind}");
                 }
+                Assert.That(set.Count, Is.GreaterThan(500), r.Name);
+                if (first == null) { first = set; continue; }
+                Assert.That(set.SetEquals(first), Is.True, $"{r.Name}'s spawn building differs from {_br.Regions[0].Name}'s");
+            }
         }
 
         [Test]
@@ -87,8 +102,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void EveryStairHasHeadroom_AndCanBeRunUp()
         {
-            Assert.That(B.Climbs.Count % 16, Is.EqualTo(0), "two flights per stairwell, eight twins of each");
-            Assert.That(B.Climbs.Count, Is.GreaterThanOrEqualTo(8 * 10), "the landmarks' five stairwells per eighth and the village houses'");
+            Assert.That(B.Climbs.Count, Is.GreaterThanOrEqualTo(8 * 2 + 20), "the spawn regions' stairwells, the towers' and the village houses'");
             foreach (Brush s in B.Climbs)
             {
                 double len = Math.Max(s.Bounds.Max.X - s.Bounds.Min.X, s.Bounds.Max.Z - s.Bounds.Min.Z);
@@ -114,9 +128,19 @@ namespace Sculpt.Core.Tests
             Assert.That(B.Doorways.Count, Is.GreaterThan(80));
             foreach (Aabb d in B.Doorways)
             {
+                // A player fits through it: at its middle, or at either end (a tower's stair door opens onto the foot
+                // of the flight on every other floor; you walk in beside the first step).
                 Vec3d c = (d.Min + d.Max) * 0.5;
-                var player = new Aabb(new Vec3d(c.X - _c.HalfWidth, d.Min.Y + 0.01, c.Z - _c.HalfWidth), new Vec3d(c.X + _c.HalfWidth, d.Min.Y + _c.StandHeight, c.Z + _c.HalfWidth));
-                Assert.That(_w.BoxOverlapsSolid(player), Is.False, $"doorway at {d.Min} is blocked");
+                bool alongX = d.Max.X - d.Min.X > d.Max.Z - d.Min.Z;
+                double room = (alongX ? d.Max.X - d.Min.X : d.Max.Z - d.Min.Z) / 2 - _c.HalfWidth - 0.01;
+                bool fits = false;
+                foreach (double off in new[] { 0, -room, room })
+                {
+                    Vec3d p = c + (alongX ? new Vec3d(off, 0, 0) : new Vec3d(0, 0, off));
+                    var player = new Aabb(new Vec3d(p.X - _c.HalfWidth, d.Min.Y + 0.01, p.Z - _c.HalfWidth), new Vec3d(p.X + _c.HalfWidth, d.Min.Y + _c.StandHeight, p.Z + _c.HalfWidth));
+                    if (!_w.BoxOverlapsSolid(player)) { fits = true; break; }
+                }
+                Assert.That(fits, Is.True, $"doorway at {d.Min} is blocked");
             }
         }
 
@@ -126,7 +150,7 @@ namespace Sculpt.Core.Tests
             var all = new List<Vec3d>();
             foreach (BrRegion r in _br.Regions)
             {
-                Vec3d poi = _br.Pois[r.Poi].Centre;
+                Vec3d poi = r.Anchor;
                 Assert.That(r.Building.Min.X < r.Pads[0].X && r.Pads[0].X < r.Building.Max.X, Is.True, "the pads are in the building");
                 for (int i = 0; i < 4; i++)
                 {
@@ -135,7 +159,7 @@ namespace Sculpt.Core.Tests
                     Assert.That(Stands(p), Is.True, $"pad {r.Name} {i} at {p}");
                     Assert.That(Stands(r.LootSpots[i] + new Vec3d(0.5, 0, 0)) || Stands(r.LootSpots[i] - new Vec3d(0.5, 0, 0)), Is.True);
                     double toPoi = (new Vec3d(p.X, 0, p.Z) - new Vec3d(poi.X, 0, poi.Z)).Length;
-                    Assert.That(toPoi, Is.EqualTo(_br.PadToPoi).Within(1e-6), $"{r.Name} pad {i} is {toPoi:0.000} m from {_br.Pois[r.Poi].Name}");
+                    Assert.That(toPoi, Is.EqualTo(_br.PadToPoi).Within(1e-6), $"{r.Name} pad {i} is {toPoi:0.000} m from its anchor");
                     Assert.That((p - r.LootSpots[i]).HorizontalLength, Is.EqualTo(_br.PadToLoot).Within(1e-6));
                     // The walk to the loot is a straight, clear line out of the doorway.
                     Vec3d d = (r.LootSpots[i] - p).WithY(0);
@@ -151,7 +175,9 @@ namespace Sculpt.Core.Tests
             Assert.That(all.Count, Is.EqualTo(32));
             TestContext.WriteLine($"pad to POI {_br.PadToPoi:0.0} m, pad to loot {_br.PadToLoot:0.0} m");
             Assert.That(_br.PadToLoot, Is.InRange(8.0, 20.0), "a short walk");
-            Assert.That(_br.PadToPoi, Is.InRange(180.0, 260.0)); // the 1,306 m map (120..180 on the 921 m one, 90..160 on the 614 m one)
+            Assert.That(_br.PadToPoi, Is.EqualTo(BrSpawnKit.PadToAnchor).Within(1e-6));
+            foreach (BrRegion r in _br.Regions)
+                Assert.That((r.Anchor - _br.Centre).HorizontalLength, Is.EqualTo(BrLayout.AnchorRing).Within(1e-6), "every anchor is as far from the middle");
         }
 
         [Test]
@@ -178,8 +204,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void ChestsAndItemsRestOnFloors_InTheClear()
         {
-            Assert.That(_br.Chests.Count % 8, Is.EqualTo(0));
-            Assert.That(_br.Chests.Count, Is.GreaterThan(8 * 60), "plenty of loot, much of it behind walls");
+            Assert.That(_br.Chests.Count, Is.GreaterThan(9 * BrLayout.MinChests), "plenty of loot, much of it behind walls");
             foreach (BrChestSpot ch in _br.Chests)
             {
                 Vec3d p = ItemRules.Settle(_t, ch.Position + new Vec3d(0, 0.5, 0));

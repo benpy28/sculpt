@@ -71,7 +71,7 @@ namespace Sculpt.Core
         public const double SegmentRise = 0.6;
 
         /// <summary>One building on the module grid, built from its edges and slab holes.</summary>
-        internal sealed class Building
+        public sealed class Building
         {
             public double X0, Z0;
             /// <summary>Ground floor height: a building on a hill stands on a level footing at this height (map v3).</summary>
@@ -440,8 +440,8 @@ namespace Sculpt.Core
         }
 
         /// <summary>
-        /// An open stairwell in module column (or row) <paramref name="lane"/>: two flights side by side, ground to first
-        /// floor and first floor to roof, over three cells in a line. The flights rise toward <paramref name="dir"/> (+1 or
+        /// An open stairwell in module column (or row) <paramref name="lane"/>: one flight a storey, side by side in two
+        /// halves of the lane that alternate (so a tall building's flights stack every second storey), up to the roof, over three cells in a line. The flights rise toward <paramref name="dir"/> (+1 or
         /// -1 along the axis): each starts in the far cell, crosses the middle cell (open above, through every slab, so
         /// there is headroom) and arrives at the near cell's floor. Opens the walls across the stairwell.
         /// </summary>
@@ -461,7 +461,7 @@ namespace Sculpt.Core
             for (int s = 0; s < b.Storeys; s++)
             {
                 double y0 = b.Y0 + s * StoreyHeight, y1 = y0 + StoreyHeight;
-                double l0 = laneLo + (flip ? 1 - s : s) * StairWidth, l1 = l0 + StairWidth;
+                double l0 = laneLo + (flip ? 1 - s % 2 : s % 2) * StairWidth, l1 = l0 + StairWidth; // switchback: lanes alternate, any number of storeys
                 double a0 = Math.Min(low, high), a1 = Math.Max(low, high);
                 Vec3d lo = alongZ ? new Vec3d(l0, y0, a0) : new Vec3d(a0, y0, l0);
                 Vec3d hi = alongZ ? new Vec3d(l1, y1, a1) : new Vec3d(a1, y1, l1);
