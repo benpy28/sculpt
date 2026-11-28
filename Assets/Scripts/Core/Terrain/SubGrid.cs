@@ -378,8 +378,33 @@ namespace Sculpt.Core
                 var span = new Aabb(new Vec3d(Math.Min(origin.X, end.X), Math.Min(origin.Y, end.Y), Math.Min(origin.Z, end.Z)),
                                     new Vec3d(Math.Max(origin.X, end.X), Math.Max(origin.Y, end.Y), Math.Max(origin.Z, end.Z)));
                 if (AirAround(span, 64)) return new TerrainHit();
+                if (maxDistance > 2 * ChunkSize * SubSize) return RaycastBySegments(origin, d, maxDistance);
             }
             return TerrainGeometry.Raycast(this, origin, direction, maxDistance);
+        }
+
+        /// <summary>
+        /// A long ray in chunk-long pieces: a piece with only all-air chunks around it is skipped, the others are walked
+        /// cell by cell from where the piece starts. A sparse grid (props on a big map) is mostly air, and walking 250 m
+        /// of 0.3 m cells for every shot cost more than everything else a shot does. Nearest hit first, as before.
+        /// </summary>
+        private TerrainHit RaycastBySegments(Vec3d origin, Vec3d d, double maxDistance)
+        {
+            double seg = ChunkSize * SubSize;
+            for (double t0 = 0; t0 < maxDistance; t0 += seg)
+            {
+                double t1 = Math.Min(maxDistance, t0 + seg);
+                Vec3d a = origin + d * t0, b = origin + d * t1;
+                var span = new Aabb(new Vec3d(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Min(a.Z, b.Z)),
+                                    new Vec3d(Math.Max(a.X, b.X), Math.Max(a.Y, b.Y), Math.Max(a.Z, b.Z)));
+                if (AirAround(span)) continue;
+                TerrainHit h = TerrainGeometry.Raycast(this, a, d, t1 - t0);
+                if (!h.Hit) continue;
+                h.Distance += t0;
+                h.Point = origin + d * h.Distance;
+                return h;
+            }
+            return new TerrainHit();
         }
 
         /// <summary>

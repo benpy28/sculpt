@@ -45,8 +45,23 @@ namespace Sculpt.Core
             return a || b;
         }
 
+        /// <summary>
+        /// Cast rays into B first, then into A only as far as B's hit. The same answer (the nearer hit, A's on a tie)
+        /// when both worlds report their nearest hit within the distance asked, ends included; much cheaper when B
+        /// (buildings) is usually hit first and A (ground and props) is costly to walk far. The battle royale map sets it.
+        /// </summary>
+        public bool RayIntoBFirst;
+
         public TerrainHit Raycast(Vec3d origin, Vec3d direction, double maxDistance)
         {
+            if (RayIntoBFirst)
+            {
+                TerrainHit bf = B.Raycast(origin, direction, maxDistance);
+                TerrainHit af = A.Raycast(origin, direction, bf.Hit ? bf.Distance : maxDistance);
+                if (!bf.Hit) return af;
+                if (!af.Hit) return bf;
+                return bf.Distance < af.Distance ? bf : af;
+            }
             TerrainHit a = A.Raycast(origin, direction, maxDistance);
             TerrainHit b = B.Raycast(origin, direction, a.Hit ? a.Distance : maxDistance);
             if (!a.Hit) return b;

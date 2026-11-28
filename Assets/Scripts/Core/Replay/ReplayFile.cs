@@ -64,8 +64,8 @@ namespace Sculpt.Core.Replay
         private readonly MatchStream _stream;
         private readonly List<ReplayFile.SegmentInfo> _index = new List<ReplayFile.SegmentInfo>();
         private bool _done;
-        public long BytesWritten => _out.Position;
-        public int SegmentsWritten => _index.Count;
+        public long BytesWritten { get { lock (_gate) return _out.Position; } }
+        public int SegmentsWritten { get { lock (_gate) return _index.Count; } }
 
         public ReplayWriter(Stream output, ReplayHeader header, MatchStream stream)
         {
@@ -87,23 +87,67 @@ namespace Sculpt.Core.Replay
             foreach (StreamSegment s in stream.Segments) if (s.Closed) OnSegment(s);
         }
 
+        /// <summary>
+        /// Pack and write each closed segment on a worker thread instead of the caller's (the server's tick). Packing ten
+        /// seconds of a 32-player match took 13 ms in .NET and 30-40 ms in the Editor, a slow tick every 10 s. Segments
+        /// are still written in order; <see cref="Finish"/> waits for them. Set before the first segment closes.
+        /// </summary>
+        public bool Background;
+
+        private readonly object _gate = new object();
+        private System.Threading.Tasks.Task _work = System.Threading.Tasks.Task.CompletedTask;
+        private Exception _failed;
+
         private void OnSegment(StreamSegment seg)
         {
             if (_done) return;
-            foreach (ReplayFile.SegmentInfo i in _index) if (i.Index == seg.Index) return;
-            byte[] packed = Pack(seg.Raw.Buffer, seg.Raw.Length);
+            lock (_gate)
+            {
+                foreach (int i in _queued) if (i == seg.Index) return;
+                _queued.Add(seg.Index);
+            }
+            // A closed segment is never written to again (the stream appends to the next one), so the worker can read it.
+            int index = seg.Index, first = seg.FirstTick, last = seg.LastTick;
+            byte[] raw = seg.Raw.Buffer;
+            int length = seg.Raw.Length;
+            if (!Background) { WriteSegment(index, first, last, raw, length); return; }
+            lock (_gate)
+                _work = _work.ContinueWith(_ =>
+                {
+                    try { WriteSegment(index, first, last, raw, length); }
+                    catch (Exception e) { lock (_gate) _failed ??= e; }
+                }, System.Threading.Tasks.TaskScheduler.Default);
+        }
+
+        private readonly List<int> _queued = new List<int>();
+
+        private void WriteSegment(int index, int first, int last, byte[] raw, int length)
+        {
+            byte[] packed = Pack(raw, length);
             var w = new ByteWriter(32);
             w.U8((byte)'S');
-            w.I32(seg.Index);
-            w.I32(seg.FirstTick);
-            w.I32(seg.LastTick);
-            w.VarU((ulong)seg.Raw.Length);
+            w.I32(index);
+            w.I32(first);
+            w.I32(last);
+            w.VarU((ulong)length);
             w.VarU((ulong)packed.Length);
-            long at = _out.Position;
-            _out.Write(w.Buffer, 0, w.Length);
-            _out.Write(packed, 0, packed.Length);
-            _out.Flush();
-            _index.Add(new ReplayFile.SegmentInfo { Index = seg.Index, Offset = at, FirstTick = seg.FirstTick, LastTick = seg.LastTick });
+            lock (_gate)
+            {
+                long at = _out.Position;
+                _out.Write(w.Buffer, 0, w.Length);
+                _out.Write(packed, 0, packed.Length);
+                _out.Flush();
+                _index.Add(new ReplayFile.SegmentInfo { Index = index, Offset = at, FirstTick = first, LastTick = last });
+            }
+        }
+
+        /// <summary>Waits until every segment closed so far is in the file (immediate when not <see cref="Background"/>).</summary>
+        public void WaitWritten()
+        {
+            System.Threading.Tasks.Task t;
+            lock (_gate) t = _work;
+            t.Wait();
+            lock (_gate) if (_failed != null) throw new IOException("A replay segment could not be written.", _failed);
         }
 
         /// <summary>Closes the stream's last segment and writes the index. The output stays open (the caller owns it).</summary>
@@ -111,8 +155,9 @@ namespace Sculpt.Core.Replay
         {
             if (_done) return;
             if (!_stream.Finished) _stream.Finish();
-            _done = true;
             _stream.SegmentClosed -= OnSegment;
+            WaitWritten();
+            _done = true;
             var f = new ByteWriter(256);
             f.VarU((ulong)_index.Count);
             foreach (ReplayFile.SegmentInfo i in _index)

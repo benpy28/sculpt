@@ -18,6 +18,14 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        if (args.Length > 1 && args[0] == "replay")
+            return ReplayRun.Run(args[1], args.Length > 2 && args[2] != "--stream" ? double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : 6,
+                Array.IndexOf(args, "--stream") >= 0);
+        if (args.Length > 0 && args[0] == "holes")
+        {
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            return HoleRun.Run(args.Length > 1 ? int.Parse(args[1]) : 6, args.Length > 2 ? double.Parse(args[2], ci) : 30, args.Length > 3 ? double.Parse(args[3], ci) : 3);
+        }
         double secs = args.Length > 0 ? double.Parse(args[0], System.Globalization.CultureInfo.InvariantCulture) : 120;
         BrMode mode = args.Length > 1 ? (BrMode)Enum.Parse(typeof(BrMode), args[1], true) : BrMode.Solos;
         int seed = args.Length > 2 ? int.Parse(args[2]) : 5;

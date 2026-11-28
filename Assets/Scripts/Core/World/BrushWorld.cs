@@ -297,12 +297,53 @@ namespace Sculpt.Core
             var span = new Aabb(
                 new Vec3d(Math.Min(origin.X, end.X), Math.Min(origin.Y, end.Y), Math.Min(origin.Z, end.Z)),
                 new Vec3d(Math.Max(origin.X, end.X), Math.Max(origin.Y, end.Y), Math.Max(origin.Z, end.Z)));
-            // Long rays over a big world: walk the hash cells along the ray instead of the whole span.
-            List<int> near = span.Max.X - span.Min.X + span.Max.Y - span.Min.Y + span.Max.Z - span.Min.Z > 8 * CellSize
-                ? NearRay(origin, dir, maxDistance)
-                : Near(span.Expand(0.01));
             double best = maxDistance;
-            for (int i = 0; i < near.Count; i++)
+            if (span.Max.X - span.Min.X + span.Max.Y - span.Min.Y + span.Max.Z - span.Min.Z <= 8 * CellSize)
+            {
+                List<int> near = Near(span.Expand(0.01));
+                ClipAll(near, 0, origin, dir, ref best, ref result);
+                return result;
+            }
+            // Long rays over a big world: walk the hash cells the ray passes through, nearest first (3D DDA), and stop once
+            // the nearest hit so far lies before the cell still to come. A brush is listed in every cell its bounds touch,
+            // so one hit at distance t is in the cell the ray is in at t: nothing gathered later can be nearer. (A 250 m
+            // shot used to gather and clip every brush in a 9 m tube along its whole length: thousands in a village.)
+            var list = _scratch ??= new List<int>();
+            var seen = _seen ??= new HashSet<int>();
+            list.Clear();
+            seen.Clear();
+            int cx = Cell(origin.X), cy = Cell(origin.Y), cz = Cell(origin.Z);
+            int sx = Math.Sign(dir.X), sy = Math.Sign(dir.Y), sz = Math.Sign(dir.Z);
+            double tx = Boundary(origin.X, dir.X, cx), ty = Boundary(origin.Y, dir.Y, cy), tz = Boundary(origin.Z, dir.Z, cz);
+            double dx = sx != 0 ? CellSize / Math.Abs(dir.X) : double.PositiveInfinity;
+            double dy = sy != 0 ? CellSize / Math.Abs(dir.Y) : double.PositiveInfinity;
+            double dz = sz != 0 ? CellSize / Math.Abs(dir.Z) : double.PositiveInfinity;
+            int done = 0;
+            for (int guard = (int)(maxDistance / CellSize) * 3 + 8; guard > 0; guard--)
+            {
+                Gather(Key(cx, cy, cz), list, seen);
+                ClipAll(list, done, origin, dir, ref best, ref result);
+                done = list.Count;
+                double exit = Math.Min(tx, Math.Min(ty, tz));
+                if (exit > maxDistance || (result.Hit && best <= exit)) break;
+                if (tx <= ty && tx <= tz) { cx += sx; tx += dx; }
+                else if (ty <= tz) { cy += sy; ty += dy; }
+                else { cz += sz; tz += dz; }
+            }
+            return result;
+        }
+
+        private static double Boundary(double o, double d, int cell)
+        {
+            if (d > 0) return ((cell + 1) * CellSize - o) / d;
+            if (d < 0) return (cell * CellSize - o) / d;
+            return double.PositiveInfinity;
+        }
+
+        /// <summary>Clips the ray against near[from..]: the nearest hit wins (the first in list order on a tie).</summary>
+        private void ClipAll(List<int> near, int from, Vec3d origin, Vec3d dir, ref double best, ref TerrainHit result)
+        {
+            for (int i = from; i < near.Count; i++)
             {
                 int id = near[i];
                 Brush b = _brushes[id];
@@ -316,7 +357,6 @@ namespace Sculpt.Core
                 result.Normal = n;
                 result.Brush = id + 1;
             }
-            return result;
         }
 
         // ------------------------------------------------------------------ exact shape tests
@@ -476,26 +516,6 @@ namespace Sculpt.Core
                 for (int y = y0; y <= y1; y++)
                     for (int z = z0; z <= z1; z++)
                         Gather(Key(x, y, z), list, seen);
-            return list;
-        }
-
-        private List<int> NearRay(Vec3d o, Vec3d d, double maxT)
-        {
-            var list = _scratch ??= new List<int>();
-            var seen = _seen ??= new HashSet<int>();
-            list.Clear();
-            seen.Clear();
-            // Sample the ray every half cell and gather a one-cell neighbourhood: conservative and cheap.
-            int steps = (int)Math.Ceiling(maxT / (CellSize * 0.5)) + 1;
-            for (int s = 0; s <= steps; s++)
-            {
-                Vec3d p = o + d * Math.Min(maxT, s * CellSize * 0.5);
-                int cx = Cell(p.X), cy = Cell(p.Y), cz = Cell(p.Z);
-                for (int x = cx - 1; x <= cx + 1; x++)
-                    for (int y = cy - 1; y <= cy + 1; y++)
-                        for (int z = cz - 1; z <= cz + 1; z++)
-                            Gather(Key(x, y, z), list, seen);
-            }
             return list;
         }
 

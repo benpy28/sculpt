@@ -604,8 +604,29 @@ namespace Sculpt.Core.Net
         {
             PrepareSight();
             if (_sight == null || Walls == null) return;
-            foreach (TileChange c in Walls.Changes) _sight.Rebuild(Walls.BoundsOf(c.Tile));
+            if (Walls.Changes.Count == 0) return;
+            // One redo per patch of neighbouring changes, not one per change: a blast or a pump hole changes a dozen
+            // touching tiles (some twice), and each redo also covers a metre round its box. Redoing any box gives the
+            // grid exactly as built from the shapes, so the union of touching boxes is the same result.
+            _sightBoxes.Clear();
+            foreach (TileChange c in Walls.Changes)
+            {
+                Aabb b = Walls.BoundsOf(c.Tile);
+                for (int k = 0; k < _sightBoxes.Count; k++)
+                {
+                    Aabb o = _sightBoxes[k];
+                    if (!o.Expand(1.0).Overlaps(b)) continue;
+                    _sightBoxes.RemoveAt(k);
+                    b = new Aabb(new Vec3d(Math.Min(b.Min.X, o.Min.X), Math.Min(b.Min.Y, o.Min.Y), Math.Min(b.Min.Z, o.Min.Z)),
+                                 new Vec3d(Math.Max(b.Max.X, o.Max.X), Math.Max(b.Max.Y, o.Max.Y), Math.Max(b.Max.Z, o.Max.Z)));
+                    k = -1; // the grown box may now touch one seen before
+                }
+                _sightBoxes.Add(b);
+            }
+            foreach (Aabb b in _sightBoxes) _sight.Rebuild(b);
         }
+
+        private readonly List<Aabb> _sightBoxes = new List<Aabb>();
 
         /// <summary>False only when no straight line from a to b can get through (the sight grid, generous: it never says
         /// no to a line a ray would pass). A cheap first test before ray casts (the bots' eyes).</summary>

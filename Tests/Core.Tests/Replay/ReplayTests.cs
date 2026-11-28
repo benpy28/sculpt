@@ -104,6 +104,32 @@ namespace Sculpt.Core.Tests.Replay
             return rig;
         }
 
+        [Test]
+        public void ABackgroundWriter_WritesTheSameFileAsOneOnTheServerThread()
+        {
+            // Packing a segment on the server's tick cost a 30-40 ms tick every 10 s in the Editor; the game now packs and
+            // writes on a worker. The file must not change by a byte (segments in order, the footer after the last).
+            var s = NewDuelServer(out BreachMapInfo info, (c, d, r) => { });
+            SpawnItems(s, info);
+            MatchStream stream = s.StartStream(new ReplayConfig { KeyEveryTicks = SimTime.TicksPerSecond });
+            var header = new ReplayHeader { Map = "Duel", Mode = "test", Build = "tests", StartedUtcTicks = 1 };
+            var front = new MemoryStream();
+            var back = new MemoryStream();
+            var a = new ReplayWriter(front, header, stream);
+            var b = new ReplayWriter(back, header, stream) { Background = true };
+            s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Hard), 4), 1, info.TeamSpawns[0][0], info.SpawnYaw[0]);
+            s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Hard), 5), 2, info.TeamSpawns[1][0], info.SpawnYaw[1]);
+            for (int i = 0; i < 12 * SimTime.TicksPerSecond; i++) s.Step();
+            b.WaitWritten();
+            Assert.That(b.SegmentsWritten, Is.EqualTo(a.SegmentsWritten), "every closed segment is in the file once waited for");
+            a.Finish();
+            b.Finish();
+            Assert.That(a.SegmentsWritten, Is.GreaterThanOrEqualTo(12));
+            Assert.That(back.ToArray(), Is.EqualTo(front.ToArray()));
+            ReplayFile f = ReplayFile.Read(back.ToArray());
+            Assert.That(f.Segments.Count, Is.EqualTo(a.SegmentsWritten));
+        }
+
         private static Rig _match;
         private static byte[] _matchFile;
 

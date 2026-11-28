@@ -356,7 +356,7 @@ namespace Sculpt.Game.Net
                     Mode = ModeLabel,
                     Build = Application.version,
                     StartedUtcTicks = DateTime.UtcNow.Ticks,
-                }, stream);
+                }, stream) { Background = true }; // packing a segment every 10 s was a 30-40 ms server tick
                 _recMovedMeters = 0;
                 _recHadLast = false;
                 _recMatchPlayed = false;

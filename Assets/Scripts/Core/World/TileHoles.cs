@@ -185,6 +185,39 @@ namespace Sculpt.Core
             return false;
         }
 
+        /// <summary>
+        /// <see cref="InBlock(int, int, Func{int, int, bool})"/> where <paramref name="pass"/> already holds which cells of
+        /// this tile pass the test: a 2 x 2 block that lies inside the tile is read from the bits, only blocks across
+        /// the tile's edge walk to the next tile. Same answer, a fraction of the work (the tidy asks this for every cell
+        /// of every tile around a hole, many times over).
+        /// </summary>
+        private bool InBlock(int tile, int cell, ulong pass, Func<int, int, bool> test)
+        {
+            int i = cell % N, j = cell / N;
+            for (int di = 0; di < 2; di++)
+            {
+                int i2 = di == 0 ? i + 1 : i - 1;
+                for (int dj = 2; dj < 4; dj++)
+                {
+                    int j2 = dj == 2 ? j + 1 : j - 1;
+                    if (i2 >= 0 && i2 < N && j2 >= 0 && j2 < N)
+                    {
+                        ulong need = (1ul << (i2 + N * j)) | (1ul << (i + N * j2)) | (1ul << (i2 + N * j2));
+                        if ((pass & need) == need) return true;
+                        continue;
+                    }
+                    int a = Step(tile, cell, di, out int ca);
+                    int b = Step(tile, cell, dj, out int cb);
+                    int d, cd;
+                    if (a >= 0) d = Step(a, ca, dj, out cd);
+                    else if (b >= 0) d = Step(b, cb, di, out cd);
+                    else { d = a; cd = 0; }
+                    if (test(a, ca) && test(b, cb) && test(d, cd)) return true;
+                }
+            }
+            return false;
+        }
+
         /// <summary>Fixed roughness for a spot on a wall: -1..1 from a hash of its position (mm).</summary>
         private static double Rough(Vec3d p)
         {
@@ -244,7 +277,7 @@ namespace Sculpt.Core
                     for (int c = 0; c < Cells; c++)
                     {
                         bool open = ((m >> c) & 1) != 0;
-                        if (open || ((lk >> c) & 1) != 0 || InBlock(u, c, solidF)) continue;
+                        if (open || ((lk >> c) & 1) != 0 || InBlock(u, c, ~m, solidF)) continue;
                         m |= 1ul << c;
                         work[u] = m;
                         changed = true;
@@ -257,7 +290,7 @@ namespace Sculpt.Core
                     for (int c = 0; c < Cells; c++)
                     {
                         bool open = ((m >> c) & 1) != 0;
-                        if (!open || InBlock(u, c, openF)) continue;
+                        if (!open || InBlock(u, c, m, openF)) continue;
                         m &= ~(1ul << c);
                         work[u] = m;
                         changed = true;
@@ -276,8 +309,9 @@ namespace Sculpt.Core
                     if (!Partial(u)) continue;
                     for (int c = 0; c < Cells; c++)
                     {
-                        bool open = ((W(u) >> c) & 1) != 0;
-                        if (InBlock(u, c, open ? openF : solidF)) continue;
+                        ulong wu = W(u);
+                        bool open = ((wu >> c) & 1) != 0;
+                        if (InBlock(u, c, open ? wu : ~wu, open ? openF : solidF)) continue;
                         int bi = (c % N) & ~1, bj = (c / N) & ~1;
                         ulong block = (1ul << (bi + N * bj)) | (1ul << (bi + 1 + N * bj)) | (1ul << (bi + N * (bj + 1))) | (1ul << (bi + 1 + N * (bj + 1)));
                         int opens = PopCount(W(u) & block);

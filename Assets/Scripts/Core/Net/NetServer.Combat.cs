@@ -280,7 +280,11 @@ namespace Sculpt.Core.Net
         {
             if (Walls == null) return null;
             var all = new List<TileChange>();
-            for (int i = 0; i < Walls.Count; i++)
+            // Only tiles play has touched can differ from the build (a quarter of a million on the battle royale map, and
+            // this runs for every replay key frame): in tile order, as before.
+            var touched = new List<int>(Walls.Touched);
+            touched.Sort();
+            foreach (int i in touched)
             {
                 WallTile t = Walls[i];
                 if (t.Changed)

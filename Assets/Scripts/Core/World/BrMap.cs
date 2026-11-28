@@ -180,7 +180,8 @@ namespace Sculpt.Core
         }
 
         /// <summary>What movement and bullets use: the height-map ground, the props grid and the buildings.</summary>
-        public static CompositeTerrain Terrain(SubGrid ground, BrushWorld brushes) => new CompositeTerrain(new CompositeTerrain(Field, ground), brushes);
+        public static CompositeTerrain Terrain(SubGrid ground, BrushWorld brushes) =>
+            new CompositeTerrain(new CompositeTerrain(Field, ground), brushes) { RayIntoBFirst = true }; // most shots hit a building first: the props grid is then walked only that far
 
         /// <summary>The eight symmetries of the square as (u, v) -> (a u + b v, c u + d v). Regions 2k and 2k+1 share POI k.</summary>
         public static readonly int[][] Sym =
