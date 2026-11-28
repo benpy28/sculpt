@@ -153,8 +153,10 @@ namespace Sculpt.Core.Tests.AntiCheat
             NetServer s = DuelServer(out BreachMapInfo info);
             foreach (GroundItem gi in info.ItemSpawns) s.SpawnItem(gi.Kind, gi.Count, gi.Position);
             s.MatchConfig.Enabled = true;
-            s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Hard), 2), 1, info.TeamSpawns[0][0], info.SpawnYaw[0]);
-            s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Hard), 9), 2, info.TeamSpawns[1][0], info.SpawnYaw[1]);
+            // Seeds 3/5: how much two bots fight in 90 s depends on the seeds. Since the countdown freeze (2026-11-28) the
+            // old pair 2/9 wandered apart for most of the match (37 shots); 3/5 fights (114 shots, 45 hits).
+            s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Hard), 3), 1, info.TeamSpawns[0][0], info.SpawnYaw[0]);
+            s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Hard), 5), 2, info.TeamSpawns[1][0], info.SpawnYaw[1]);
             for (int t = 0; t < 90 * SimTime.TicksPerSecond; t++) s.Step();
             TestContext.WriteLine(s.Flags.Report());
             foreach (Flag f in s.Flags.Flags) TestContext.WriteLine(f.ToString());
