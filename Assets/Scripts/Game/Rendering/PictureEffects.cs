@@ -44,7 +44,7 @@ namespace Sculpt.Game.Rendering
         /// enough that a wall in shade never turns into a dark hiding place.</summary>
         public static readonly Vector4 ShadeTint = new Vector4(0.70f, 0.75f, 0.86f, 1f);
         /// <summary>Atmospheric fog density per metre at ground level and the most of a view it may cover.</summary>
-        public const float FogDensity = 0.0042f, FogMax = 0.7f;
+        public const float FogDensity = 0.0026f, FogMax = 0.55f; // graphics pass 2026-11-28: was 0.0042 / 0.7, milked out hills a few hundred metres away
 
         private readonly Camera _camera;
         private VolumeProfile _profile;

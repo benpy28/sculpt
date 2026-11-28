@@ -32,7 +32,7 @@ namespace Sculpt.Game.World
         private const double StepRise = 0.15;
 
         public static readonly Color Floor = new Color(0.66f, 0.62f, 0.56f);
-        public static readonly Color Frame = new Color(0.27f, 0.33f, 0.42f);
+        public static readonly Color Frame = new Color(0.70f, 0.67f, 0.61f); // stone trim (graphics pass 2026-11-28, Ben: was navy steel, read as boxes outlining each module)
         public static readonly Color Stairs = new Color(0.60f, 0.58f, 0.55f);
         public static readonly Color StairNose = new Color(0.95f, 0.76f, 0.18f);
         public static readonly Color Ramp = new Color(0.72f, 0.70f, 0.66f);

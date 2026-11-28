@@ -42,11 +42,11 @@ namespace Sculpt.Game.World
         private HeightField _f;
         private readonly HeightField[] _levels = new HeightField[4];
         private readonly List<Patch> _patches = new List<Patch>();
-        private Func<double, double, bool> _paved;
+        private Func<double, double, float> _paved;
         private readonly List<Patch> _queue = new List<Patch>();
 
         /// <param name="paved">Ground drawn as stone (a building footing's level ground), or null.</param>
-        public void Build(HeightField f, Material material, Func<double, double, bool> paved = null)
+        public void Build(HeightField f, Material material, Func<double, double, float> paved = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             _f = f;
@@ -174,24 +174,18 @@ namespace Sculpt.Game.World
             var colors = new Color[count];
             var uv0 = new List<Vector3>(count);
             var uv1 = new List<Vector2>(count);
-            for (int k = 0; k < count; k++) { uv0.Add(Vector3.zero); uv1.Add(Vector2.zero); }
+            var uv2 = new List<Vector2>(count);
+            for (int k = 0; k < count; k++) { uv0.Add(Vector3.zero); uv1.Add(Vector2.zero); uv2.Add(Vector2.zero); }
             double c = f.Cell;
-            bool linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
-            Color stone = linear ? GroundCover.Concrete.linear : GroundCover.Concrete;
             void Put(int k, double x, double y, double z, Vec3d n)
             {
                 verts[k] = new Vector3((float)x, (float)y, (float)z);
                 normals[k] = n.ToUnity();
                 float shade = ChunkMesher.Shade(n);
-                if (_paved != null && n.Y > 0.9999 && _paved(x, z))
-                {
-                    Color s = stone * shade;
-                    s.a = 1;
-                    colors[k] = s;
-                    uv1[k] = new Vector2(ChunkMesher.KindStone, 0);
-                    return;
-                }
                 colors[k] = new Color(shade, shade, shade, 1);
+                // Paving weight round buildings for callers that pass one (the battle royale's comes from MeadowView's
+                // texture instead, so it can't depend on which detail level of the mesh is showing).
+                uv2[k] = new Vector2(_paved != null ? _paved(x, z) : 0f, 0f);
                 // Depth below the "top" drives grass -> soil -> rock in the ground palette: steeper is deeper.
                 float depth = Mathf.Clamp((float)((0.8 - n.Y) * 6.0), 0f, 2.4f);
                 uv1[k] = new Vector2(ChunkMesher.KindGround, depth);
@@ -251,6 +245,7 @@ namespace Sculpt.Game.World
             mesh.colors = colors;
             mesh.SetUVs(0, uv0);
             mesh.SetUVs(1, uv1);
+            mesh.SetUVs(2, uv2);
             mesh.SetTriangles(tris, 0);
             mesh.RecalculateBounds();
             mesh.UploadMeshData(true);

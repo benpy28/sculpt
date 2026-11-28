@@ -20,6 +20,40 @@ float4 _SculptSunCol;
 float4 _SculptShadeCol;
 // rgb = atmospheric fog colour (matches the sky's horizon), a = most the fog may cover (0..1).
 float4 _SculptFogCol;
+// x = surface detail 0/1, y = grass step (Rendering/PictureEffects).
+float4 _SculptDetail;
+
+float SLHash(float3 p)
+{
+    p = frac(p * 0.3183099 + 0.1);
+    p *= 17.0;
+    return frac(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float SLNoise(float3 x)
+{
+    float3 i = floor(x), f = frac(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(lerp(SLHash(i), SLHash(i + float3(1, 0, 0)), f.x), lerp(SLHash(i + float3(0, 1, 0)), SLHash(i + float3(1, 1, 0)), f.x), f.y),
+                lerp(lerp(SLHash(i + float3(0, 0, 1)), SLHash(i + float3(1, 0, 1)), f.x), lerp(SLHash(i + float3(0, 1, 1)), SLHash(i + float3(1, 1, 1)), f.x), f.y), f.z);
+}
+
+// Surface detail (Picture > Surface detail): a gentle per-pixel relief on the scenery's normal, two octaves, fading
+// with distance so it never shimmers. Shading only: the shape is unchanged.
+float3 SculptDetailNormal(float3 n, float3 ws, float4 positionCS)
+{
+    if (_SculptDetail.x < 0.5) return n;
+    float fade = 1.0 - smoothstep(25.0, 60.0, positionCS.w);
+    if (fade <= 0.0) return n;
+    const float e = 0.07;
+    float3 p = ws * 2.1;
+    float b = SLNoise(p) + 0.5 * SLNoise(p * 3.7);
+    float3 g = float3(SLNoise(p + float3(e, 0, 0)) + 0.5 * SLNoise((p + float3(e, 0, 0)) * 3.7),
+                      SLNoise(p + float3(0, e, 0)) + 0.5 * SLNoise((p + float3(0, e, 0)) * 3.7),
+                      SLNoise(p + float3(0, 0, e)) + 0.5 * SLNoise((p + float3(0, 0, e)) * 3.7)) - b;
+    g -= n * dot(g, n); // only the part along the surface tilts it
+    return normalize(n - g * (2.2 * fade));
+}
 
 // The world's lighting on top of the baked per-axis shade. n = world normal (unit), positionCS = SV_POSITION.
 half3 SculptLight(half3 c, float3 ws, float3 n, float4 positionCS, float scenery)
@@ -30,9 +64,11 @@ half3 SculptLight(half3 c, float3 ws, float3 n, float4 positionCS, float scenery
     if (shadowOn > 0.0 || rich > 0.0)
     {
         float3 L = _SculptSunDir.w > 0.5 ? _SculptSunDir.xyz : float3(0.33, 0.82, -0.47);
+        n = SculptDetailNormal(n, ws, positionCS);
         float ndl = dot(n, L);
-        // Faces turned from the sun are out of it; the edge is quick so walls read as clean planes.
-        float lit = saturate(ndl * 4.0);
+        // Faces turned from the sun are out of it. With rich lighting the turn is gradual (hills and rounded shapes
+        // read as forms); flat lighting with shadows only keeps the quick edge so walls stay clean planes.
+        float lit = rich > 0.0 ? saturate(ndl * 2.2 + 0.08) : saturate(ndl * 4.0);
         float atten = 1.0;
         #if defined(_MAIN_LIGHT_SHADOWS) || defined(_MAIN_LIGHT_SHADOWS_CASCADE)
         if (shadowOn > 0.0)

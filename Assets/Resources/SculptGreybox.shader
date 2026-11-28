@@ -56,6 +56,38 @@ Shader "SCULPT/Greybox"
                 float _Scenery;
             CBUFFER_END
 
+            // Building finishes (World/BuildingPalettes.cs): a 1 m map of building footprints, R = finish / 255.
+            // _PaletteInfo: x, y = map origin (world x, z), z = 1 / map size in metres, w = 1 when on.
+            TEXTURE2D(_PaletteMap); SAMPLER(sampler_PaletteMap);
+            float4 _PaletteInfo;
+
+            half3 PLin(half3 c)
+            {
+            #if defined(UNITY_COLORSPACE_GAMMA)
+                return c;
+            #else
+                return pow(max(c, 0.0), 2.2);
+            #endif
+            }
+
+            // The wall finish at a point a little inside a wall (0 = none: keep the vertex colour). Authored in sRGB.
+            // 1 red brick (the vertex colour), 2 buff brick, 3 dark brick, 4 whitewashed render, 5 grey block.
+            int FinishAt(float3 p, float3 n)
+            {
+                if (_PaletteInfo.w < 0.5) return 0;
+                float2 q = p.xz - n.xz * 0.4;
+                float2 uv = (q - _PaletteInfo.xy) * _PaletteInfo.z;
+                return (int)round(SAMPLE_TEXTURE2D_LOD(_PaletteMap, sampler_PaletteMap, uv, 0).r * 255.0);
+            }
+
+            half3 FinishTint(int f)
+            {
+                const half3 red = half3(0.72, 0.42, 0.30); // BrushView.Brick
+                half3 want = f == 2 ? half3(0.80, 0.67, 0.50) : f == 3 ? half3(0.52, 0.31, 0.25)
+                           : f == 4 ? half3(0.86, 0.84, 0.78) : f == 5 ? half3(0.60, 0.60, 0.58) : red;
+                return PLin(want) / PLin(red);
+            }
+
             struct Attributes
             {
                 float4 positionOS : POSITION;
@@ -224,7 +256,26 @@ Shader "SCULPT/Greybox"
                     float macro = 1.0 + (ValueNoise(p * 0.37) + ValueNoise(p * 1.1) * 0.5) * _Macro * 1.4;
                     // Fine grain (about 3 cm) fades out once a pixel is bigger than it, or it shimmers.
                     float grain = 1.0 + ValueNoise(p * 31.0) * _Noise * 1.6 * saturate(1.0 - (fw - 0.01) / 0.02);
-                    if (surface < 0.25 && n.y < 0.5) c = Brick(p, n, c, fw);
+                    int finish = surface < 0.25 && n.y < 0.5 ? FinishAt(p, normalize(i.normalWS)) : 0;
+                    if (finish > 1) c *= FinishTint(finish);
+                    if (finish == 4)
+                    {
+                        // Whitewashed render: no bricks, soft trowel cloud.
+                        c *= 1.0 + ValueNoise(p * 2.3) * 0.06 + ValueNoise(p * 9.0) * 0.03 * saturate(1.0 - (fw - 0.01) / 0.03);
+                    }
+                    else if (finish == 5)
+                    {
+                        // Grey block: big blocks (0.45 x 0.225 m) with fine grain.
+                        float2 uvb = n.z > n.x ? p.xy : p.zy;
+                        float row = floor(uvb.y / 0.225);
+                        float u = uvb.x / 0.45 + (row - 2.0 * floor(row * 0.5)) * 0.5;
+                        float fx = frac(u) * 0.45, fy = frac(uvb.y / 0.225) * 0.225;
+                        float e = min(min(fx, 0.45 - fx), min(fy, 0.225 - fy));
+                        float joint = 1.0 - smoothstep(0.004 - fw * 0.5, 0.009 + fw * 0.5, e);
+                        joint *= saturate(1.0 - (fw - 0.012) / 0.03);
+                        c *= (1.0 + (Hash3(float3(floor(u), row, 3.0)) - 0.5) * 0.08) * (1.0 - 0.28 * joint);
+                    }
+                    else if (surface < 0.25 && n.y < 0.5) c = Brick(p, n, c, fw);
                     c *= macro * grain;
                     if (dot(i.cell, i.cell) > 1e-6) c = WallState(c, p, n, i.cell, fw);
                 }

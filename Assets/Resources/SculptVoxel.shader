@@ -69,6 +69,11 @@ Shader "SCULPT/Voxel"
                 float _Scenery;
             CBUFFER_END
 
+            // Paving round buildings on the height-map ground (World/MeadowView.cs: G channel; R is where grass grows).
+            // _MeadowMap: x, y = origin, z = 1 / (cell * texels), w = texels (0 = no map: use the vertex weight).
+            float4 _MeadowMap;
+            TEXTURE2D(_MeadowMask); SAMPLER(sampler_MeadowMask);
+
             float Hash3(float3 p)
             {
                 p = frac(p * 0.3183099 + 0.1);
@@ -113,6 +118,7 @@ Shader "SCULPT/Voxel"
                 float3 uv : TEXCOORD0;
                 float2 uv1 : TEXCOORD1; // x = material kind (0 stone, 1 ground, 2 bark, 3 leaves), y = depth below column top
                 float3 normalOS : NORMAL;
+                float2 uv2 : TEXCOORD2; // x = paving weight 0..1 round buildings (height-map ground), 0 elsewhere
             };
 
             struct Varyings
@@ -124,6 +130,7 @@ Shader "SCULPT/Voxel"
                 float3 positionWS : TEXCOORD2;
                 float3 normalWS : TEXCOORD3;
                 float2 kind : TEXCOORD4;
+                float pave : TEXCOORD5;
             };
 
             Varyings vert(Attributes i)
@@ -135,6 +142,7 @@ Shader "SCULPT/Voxel"
                 o.color = i.color;
                 o.uv = i.uv;
                 o.kind = i.uv1;
+                o.pave = i.uv2.x;
                 o.fogFactor = ComputeFogFactor(o.positionCS.z);
                 o.positionWS = ws;
                 o.normalWS = TransformObjectToWorldNormal(i.normalOS);
@@ -143,6 +151,8 @@ Shader "SCULPT/Voxel"
 
             half4 frag(Varyings i) : SV_Target
             {
+                // Pixel footprint in metres (outside the branches: derivatives need uniform control flow).
+                float fwm = max(max(fwidth(i.positionWS.x), fwidth(i.positionWS.y)), fwidth(i.positionWS.z));
                 float3 w = i.positionWS * _DetailScale;
                 float n = Noise3(w) * 0.6 + Noise3(w * 2.7 + 13.1) * 0.3 + Noise3(w * 7.3 + 4.7) * 0.1;
                 float strata = sin(i.positionWS.y * 9.0 + Noise3(i.positionWS * 0.8) * 4.0) * 0.5 + 0.5;
@@ -162,6 +172,16 @@ Shader "SCULPT/Voxel"
                     float3 Nn = normalize(i.normalWS);
                     half3 pal = i.kind.x < 1.5 ? NatureGround(i.positionWS, Nn, i.kind.y)
                               : i.kind.x < 2.5 ? NatureBark(i.positionWS, Nn) : NatureLeaves(i.positionWS, Nn);
+                    // Paving round buildings: a ragged, soft edge from the per-vertex weight (never the mesh's triangles).
+                    float paveW = i.pave;
+                    if (_MeadowMap.w > 0.5 && i.kind.x < 1.5)
+                        paveW = max(paveW, SAMPLE_TEXTURE2D_LOD(_MeadowMask, sampler_MeadowMask, (i.positionWS.xz - _MeadowMap.xy) * _MeadowMap.z + 0.5 / _MeadowMap.w, 0).g);
+                    if (i.kind.x < 1.5 && paveW > 0.001)
+                    {
+                        float edgeN = NNoise(i.positionWS * 1.7 + 5.0) * 0.6 + NNoise(i.positionWS * 5.3) * 0.4;
+                        float paved = smoothstep(0.47, 0.53, paveW + (edgeN - 0.5) * 0.45);
+                        pal = lerp(pal, NaturePaving(i.positionWS, fwm), paved);
+                    }
                     c = pal * i.color.rgb * (1.0 - _SeamDarken * seam);
                 }
 

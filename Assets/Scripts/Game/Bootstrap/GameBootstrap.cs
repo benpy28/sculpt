@@ -137,6 +137,7 @@ namespace Sculpt.Game.Bootstrap
         private SpectatorCamera _spectatorCam;
         private BrDeathCamera _brDeathCam;
         private WorldView _world;
+        private Sculpt.Game.World.MeadowView _meadow;
         private LocalPlayer _player;
         private CameraRig _rig;
         private GameInput _input;
@@ -317,6 +318,7 @@ namespace Sculpt.Game.Bootstrap
 
             Mark("session");
             _world = new GameObject("World").AddComponent<WorldView>();
+            _meadow = null;
             GroundCover cover = null;
             if (brushes != null)
             {
@@ -349,13 +351,17 @@ namespace Sculpt.Game.Bootstrap
                 // footing is grass like the fields.
                 var plinths = new Sculpt.Game.World.Plinths(breachInfo.Block.Buildings, 2.0);
                 HeightField field = BrMap.Field;
-                new GameObject("Smooth Ground").AddComponent<Sculpt.Game.World.HeightFieldView>().Build(field, _world.TerrainMaterial,
-                    (x, z) => plinths.On(x, z, field.HeightAt(x, z)));
+                new GameObject("Smooth Ground").AddComponent<Sculpt.Game.World.HeightFieldView>().Build(field, _world.TerrainMaterial);
+                // Grass blades on it (never on paving or under buildings), and the paving map the ground shader reads.
+                _meadow = new GameObject("Meadow").AddComponent<Sculpt.Game.World.MeadowView>();
+                _meadow.Build(field, (x, z) => plinths.Weight(x, z, field.HeightAt(x, z), 2.5), (x, z) => plinths.Weight(x, z, field.HeightAt(x, z)));
             }
             Mark("ground");
             if (brushes != null)
             {
                 var buildings = new GameObject("Buildings").AddComponent<BrushView>();
+                // Wall finishes per building, the same for every symmetric twin (graphics pass 2026-11-28).
+                Sculpt.Game.World.BuildingPalettes.Build(breachInfo?.Block?.Buildings, breachInfo != null ? breachInfo.SizeX / 2 : 0, breachInfo != null ? breachInfo.SizeZ / 2 : 0);
                 buildings.Build(brushes);
                 buildings.BindTiles(_session.Client.Walls);
                 _session.ClientChanged += () => buildings.BindTiles(_session.Client.Walls);
@@ -379,6 +385,7 @@ namespace Sculpt.Game.Bootstrap
                 new GameObject("Course Race").AddComponent<CourseRaceView>().Init(_player, movement);
             }
             _world.TrackPlayers(_player, _session);
+            if (_meadow != null) _meadow.TrackPlayers(_player, _session);
 
             if (brInfo != null && _session.Server != null && Array.Exists(Environment.GetCommandLineArgs(), a => string.Equals(a, "-autoplay", StringComparison.OrdinalIgnoreCase)))
             {

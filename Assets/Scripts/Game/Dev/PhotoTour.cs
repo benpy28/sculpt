@@ -136,6 +136,9 @@ namespace Sculpt.Game.Dev
             for (_index = 0; _index < _shots.Count; _index++)
             {
                 for (int f = 0; f < 6; f++) yield return null;
+                // Let the near ground, building blocks and grass round the new view finish building (they are budgeted
+                // per frame), so a picture shows what a player standing there sees.
+                yield return new WaitForSecondsRealtime(2f);
                 yield return new WaitForEndOfFrame();
                 string path = Path.Combine(_folder, _shots[_index].Name + ".png");
                 var tex = ScreenCapture.CaptureScreenshotAsTexture();

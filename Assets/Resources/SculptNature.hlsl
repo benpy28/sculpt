@@ -55,29 +55,35 @@ half3 NLin(half3 c)
 #endif
 }
 
-// Grass colour field on the ground (xz only, so blades and the ground under them match).
+// Grass colour field on the ground (xz only, so blades and the ground under them match). A calm meadow (graphics pass
+// 2026-11-28): sage, olive, fresh green and straw drifting over tens of metres, with finer clumps on top; no lime.
 half3 NatureGrass(float3 w)
 {
     float3 p = float3(w.x, 0.0, w.z);
-    float big = NNoise(p * 0.07 + 11.0);
-    float mid = NNoise(p * 0.45 + 3.0);
-    half3 lush = NLin(half3(0.29, 0.49, 0.16));
-    half3 fresh = NLin(half3(0.46, 0.60, 0.21));
-    half3 dry = NLin(half3(0.62, 0.61, 0.31));
-    half3 c = lerp(lush, fresh, saturate(big * 1.4 - 0.2));
-    return lerp(c, dry, smoothstep(0.62, 0.86, mid) * 0.5);
+    float big = NNoise(p * 0.021 + 11.0);              // ~50 m drifts
+    float mid = NNoise(p * 0.09 + 3.0);                // ~11 m patches
+    float small = NNoise(p * 0.55 + 7.0);              // clumps
+    half3 olive = NLin(half3(0.36, 0.43, 0.22));
+    half3 fresh = NLin(half3(0.41, 0.51, 0.25));
+    half3 sage = NLin(half3(0.47, 0.52, 0.35));
+    half3 straw = NLin(half3(0.64, 0.61, 0.38));
+    half3 c = lerp(olive, fresh, smoothstep(0.25, 0.75, big));
+    c = lerp(c, sage, smoothstep(0.55, 0.85, mid) * 0.6);
+    c = lerp(c, straw, smoothstep(0.68, 0.92, NNoise(p * 0.035 + 21.0)) * 0.55);
+    return c * (0.9 + 0.2 * small);
 }
 
-// Bare dirt patches in the meadow (0..1), also where no blades grow.
+// Bare soil in the meadow (0..1): rare, soft-edged worn patches, also where fewer blades grow.
 float NatureDirt(float3 w)
 {
-    return smoothstep(0.70, 0.79, NNoise(float3(w.x, 0.0, w.z) * 0.33 + 27.0));
+    float n = NNoise(float3(w.x, 0.0, w.z) * 0.12 + 27.0) * 0.7 + NNoise(float3(w.x, 0.0, w.z) * 0.6 + 2.0) * 0.3;
+    return smoothstep(0.66, 0.86, n);
 }
 
 half3 NatureSoil(float3 w)
 {
     float n = NNoise(w * 3.1), m = NNoise(w * 9.7 + 5.0);
-    return lerp(NLin(half3(0.42, 0.30, 0.20)), NLin(half3(0.29, 0.21, 0.14)), n) * (0.9 + 0.2 * m);
+    return lerp(NLin(half3(0.47, 0.37, 0.26)), NLin(half3(0.35, 0.27, 0.19)), n) * (0.9 + 0.2 * m);
 }
 
 // Natural ground: grass on tops and over the lip of each step, soil just under it, rock deeper down.
@@ -87,14 +93,33 @@ half3 NatureGround(float3 w, float3 N, float depth)
     float n1 = NNoise(w * 3.1), n2 = NNoise(w * 9.7 + 5.0);
     half3 grass = NatureGrass(w) * (0.88 + 0.24 * n1) * (0.92 + 0.16 * n2);
     half3 soil = NatureSoil(w);
-    half3 rock = NLin(half3(0.57, 0.55, 0.50)) * (0.80 + 0.35 * NNoise(w * 2.3 + 9.0));
+    // Rock: layered and weathered (strata along height, lichen speckle), never a flat grey.
+    float strata = NNoise(float3(w.x * 0.15, w.y * 2.2, w.z * 0.15) + 3.0);
+    half3 rock = lerp(NLin(half3(0.50, 0.48, 0.44)), NLin(half3(0.62, 0.59, 0.53)), strata) * (0.82 + 0.3 * NNoise(w * 2.3 + 9.0));
+    rock = lerp(rock, NLin(half3(0.55, 0.57, 0.40)), smoothstep(0.78, 0.95, NNoise(w * 4.1 + 1.0)) * 0.35);
     float wav = (NNoise(w * 1.7 + 2.0) - 0.5) * 0.25;
     half3 side = lerp(soil, rock, smoothstep(0.45, 0.95, depth + wav));
     float lip = (1.0 - smoothstep(0.03, 0.11, depth + wav * 0.3)) * step(-0.2, N.y);
     float topness = smoothstep(0.45, 0.8, N.y);
-    half3 top = lerp(grass, soil * 1.05, NatureDirt(w) * 0.85);
+    half3 top = lerp(grass, soil * 1.05, NatureDirt(w) * 0.55);
     half3 c = lerp(side, top, saturate(max(topness, lip)));
     return N.y < -0.3 ? rock * 0.8 : c;
+}
+
+// Worn stone paving round buildings: irregular flags (no grid), per-flag tone, thin dark joints, grass creeping in.
+// fw = metres per pixel (joints fade into their average far away so they never shimmer).
+half3 NaturePaving(float3 w, float fw)
+{
+    float3 id;
+    float2 cd = NCells(float3(w.x, 0.0, w.z) * 1.25, id);
+    float tone = NHash(id);
+    half3 c = lerp(NLin(half3(0.61, 0.58, 0.52)), NLin(half3(0.68, 0.65, 0.58)), tone);
+    c *= 0.92 + 0.16 * NNoise(w * 7.0);
+    float aa = fw * 1.6;
+    float joint = 1.0 - smoothstep(0.035 - aa, 0.035 + aa, cd.y);
+    joint *= saturate(1.0 - (fw - 0.02) / 0.04);
+    c = lerp(c, c * 0.78, joint);
+    return c;
 }
 
 half3 NatureBark(float3 w, float3 N)

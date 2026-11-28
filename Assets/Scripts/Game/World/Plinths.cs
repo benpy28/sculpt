@@ -34,6 +34,27 @@ namespace Sculpt.Game.World
             }
         }
 
+        /// <summary>How much (x, z) with ground height y is paving: 1 on the plinth, falling to 0 over
+        /// <paramref name="fade"/> metres past it (on level ground at the building's floor height only). Smooth, so the
+        /// shader can draw a soft, ragged edge instead of whole mesh triangles.</summary>
+        public float Weight(double x, double z, double y, double fade = 1.5)
+        {
+            long key = ((long)(int)Math.Floor(x / Bucket) << 32) ^ (uint)(int)Math.Floor(z / Bucket);
+            if (!_buckets.TryGetValue(key, out List<int> l)) return 0f;
+            double best = 0;
+            foreach (int k in l)
+            {
+                Aabb b = _boxes[k];
+                if (Math.Abs(y - b.Min.Y) > 0.05) continue;
+                double dx = Math.Max(0, Math.Max(b.Min.X - x, x - b.Max.X));
+                double dz = Math.Max(0, Math.Max(b.Min.Z - z, z - b.Max.Z));
+                double d = Math.Sqrt(dx * dx + dz * dz) - (_grow - fade * 0.5);
+                double w = 1.0 - Math.Max(0, Math.Min(1, d / fade));
+                if (w > best) best = w;
+            }
+            return (float)best;
+        }
+
         /// <summary>True if (x, z) with ground height y is plinth: near a building and level with its ground floor.</summary>
         public bool On(double x, double z, double y)
         {
