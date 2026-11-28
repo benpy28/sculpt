@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using NUnit.Framework;
 
 namespace Sculpt.Core.Tests
@@ -45,6 +47,20 @@ namespace Sculpt.Core.Tests
             BotNav slow = BotNav.Build(t, x0, z0, 160, 120, 1.0, topY: BrMap.NavTop, floorY: BrGround.Lowest - 2);
             Assert.That(fast.Nodes.Count, Is.GreaterThan(15000));
             AssertSame(fast, slow);
+        }
+
+        [Test]
+        public void EveryFloorOfATallTower_IsFound_DownToTheGround()
+        {
+            // Ground plus 18 slabs 4.8 m apart (a taller stack than the 12-storey landmark): every one is a floor.
+            var w = new BrushWorld();
+            w.AddBox(new Vec3d(-5, -1, -5), new Vec3d(5, 0, 5), BrushKind.Ground);
+            const int slabs = 18;
+            for (int k = 1; k <= slabs; k++) w.AddBox(new Vec3d(-5, k * 4.8 - 0.3, -5), new Vec3d(5, k * 4.8, 5), BrushKind.Floor);
+            BotNav n = BotNav.Build(w, -2, -2, 4, 4, 1.0, topY: slabs * 4.8 + 5, floorY: -2);
+            var levels = new HashSet<double>();
+            foreach (BotNav.Node node in n.Nodes) levels.Add(Math.Round(node.Y, 2));
+            Assert.That(levels.Count, Is.EqualTo(slabs + 1), "the ground and every slab");
         }
     }
 }
