@@ -24,6 +24,8 @@ namespace Sculpt.Core.Tests
             Assert.That(k, Is.Not.Null);
             int tiles = B.TileEnd - B.TileFirst;
             TestContext.WriteLine($"South: {tiles} tiles, {B.Buildings.Count} buildings, {B.Chests.Count} chests, {B.Items.Count} items, {B.Props.Count} props asked");
+            foreach (PropRequest q in BrNature.GetPlan().Dropped)
+                if (q.Segment == Id) TestContext.WriteLine($"  dropped {q.Shape} at {q.X:0.0}, {q.Z:0.0}");
             foreach (var g in k.Cost.GroupBy(c => c.Name).OrderByDescending(g => g.Sum(c => c.Tiles)))
                 TestContext.WriteLine($"  {g.Key}: {g.Count()} x, {g.Sum(c => c.Tiles)} tiles");
         }

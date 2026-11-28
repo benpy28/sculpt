@@ -36,6 +36,9 @@ namespace Sculpt.Core
             SouthKit.Last = k;
             Square(k);
             SquareBlocks(k);
+            // The open ground round the town (the hills, the outskirts): more groves, trees, rocks and bushes than the
+            // default, so crossing between districts is never a run over bare grass.
+            b.Nature.Groves = 9; b.Nature.LoneTrees = 30; b.Nature.RockGroups = 20; b.Nature.Bushes = 45;
             Districts(k);
             if (k.HomeChests != BrLayout.HomeChests)
                 throw new InvalidOperationException($"South: {k.HomeChests} home chests, want {BrLayout.HomeChests}");
@@ -92,9 +95,6 @@ namespace Sculpt.Core
             k.Chest(new Vec3d(a.X + 20, Core, a.Z + 11), 0, "stall north-east", home: true);
             k.Chest(new Vec3d(a.X - 20, Core, a.Z - 11), Math.PI, "stall south-west", home: true);
             k.Chest(new Vec3d(a.X + 20, Core, a.Z - 11), Math.PI, "stall south-east", home: true);
-            // Plane trees on the square's corners.
-            b.Tree(a.X - 28, a.Z + 22, 11, big: true);
-            b.Tree(a.X + 28, a.Z + 22, 12, big: true);
 
             // ---- The market hall: a long covered hall on the square's north side, two storeys tall inside (the nave
             // has no floor between), galleries along both sides, wide doors at the ends only: from the square you breach

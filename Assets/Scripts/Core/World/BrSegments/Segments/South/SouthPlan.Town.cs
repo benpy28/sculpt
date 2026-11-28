@@ -35,13 +35,9 @@ namespace Sculpt.Core
             k.Wall(gx0, zGarden0, y, garden, false, 3, 1.5);   // tall end walls: one gate in the west one
             k.Wall(gx1 - 0.3, zGarden0, y, garden, false, 3);
             if (gardenChestPlot >= 0)
-                k.Chest(new Vec3d(gx0 + (gardenChestPlot * 2 + 1) * M, y, zGarden0 + garden * 0.25), 0, nameS + " garden");
-            uint h = BrKit.Hash((int)seed, 3, 77);
-            for (int p = 0; p <= plots; p++)
             {
-                h = BrKit.Hash((int)h, p, 5);
-                if ((h & 3) == 0) continue;
-                k.B.Tree(gx0 + (p * 2 + 1) * M + 1.5, zGarden0 + garden * 0.78, (int)(h >> 8));
+                k.Chest(new Vec3d(gx0 + (gardenChestPlot * 2 + 1) * M, y, zGarden0 + garden * 0.25), 0, nameS + " garden");
+                k.Chest(new Vec3d(gx0 + (gardenChestPlot * 2 + 3) * M, y, zGarden0 + garden * 0.25), 0, nameS + " garden");
             }
             return y;
         }
@@ -49,10 +45,10 @@ namespace Sculpt.Core
         private static void SquareBlocks(SouthKit k)
         {
             // South-west of the square: Cheap Street (three storeys on the high street) and the Tanners' Lane workshops.
-            TerraceBlock(k, 588.6, 196.0, 2, "P* H X* H2 P*", 588.6, 228.8, "P* S2 H2* X* P", 1, 3, 101, Core,
+            TerraceBlock(k, 588.6, 196.0, 2, "P* H X* H2 P*", 588.6, 228.8, "P* S2 H2* X* P*", 1, 2, 101, Core,
                          BrStyle.Brick, BrStyle.Plaster, "Tanners' Lane", "Cheap Street", gardenChestPlot: 1);
             // South-east: Bridge Row and the Mill Lane workshops.
-            TerraceBlock(k, 678.9, 196.0, 2, "H2* P X* H P*", 672.6, 228.8, "P H2* S2 X* P*", 1, 3, 202, Core,
+            TerraceBlock(k, 678.9, 196.0, 2, "H2* P X* H P*", 672.6, 228.8, "P* H2* S2 X* P*", 1, 2, 202, Core,
                          BrStyle.Plaster, BrStyle.Timber, "Mill Lane", "Bridge Row", gardenChestPlot: 2);
         }
 
@@ -79,6 +75,21 @@ namespace Sculpt.Core
             return k.Row(x0, z0, y, storeys, face, roles, seed, depth, name, style, (int)(seed % 5));
         }
 
+        /// <summary>
+        /// A yard walled too tall to climb (three tiles), one gate, a locked shed with a chest and a chest in the yard:
+        /// cheap cover between buildings and loot you breach or walk round to.
+        /// </summary>
+        private static void Yard(SouthKit k, Rect2 r, string name, double gateS = -1, double gateN = -1, double gateW = -1, double gateE = -1, int seed = 0, bool tree = true)
+        {
+            double y = k.Level(r, 1.5, double.NaN, name);
+            k.Walled(r, y, 3, gateS, gateN, gateW, gateE);
+            double sx = r.X1 - SouthKit.W(1) - 1.2, sz = r.Z1 - SouthKit.W(1) - 1.2;
+            BrKit.Shed(k.B, sx, y, sz, chest: false);
+            k.Chest(new Vec3d(sx + 3.3, y, sz + 3.3), Math.PI, name + " shed");
+            k.Chest(new Vec3d(r.X0 + 3.5, y, r.Z0 + 3.5), 0, name);
+            if (tree) k.B.Tree((r.X0 + sx) / 2 + 1, (r.Z0 + r.Z1) / 2 + 2, 990 + seed, big: seed % 2 == 0);
+        }
+
         // ================================================================ West Street and the Corn Market
 
         public const double StreetS = 248, StreetN = 264; // the high street's two building lines
@@ -87,9 +98,9 @@ namespace Sculpt.Core
         {
             BrBuild b = k.B;
             // North side, from the square westward: Weavers' Row (two storeys) up to the Corn Market.
-            Row(k, 546.0, StreetN, 2, SouthKit.Face.South, "H* P T H2* X* S2", 301, BrStyle.Brick, "Weavers' Row", Core);
+            Row(k, 546.0, StreetN, 2, SouthKit.Face.South, "H* P* S2 X* T*", 301, BrStyle.Brick, "Weavers' Row", Core);
             // South side: Pudding Lane between the Corn Market and Cheap Street.
-            Row(k, 545.0, StreetS - W(3), 2, SouthKit.Face.North, "P* H T X*", 302, BrStyle.Plaster, "Pudding Lane", Core);
+            Yard(k, new Rect2(546, 220, 574, 246), "Pudding Yard", gateN: 12, seed: 8);
 
             // The Corn Market: a plaza on the high street with the corn exchange standing in the middle of the road
             // (the street splits round it, so no sight line runs the length of the high street).
@@ -116,10 +127,12 @@ namespace Sculpt.Core
             k.Wall(532, 238, ce.Y0, 4.5, true, 1);
             k.Wall(495, 280, ce.Y0, 4.5, true, 1);
             k.Wall(532, 280, ce.Y0, 4.5, true, 1);
+            k.Chest(new Vec3d(497.2, ce.Y0, 240), 0, "corn market stall");
+            k.Chest(new Vec3d(534.2, ce.Y0, 278.8), Math.PI, "corn market stall");
 
             // Tollgate: the rows by the west road out of town.
-            Row(k, 452.0, StreetN, 2, SouthKit.Face.South, "P S2* H2 X* P*", 303, BrStyle.Timber, "Tollgate Row");
-            Row(k, 452.0, StreetS - W(2), 2, SouthKit.Face.North, "H* P X* H2*", 304, BrStyle.Brick, "Tollgate Row", depth: 2);
+            Row(k, 452.0, StreetN, 2, SouthKit.Face.South, "P* S2* H* X* P*", 303, BrStyle.Timber, "Tollgate Row");
+            Yard(k, new Rect2(452, 220, 488, 246), "Toll Yard", gateN: 4, seed: 1);
         }
 
         // ================================================================ the Upper Town: the church on the hill
@@ -147,41 +160,42 @@ namespace Sculpt.Core
             }
             k.Chest(new Vec3d(nave.Cx(4) + 3.3, y, nz + W(2) / 2), -Math.PI / 2, "church altar");
             // The bell tower at the west end: six storeys, stairs up its north lane, an open belfry, a roof.
-            var tw = new GreyboxBlock.Building(tx, tz, 3, 3, 5) { Y0 = y };
+            var tw = new GreyboxBlock.Building(tx, tz, 3, 3, 4) { Y0 = y };
             k.Stairs(tw, 2, false, -1, 0);
-            for (int s = 0; s < 5; s++)
+            for (int s = 0; s < 4; s++)
             {
                 tw.AlongX[s, 2, 0] = WallKind.Door; tw.AlongX[s, 2, 1] = WallKind.Wall; tw.AlongX[s, 2, 2] = WallKind.Door;
                 if (s == 0) continue;
                 for (int q = 0; q < 3; q++)
                 {
-                    WallKind open = s == 4 ? WallKind.WideDoor : WallKind.Window;
-                    if (s == 4 || (q + s) % 2 == 0) { tw.AlongZ[s, 0, q] = open; tw.AlongX[s, 0, q] = open; }
+                    WallKind open = s == 3 ? WallKind.WideDoor : WallKind.Window;
+                    if (s == 3 || (q + s) % 2 == 0) { tw.AlongZ[s, 0, q] = open; tw.AlongX[s, 0, q] = open; }
                 }
             }
             tw.AlongZ[0, 0, 1] = WallKind.WideDoor;
             tw.AlongX[0, 0, 1] = WallKind.ShutDoor;
             k.Raise(tw, "Church tower", BrStyle.Stone, 4);
             BrKit.Parapet(b, tw);
-            k.Chest(tw, 1, 0, 3, 0, "church tower");
-            k.Chest(tw, 1, 1, 5, 0, "church tower roof");
+            k.Chest(tw, 1, 0, 2, 0, "church tower");
+            k.Chest(tw, 1, 1, 4, 0, "church tower roof");
             b.Poi("St Brannoc's", new Vec3d(nx, y, nz), nave.Bounds, tw.Bounds);
             // The churchyard wall (chest high) with lych gates, and yews.
             k.Walled(yard, y, 1, gateS: 34, gateN: 20, gateE: 22);
-            foreach (var (gx, gz, s) in new[] { (462.0, 318.0, 1), (516.0, 318.0, 2), (462.0, 356.0, 3), (518.0, 352.0, 4), (490.0, 322.0, 5), (500.0, 352.0, 6) })
-                b.Tree(gx, gz, 900 + s, big: s % 2 == 0);
+            k.Chest(new Vec3d(516, y, 356), Math.PI, "churchyard");
+            foreach (var (gx, gz, s) in new[] { (462.0, 318.0, 1), (462.0, 356.0, 3), (490.0, 322.0, 5) })
+                b.Tree(gx, gz, 900 + s);
 
             // Church Street: a terrace climbing the hill east of the churchyard, fronts on the lane to the west.
-            Row(k, 537.0, 300.0, 2, SouthKit.Face.West, "H* S2 P X* T", 311, BrStyle.Plaster, "Church Street");
+            Row(k, 537.0, 300.0, 2, SouthKit.Face.West, "H* S2* P* X* T", 311, BrStyle.Plaster, "Church Street");
             // The rectory garden behind the square's shops: tall walls, one gate, a chest, fruit trees.
             var rg = new Rect2(566, 290, 595, 320);
             double gy = k.Level(rg, 1, double.NaN, "rectory garden");
             k.Walled(rg, gy, 3, gateW: 12);
             BrKit.Shed(b, 586, gy, 305.5);
             k.Chest(new Vec3d(570, gy, 296), 0, "rectory garden");
-            b.Tree(574, 312, 950); b.Tree(582, 296, 951); b.Tree(572, 306, 952, big: true);
+            b.Tree(574, 312, 950); b.Tree(582, 296, 951);
             // Castle Street: two rows on the hill's north shoulder, facing each other across a narrow lane.
-            Row(k, 462.0, 368.0, 2, SouthKit.Face.North, "P H2* S2 X* P*", 312, BrStyle.Timber, "Castle Street");
+            Row(k, 462.0, 368.0, 2, SouthKit.Face.North, "P* H2* S2* X* P*", 312, BrStyle.Timber, "Castle Street");
             // Castle Yard north of it: a walled yard too tall to climb, one gate on the lane, a stable and a chest.
             var cyR = new Rect2(462, 394, 505, 420);
             double cyy = k.Level(cyR, 1.5, double.NaN, "Castle Yard");
@@ -189,7 +203,7 @@ namespace Sculpt.Core
             BrKit.Shed(b, 494, cyy, 408);
             k.Chest(new Vec3d(470, cyy, 412), Math.PI / 2, "Castle Yard");
             b.Tree(480, 406, 940, big: true);
-            Row(k, 520.0, 392.0, 2, SouthKit.Face.West, "S2* X* P*", 314, BrStyle.Brick, "Mount Street");
+            Yard(k, new Rect2(518, 386, 552, 418), "Mount Yard", gateW: 10, seed: 2);
         }
 
         // ================================================================ the north quarter: the inn, the guildhall
@@ -204,7 +218,7 @@ namespace Sculpt.Core
             b.Poi("The Wheatsheaf", new Vec3d(616, iy, 368));
             // The guildhall east of the road: three storeys, a vault in the middle of the ground floor with no door.
             double gx = 666, gz = 352;
-            var g = new GreyboxBlock.Building(gx, gz, 4, 4, 3);
+            var g = new GreyboxBlock.Building(gx, gz, 4, 4, 2);
             g.Y0 = k.Level(SouthKit.RectOf(gx, gz, 4, 4), 2, double.NaN, "guildhall");
             k.Stairs(g, 3, true, +1, 0);
             g.AlongZ[0, 0, 1] = WallKind.ShutDoor;          // onto the north road
@@ -213,13 +227,13 @@ namespace Sculpt.Core
             g.AlongX[0, 1, 2] = WallKind.Wall; g.AlongX[0, 3, 2] = WallKind.Wall;
             g.AlongZ[0, 1, 1] = WallKind.Wall; g.AlongZ[0, 1, 2] = WallKind.Wall;
             g.AlongZ[0, 3, 1] = WallKind.Wall; g.AlongZ[0, 3, 2] = WallKind.Wall;
-            for (int s = 0; s < 3; s++)
+            for (int s = 0; s < 2; s++)
             {
                 // The stair lane's side wall: open where the flights start and arrive (the vault's wall on the ground floor).
                 g.AlongZ[s, 3, 0] = WallKind.Door; g.AlongZ[s, 3, 3] = WallKind.Door;
                 if (s > 0) { g.AlongZ[s, 3, 1] = WallKind.Wall; g.AlongZ[s, 3, 2] = WallKind.Door; }
             }
-            for (int s = 1; s < 3; s++)
+            for (int s = 1; s < 2; s++)
                 for (int q = 0; q < 4; q++)
                 {
                     if ((q + s) % 2 == 0) g.AlongZ[s, 0, q] = WallKind.Window;
@@ -230,14 +244,14 @@ namespace Sculpt.Core
             BrKit.Parapet(b, g);
             k.Chest(g, 1, 1, 0, 0, "guildhall vault");
             k.Chest(g, 2, 2, 0, Math.PI, "guildhall vault");
-            k.Chest(g, 0, 3, 2, Math.PI / 2, "guildhall top floor");
+            k.Chest(g, 0, 3, 1, Math.PI / 2, "guildhall upstairs");
             b.Poi("Guildhall", new Vec3d(gx + W(4) / 2, g.Y0, gz + W(4) / 2), g.Bounds);
             // North rows either side of the north road, and Sheep Street west of the inn.
-            Row(k, 589.0, 392.0, 2, SouthKit.Face.North, "H X* S2 P* H*", 402, BrStyle.Brick, "North Road");
-            Row(k, 668.0, 392.0, 2, SouthKit.Face.North, "P* S2 X* H", 403, BrStyle.Plaster, "North Road");
-            Row(k, 562.0, 330.0, 2, SouthKit.Face.East, "H* S2 X* P*", 404, BrStyle.Painted, "Sheep Street");
+            Row(k, 589.0, 392.0, 2, SouthKit.Face.North, "H* X* S2* P* H*", 402, BrStyle.Brick, "North Road");
+            Yard(k, new Rect2(668, 388, 704, 416), "Hay Yard", gateW: 8, seed: 3);
+            Row(k, 562.0, 330.0, 2, SouthKit.Face.East, "H* S2* X* P*", 404, BrStyle.Painted, "Sheep Street");
             // Bell Street's north side: a short row behind the clock tower.
-            Row(k, 702.0, 335.0, 2, SouthKit.Face.West, "P H* S2", 405, BrStyle.Brick, "Bell Street");
+            Row(k, 702.0, 335.0, 2, SouthKit.Face.West, "P* H* S2", 405, BrStyle.Brick, "Bell Street");
         }
 
         // ================================================================ East Street and the Horse Fair
@@ -245,8 +259,8 @@ namespace Sculpt.Core
         private static void EastStreet(SouthKit k)
         {
             BrBuild b = k.B;
-            Row(k, 718.0, StreetN, 2, SouthKit.Face.South, "P* S2 X* H2* P", 501, BrStyle.Plaster, "East Street", Core);
-            Row(k, 733.0, StreetS - W(3), 2, SouthKit.Face.North, "H* P S2 X*", 502, BrStyle.Brick, "East Street", Core);
+            Row(k, 718.0, StreetN, 2, SouthKit.Face.South, "P* S2* X* H*", 501, BrStyle.Plaster, "East Street", Core);
+            Row(k, 733.0, StreetS - W(3), 2, SouthKit.Face.North, "H* P* S2 X*", 502, BrStyle.Brick, "East Street", Core);
             // The Horse Fair: a wide place with the weigh house standing in the road.
             b.Open(new Rect2(768, 232, 816, 292));
             double wx = 782.4, wz = 256 - W(3) / 2;
@@ -264,9 +278,11 @@ namespace Sculpt.Core
             k.Chest(wh, 2, 0, 1, Math.PI, "weigh house upstairs");
             b.Poi("Horse Fair", new Vec3d(792, wh.Y0, 256), wh.Bounds);
             k.Wall(772, 238, wh.Y0, 6, true, 1); k.Wall(806, 280, wh.Y0, 6, true, 1);
+            k.Chest(new Vec3d(775, wh.Y0, 240), 0, "horse fair");
+            k.Chest(new Vec3d(809, wh.Y0, 278.8), Math.PI, "horse fair");
             // Rows by the east road out of town.
-            Row(k, 820.0, StreetN, 2, SouthKit.Face.South, "H S2* X*", 503, BrStyle.Timber, "Ferry Row");
-            Row(k, 820.0, StreetS - W(3), 2, SouthKit.Face.North, "P* T X* H*", 504, BrStyle.Brick, "Ferry Row");
+            Row(k, 820.0, StreetN, 2, SouthKit.Face.South, "H* S2* X*", 503, BrStyle.Timber, "Ferry Row");
+            Yard(k, new Rect2(820, 214, 852, 246), "Ferry Yard", gateN: 14, seed: 4);
         }
 
         // ================================================================ the brewery and Orchard Rise
@@ -285,18 +301,18 @@ namespace Sculpt.Core
             double oy = k.Level(oz, 2, double.NaN, "orchard");
             k.Walled(oz, oy, 3, gateS: 10, gateW: 30);
             BrKit.Shed(b, 806, oy, 376);
-            k.Chest(new Vec3d(778, oy, 352), 0, "orchard");
+            k.Chest(new Vec3d(764, oy, 365), Math.PI / 2, "orchard");
+            k.Chest(new Vec3d(816, oy, 350), -Math.PI / 2, "orchard");
             int s = 0;
-            for (double x = 768; x < 816; x += 9)
-                for (double z = 346; z < 388; z += 10)
+            for (double x = 772; x <= 808; x += 12)
+                for (double z = 348; z <= 384; z += 12)
                 {
-                    if (x > 800 && z > 370) continue; // the apple store
-                    if (Math.Abs(x - 777) < 3 && Math.Abs(z - 352) < 3) continue;
-                    b.Tree(x + (s % 3), z + (s % 2) * 2, 700 + s++);
+                    if (x > 790 && z > 366) continue; // the apple store
+                    b.Tree(x, z, 700 + s++);
                 }
             b.Poi("Orchard Rise", new Vec3d(791, oy, 365));
-            Row(k, 830.0, 300.0, 2, SouthKit.Face.West, "H* S2 X*", 601, BrStyle.Brick, "Maltings Lane");
-            Row(k, 726.0, 396.0, 2, SouthKit.Face.South, "P S2* X*", 602, BrStyle.Plaster, "Kiln Row");
+            Yard(k, new Rect2(830, 298, 856, 330), "Maltings Yard", gateW: 12, seed: 5);
+            Yard(k, new Rect2(718, 392, 750, 418), "Kiln Yard", gateS: 6, seed: 6);
         }
 
         // ================================================================ Mill Hill
@@ -325,13 +341,9 @@ namespace Sculpt.Core
             k.Chest(mill, 2, 2, 0, Math.PI, "windmill floor");
             b.Poi("Mill Hill", new Vec3d(mx + W(3) / 2, mill.Y0, mz + W(3) / 2), mill.Bounds);
             // The granary on the hill's west flank and a miller's cottage.
-            double gy = k.Level(new Rect2(744, 182, 770, 202), 2, double.NaN, "granary");
-            BrKit.Warehouse(b, 744.5, gy, 182);
+            Yard(k, new Rect2(744, 180, 772, 206), "Rick Yard", gateW: 8, seed: 7, tree: false);
             double cy = k.Level(SouthKit.RectOf(820, 120, 2, 3), 2, double.NaN, "miller's cottage");
             BrKit.House(b, 820, cy, 120);
-            // Hedges and boulders on the slopes.
-            foreach (var (x, z, s) in new[] { (760.0, 140.0, 1), (770.0, 120.0, 2), (812.0, 176.0, 3), (830.0, 158.0, 4), (775.0, 170.0, 5), (800.0, 110.0, 6) })
-                if (s % 2 == 0) b.Rocks(x, z, 810 + s); else b.Bush(x, z, 810 + s);
         }
 
         // ================================================================ Gallows Knoll: the allotments
@@ -362,7 +374,7 @@ namespace Sculpt.Core
                     k.Walled(r, ay, 1, gateS: 4.5);
                     uint h = BrKit.Hash(pi, pj, 41);
                     if ((h & 3) == 0) BrKit.Shed(b, x0 + 2.85, ay, z0 + 3.35);
-                    else if ((h & 3) == 1) k.Chest(new Vec3d(x0 + 6, ay, z0 + 8), 0, "allotment");
+                    else if ((h & 3) != 3) k.Chest(new Vec3d(x0 + 6, ay, z0 + 8), 0, "allotment");
                     else b.Bush(x0 + 6, z0 + 8, (int)(h >> 4));
                 }
             // Cottages on the west road.
@@ -390,8 +402,8 @@ namespace Sculpt.Core
             // An avenue of limes along the road in.
             for (int i = 0; i < 3; i++)
             {
-                b.Tree(614, 150 + i * 14, 960 + i);
-                b.Tree(691.6, 150 + i * 14, 970 + i);
+                b.Tree(611.6, 156 + i * 12, 960 + i);
+                b.Tree(690.0, 156 + i * 12, 960 + i);
             }
         }
     }
