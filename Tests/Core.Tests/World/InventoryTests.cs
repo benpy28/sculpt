@@ -196,12 +196,13 @@ namespace Sculpt.Core.Tests.World
                 } }, 1, new Vec3d(12, 0, 8), 0);
                 var victim = s.AddBot(new Brain { F = (sv, me) => new InputCmd { Tick = sv.Tick, ViewTick = sv.Tick, Move = new MoveInput { Yaw = Math.PI } } }, 2, new Vec3d(12, 0, 14), Math.PI);
                 for (int i = 0; i < 60 * SimTime.Per60; i++) s.Step();
-                // A full bag holding a common AR; a legendary AR lies at the shooter's feet.
+                // A full bag holding a common AR; a legendary AR lies just in front of the shooter, under the crosshair
+                // (the server checks the pickup aim cone, so it hangs at chest height on the line to the victim).
                 var bag = new Bag { S0 = Item.Ar, S1 = Item.Smg, S2 = Item.Pistol, S3 = Item.Pump, S4 = Item.Grenade, N4 = 2 };
                 bag.SetRarity(0, Rarity.Common);
                 shooter.State.Hand.Bag = bag;
                 shooter.State.Hand.Slot = 0;
-                itemId = s.Items.Add(new GroundItem { Kind = Item.Ar, Count = 1, Rarity = Rarity.Legendary, Position = shooter.State.Position + new Vec3d(0, 0, 0.4), DroppedTick = int.MinValue / 2 });
+                itemId = s.Items.Add(new GroundItem { Kind = Item.Ar, Count = 1, Rarity = Rarity.Legendary, Position = shooter.State.Position + new Vec3d(0, 1.3, 0.8), DroppedTick = int.MinValue / 2 });
                 fireTick = s.Tick + 1;
                 int before = victim.State.Damage;
                 s.Step();
