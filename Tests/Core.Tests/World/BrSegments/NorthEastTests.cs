@@ -1,0 +1,174 @@
+using System;
+using System.Collections.Generic;
+using NUnit.Framework;
+
+namespace Sculpt.Core.Tests
+{
+    /// <summary>
+    /// The North East segment's own promises (Hilltop Fort, <see cref="NorthEastSegment"/>): everything designed was
+    /// built, the cliff is still a cliff once every footing is cut, the fort's walls are too tall to climb with the gate
+    /// the only way in at ground level, the keep's, lookout's and lift tower's roofs are reachable, every sealed room is
+    /// sealed, and the lift tower's bridge lands on the summit.
+    /// </summary>
+    public class NorthEastTests
+    {
+        private static BrMap.TemplateBuild T => BrMap.Template;
+        private static NorthEastSegment Seg => (NorthEastSegment)BrSegments.All[8];
+        private static BrBuild B => T.Segments[8];
+
+        [Test]
+        public void EverythingDesigned_WasBuilt()
+        {
+            _ = T;
+            Assert.That(Seg.Skipped, Is.Empty, string.Join("\n", Seg.Skipped));
+            var names = new List<string>();
+            foreach (BrPoi p in B.Pois) names.Add(p.Name);
+            Assert.That(names, Is.SupersetOf(new[] { "Hillgate", "Hilltop Fort", "Underhill", "Cliffside", "Rim Farm", "West Road", "Lookout Ridge" }));
+            TestContext.WriteLine($"{B.Buildings.Count} buildings, {B.Chests.Count} chests, {B.Items.Count} items, {B.TileEnd - B.TileFirst} tiles");
+        }
+
+        [Test]
+        public void TheHill_IsWalkableAllRoundButTheSouth_WhereTheCliffStaysACliff()
+        {
+            HeightField f = BrMap.Field;
+            // Across the fort's width, every column south of the summit drops at least 20 m within 16 m: no footing filled it.
+            for (double x = NorthEastSegment.Fort.X0 - 8; x <= NorthEastSegment.Fort.X1 + 6; x += 1.5)
+            {
+                double lip = NorthEastSegment.Lip(x);
+                Assert.That(f.HeightAt(x, lip + 3), Is.EqualTo(NorthEastSegment.SummitY).Within(0.05), $"the summit at x {x:0.0}");
+                double drop = 0;
+                for (double z = lip; z >= lip - 16; z -= 0.5) drop = Math.Max(drop, NorthEastSegment.SummitY - f.HeightAt(x, z));
+                Assert.That(drop, Is.GreaterThan(20), $"the cliff at x {x:0.0}");
+            }
+            // The west, north and east slopes are walkable (under 35 degrees) on the way up.
+            foreach (var (x0, z0, dx, dz) in new[] { (995.0, 1112.0, 1.0, 0.0), (1117.0, 1235.0, 0.0, -1.0), (1225.0, 1112.0, -1.0, 0.0) })
+                for (double s = 0; s < 80; s += 1)
+                {
+                    double x = x0 + dx * s, z = z0 + dz * s;
+                    double rise = Math.Abs(f.HeightAt(x + dx, z + dz) - f.HeightAt(x, z));
+                    Assert.That(rise, Is.LessThan(Math.Tan(35 * Math.PI / 180)), $"the climb at {x:0},{z:0}");
+                }
+        }
+
+        [Test]
+        public void TheFortWalls_AreTooTallToClimb()
+        {
+            // Every tile of the fort's wall line rises the full four rows; nothing but the gate breaks it.
+            BrushWorld w = T.World;
+            Rect2 fort = NorthEastSegment.Fort;
+            double y = NorthEastSegment.SummitY, top = y + NorthEastSegment.FortWallRows * 1.5;
+            for (double s = 0.5; s < fort.X1 - fort.X0; s += 1)
+            {
+                Assert.That(Solid(w, fort.X0 + s, top - 0.2, fort.Z0 + 0.15), Is.True, "south wall");
+                Assert.That(Solid(w, fort.X0 + s, top - 0.2, fort.Z1 - 0.15), Is.True, "north wall");
+            }
+            for (double s = 0.5; s < fort.Z1 - fort.Z0; s += 1)
+            {
+                double z = fort.Z0 + s;
+                Assert.That(Solid(w, fort.X1 - 0.15, top - 0.2, z), Is.True, "east wall");
+                bool gate = z > NorthEastSegment.GateZ0 && z < NorthEastSegment.GateZ1;
+                Assert.That(Solid(w, fort.X0 + 0.15, y + 1, z), Is.Not.EqualTo(gate), $"west wall at z {z:0.0}");
+            }
+            Assert.That(top - y, Is.GreaterThan(new MovementConfig().MantleMaxHeight + 0.5), "taller than a climb");
+        }
+
+        private static bool Solid(BrushWorld w, double x, double y, double z) =>
+            w.BoxOverlapsSolid(new Aabb(new Vec3d(x - 0.05, y - 0.05, z - 0.05), new Vec3d(x + 0.05, y + 0.05, z + 0.05)));
+
+        // ---------------------------------------------------------------- reachability (walking grid, doors open)
+
+        private static BotNav _nav;
+
+        /// <summary>A walking grid over the segment's east and north (fort, Cliffside, ridge), doors open, intact walls.</summary>
+        private static BotNav Nav
+        {
+            get
+            {
+                if (_nav != null) return _nav;
+                BrushWorld w = BrMap.BuildBrushes(out BreachMapInfo info, out _);
+                foreach (int d in info.Block.Doors) w.Tiles.Set(d, TileState.DoorOpen, w.Tiles[d].Health, TileCause.Built);
+                SubGrid g = BrMap.BuildGround();
+                Rect2 a = BrLayout.Buildable(8);
+                _nav = BotNav.Build(BrMap.Terrain(g, w), a.X0, a.Z0, a.X1 - a.X0, a.Z1 - a.Z0, 0.75, topY: BrMap.NavTop, floorY: BrGround.Lowest - 2,
+                                    columnTop: BrMap.NavColumnTop(w, g));
+                return _nav;
+            }
+        }
+
+        private static int Spot(double x, double y, double z)
+        {
+            int n = Nav.Nearest(new Vec3d(x, y, z), 2);
+            Assert.That(n, Is.GreaterThanOrEqualTo(0), $"a walkable spot near {x:0.0},{y:0.0},{z:0.0}");
+            Assert.That(Math.Abs(Nav.Nodes[n].Y - y), Is.LessThan(0.8), $"the spot near {x:0.0},{y:0.0},{z:0.0} is on the right floor (found {Nav.Nodes[n].Y:0.00})");
+            return n;
+        }
+
+        [Test]
+        public void EveryPlace_CanBeWalkedTo_FromHillgate_AndEveryRoofTooFromItsStairs()
+        {
+            Vec3d a = BrLayout.Anchor(8);
+            int home = Spot(a.X + 6, BrGround.Base, a.Z);
+            double s = NorthEastSegment.SummitY;
+            var goals = new (string, double, double, double)[]
+            {
+                ("the fort's courtyard", 1112, s, 1130),
+                ("in front of the gate", 1086, s, 1119),
+                ("the keep's roof", 1132, s + 6 * 4.8, 1126),
+                ("the keep's fifth floor", 1135, s + 5 * 4.8, 1113),
+                ("a gate tower's roof", 1100, s + 3 * 4.8, 1137),
+                ("the lookout's roof", 965, double.NaN, 1150),
+                ("Underhill's main street", 1000, BrGround.Base, 1006),
+                ("Cliffside under the cliff", 1160, BrGround.Base, 1045),
+                ("the lift tower's roof", 1121, BrGround.Base + 7 * 4.8, 1046),
+            };
+            foreach (var (name, x, y0, z) in goals)
+            {
+                double y = y0;
+                if (double.IsNaN(y)) y = T.Segments[8].Buildings.Find(bd => bd.Name == "Ridge lookout").Bounds.Max.Y;
+                int n = Spot(x, y, z);
+                Assert.That(Nav.SameArea(home, n), Is.True, $"{name} can be reached from Hillgate");
+            }
+        }
+
+        [Test]
+        public void EverySealedRoom_HasNoWayIn()
+        {
+            Vec3d a = BrLayout.Anchor(8);
+            int home = Spot(a.X + 6, BrGround.Base, a.Z);
+            double s = NorthEastSegment.SummitY;
+            // Middle of each sealed cell (x, floor, z).
+            var rooms = new (string, double, double, double)[]
+            {
+                ("the inn's cellar", a.X - 7 - 12.9 + 3.3, BrGround.Base, a.Z - 19.05 + 3 * 6.3 + 3.3),
+                ("the smithy's coal store", a.X - 5.34 + 3.3, BrGround.Base, a.Z - 7.04 - 19.2 + 3.3),
+                ("the stables' tack room", a.X - 5.34 + 3.3, BrGround.Base, a.Z + 8.16 + 6.3 + 3.3),
+                ("the granary", a.X - 23.84 + 6.6, BrGround.Base, a.Z + 22.66 + 6.6),
+                ("the keep's vault", 1121 + 2 * 6.3 + 3.3, s, 1110 + 2 * 6.3 + 3.3),
+                ("the armoury's vault", 1133 + 6.6, s, 1094.5 + 6.3 + 3.3),
+                ("the chapel's crypt", 1107 + 6.3 + 3.3, s, 1094.5 + 3.3),
+                ("the well house", 1137 + 3.3, s, 1133 + 3.3),
+            };
+            foreach (var (name, x, y, z) in rooms)
+            {
+                int n = Spot(x, y, z);
+                Assert.That(Nav.SameArea(home, n), Is.False, $"{name} is sealed");
+            }
+        }
+
+        [Test]
+        public void TheLiftBridge_LandsOnTheSummit_InFrontOfTheFort()
+        {
+            Aabb bridge = default;
+            bool found = false;
+            foreach (Aabb br in T.Info.Block.Bridges)
+                if (br.Min.X > 1100 && br.Min.X < 1130 && br.Max.Z > 1070) { bridge = br; found = true; }
+            Assert.That(found, Is.True);
+            HeightField f = BrMap.Field;
+            double x = (bridge.Min.X + bridge.Max.X) / 2;
+            Assert.That(f.HeightAt(x, bridge.Max.Z - 0.5), Is.EqualTo(NorthEastSegment.SummitY).Within(0.05), "its end is over the summit");
+            double drop = bridge.Max.Y - NorthEastSegment.SummitY;
+            Assert.That(drop, Is.InRange(1.0, 5.0), "a short drop down onto it");
+            Assert.That(bridge.Max.Z, Is.LessThan(NorthEastSegment.Fort.Z0 - 6), "it lands outside the fort's south wall");
+        }
+    }
+}
