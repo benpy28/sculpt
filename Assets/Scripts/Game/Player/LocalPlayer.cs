@@ -427,7 +427,7 @@ namespace Sculpt.Game.Player
             bool sprintHeld = keys && (_client.SprintToggle ? _sprintOn : _input.Sprint.IsPressed());
             bool crouchHeld = keys && (_client.CrouchToggle ? _crouchOn : _input.Crouch.IsPressed());
             bool aimHeld = active && !sculpting && (_client.ZoomToggle ? _zoomOn : _input.Aim.IsPressed());
-            Zoomed = aimHeld && h0.Mode == HandMode.Weapon;
+            Zoomed = aimHeld && h0.Mode == HandMode.Weapon && !Net.FrozenNow; // no zoom in the match countdown (CountdownFreeze)
             var mi = new MoveInput
             {
                 MoveX = move.x,

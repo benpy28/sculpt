@@ -289,6 +289,14 @@ namespace Sculpt.Core.Net
                         }
                     }
                 }
+                // Loot in reach: look at it, like a person (the server only takes a pickup near the crosshair).
+                if (!aimEnemy && _lootFacing && server.Items.TryGet(_lootId, out GroundItem lootItem))
+                {
+                    Vec3d d = lootItem.Centre - eye;
+                    wantYaw = Math.Atan2(d.X, d.Z);
+                    wantPitch = -Math.Asin(Math.Max(-1, Math.Min(1, d.Y / Math.Max(1e-6, d.Length)))) * 180 / Math.PI;
+                    gain = 0.25;
+                }
                 Unstick(s, tick, wish, ref jump);
             }
             if (tick < _jumpUntil) jump = true;
@@ -766,10 +774,14 @@ namespace Sculpt.Core.Net
         }
 
         /// <summary>Close enough: press interact on it (the server checks reach and sight like anyone's).</summary>
+        private bool _lootFacing;
+
         private void TakeLoot(NetServer server, in MotorState s, int tick, ref InputCmd cmd)
         {
+            _lootFacing = false;
             Vec3d d = _lootPos - s.Position;
             if (d.HorizontalLength > 1.7 || Math.Abs(d.Y) > 1.2) { _lootNearSince = int.MinValue / 2; return; }
+            _lootFacing = true;
             if (_lootNearSince < 0 && _lootNearSince == int.MinValue / 2) _lootNearSince = tick;
             if (tick - _lootNearSince > 3 * 60 * SimTime.Per60) { _lootGaveUp.Add(_lootId); _lootId = 0; return; }
             if (tick - _lootPickTick < 15 * SimTime.Per60) return;
@@ -781,6 +793,17 @@ namespace Sculpt.Core.Net
                 for (int k = 0; k < Items.Slots; k++)
                     if (s.Hand.Bag[k] == g.Kind && (worst < 0 || s.Hand.Bag.RarityOf(k) < s.Hand.Bag.RarityOf(worst))) worst = k;
                 if (worst >= 0 && s.Hand.Slot != worst) { cmd.Hand.WeaponKey = (byte)(worst + 1); return; }
+            }
+            // Only once it is looking at it (well inside the aim cone the server checks).
+            if (server.Items.TryGet(_lootId, out GroundItem it))
+            {
+                Vec3d eye = s.Position + new Vec3d(0, PlayerMovement.EyeOf(s, server.Movement), 0);
+                Vec3d look = WeaponRules.AimDir(_yaw, _pitch, 0, 0);
+                if (!ItemRules.InServerCone(eye, look, it.Centre, server.Movement.Items, out double off) || off > server.Movement.Items.AimConeDegrees * 0.6)
+                {
+                    _lootPickTick = int.MinValue / 2; // try again next tick
+                    return;
+                }
             }
             cmd.Hand.Pickup = true;
             cmd.Hand.PickId = _lootId;

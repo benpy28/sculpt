@@ -399,6 +399,7 @@ namespace Sculpt.Core.Tests.World
                 if (t == start + 80 * SimTime.Per60) i.Hand.Drop = true;              // drop it in front
                 if (t == start + 160 * SimTime.Per60 && p.Client.Items.Count > 0)     // look down at it and pick it back up
                 {
+                    i.Pitch = 58; // the server checks the aim cone: really look down at it
                     i.Hand.Pickup = true;
                     i.Hand.PickId = pickId = p.Client.Items[0].Id;
                 }

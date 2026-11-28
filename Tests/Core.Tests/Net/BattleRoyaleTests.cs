@@ -307,6 +307,13 @@ namespace Sculpt.Core.Tests.Net
                 var c = new InputCmd { Tick = server.Tick, ViewTick = server.Tick };
                 c.Hand.Pickup = true;
                 c.Hand.PickId = _id;
+                // Looking at it: the server checks the aim cone too (2026-11-28).
+                if (server.Items.TryGet(_id, out GroundItem g))
+                {
+                    Vec3d d = g.Centre - (me.State.Position + new Vec3d(0, PlayerMovement.EyeOf(me.State, server.Movement), 0));
+                    c.Move.Yaw = Math.Atan2(d.X, d.Z);
+                    c.Pitch = (float)(-Math.Asin(d.Y / Math.Max(1e-6, d.Length)) * 180 / Math.PI);
+                }
                 return c;
             }
         }

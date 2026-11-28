@@ -14,6 +14,7 @@ namespace Sculpt.Core.AntiCheat
         BadView = 1,            // pitch outside +-89 or a yaw that wasn't wrapped (clamped)
         DevRespawnRefused = 2,  // a respawn press on a server that doesn't allow dev respawns (refused)
         DevWarpRefused = 3,     // a dev warp on a server that doesn't allow it (refused)
+        PickupOffAim = 4,       // a pickup or chest open of something far outside the crosshair's cone (refused)
 
         // Network: timing the server can see. Packet loss and ping changes look a bit like these, so they are weak alone.
         ClockAhead = 10,        // commands further ahead than the server accepts (the packet was ignored)
@@ -137,6 +138,7 @@ namespace Sculpt.Core.AntiCheat
             switch (k)
             {
                 case FlagKind.BadView: return $"(pitch {v / 10.0:0.#} deg)";
+                case FlagKind.PickupOffAim: return $"({v / 10.0:0.#} deg off the crosshair)";
                 case FlagKind.ClockAhead: return $"({v} ticks ahead)";
                 case FlagKind.ViewBehindAck: return $"({v} ticks behind its ack)";
                 case FlagKind.ViewLagJump: return $"(view lag {v} ticks over its median)";

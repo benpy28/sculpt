@@ -296,6 +296,15 @@ namespace Sculpt.Core
         public int Revision { get; private set; }
         /// <summary>The tick stamped on changes (the server sets it each tick).</summary>
         public int Tick;
+        /// <summary>
+        /// Walls locked (the server, during a match countdown; Ben 2026-11-28): no tile changes at all except a rebuild
+        /// (<see cref="TileCause.Built"/>, the map reset) and a client copying the server. Bullets, blasts, punches,
+        /// charges, heals, reinforcing and doors change nothing.
+        /// </summary>
+        public bool Locked;
+
+        /// <summary>True when <see cref="Locked"/> refuses a change with this cause.</summary>
+        public bool Refuses(TileCause cause) => Locked && cause != TileCause.Built && cause != TileCause.Server;
         /// <summary>Tiles broken by a charge, and the tick (so a replay of that tick charges through the same tile).</summary>
         private readonly Dictionary<int, int> _chargedAt = new Dictionary<int, int>();
 
@@ -463,6 +472,7 @@ namespace Sculpt.Core
         /// rebuild always make the tile whole again (a Broken tile has no cells left to speak of).</param>
         public void Set(int tile, TileState state, int health, TileCause cause, int by = 0, ulong? open = null)
         {
+            if (Refuses(cause)) return;
             WallTile t = _tiles[tile];
             ulong o = open ?? (cause == TileCause.Heal || cause == TileCause.Reinforce || cause == TileCause.Built ? 0ul : t.Open);
             if (HasCells(tile))
@@ -541,6 +551,7 @@ namespace Sculpt.Core
         /// </summary>
         public bool Damage(int tile, int amount, TileCause cause, int by = 0)
         {
+            if (Refuses(cause)) return false;
             WallTile t = _tiles[tile];
             if (amount <= 0 || t.State == TileState.Broken || t.State == TileState.DoorOpen || t.Links != null) return false; // followers only go with their links
             if (HasCells(tile)) return DamageWholeCells(tile, amount, cause, by);
@@ -558,6 +569,7 @@ namespace Sculpt.Core
         /// </summary>
         public bool Damage(int tile, int amount, Vec3d at, TileCause cause, int by = 0, double radius = -1)
         {
+            if (Refuses(cause)) return false;
             WallTile t = _tiles[tile];
             if (amount <= 0 || t.State == TileState.Broken || t.State == TileState.DoorOpen || t.Links != null) return false;
             if (!HasCells(tile) || !Config.BlastHoles) return Damage(tile, amount, cause, by);
@@ -585,7 +597,7 @@ namespace Sculpt.Core
         public int ApplyShot(IReadOnlyList<BulletHit> pellets, Weapon weapon, int by)
         {
             int per = Config.TileDamageOf(weapon);
-            if (per <= 0 || pellets == null) return 0;
+            if (per <= 0 || pellets == null || Refuses(TileCause.Bullet)) return 0;
             var order = _shotTiles ??= new List<int>();
             var dmg = _shotDmg ??= new Dictionary<int, int>();
             var at = _shotAt ??= new Dictionary<int, Vec3d>();

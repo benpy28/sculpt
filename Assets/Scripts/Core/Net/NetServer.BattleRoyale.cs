@@ -12,7 +12,8 @@ namespace Sculpt.Core.Net
         public BrMode Mode = BrMode.Solos;
         public int TeamSize => Mode == BrMode.Duos ? 2 : Mode == BrMode.Squads ? 4 : 1;
         public int MaxPlayers = 32;
-        /// <summary>A match starts once the lobby is full, or once this many players have waited <see cref="LobbyTicks"/>.</summary>
+        /// <summary>A match starts once this many players have waited <see cref="LobbyTicks"/> (counted from the first
+        /// player in the lobby). A full lobby still waits it out (Ben 2026-11-28: late friends get in).</summary>
         public int MinPlayers = 1;
         public int LobbyTicks = (10 * 60) * SimTime.Per60;
         public int CountdownTicks = (5 * 60) * SimTime.Per60;
@@ -32,7 +33,9 @@ namespace Sculpt.Core.Net
         public double[] WaitSeconds = { 60, 45, 35, 30, 25, 20 };
         public double[] ShrinkSeconds = { 45, 35, 30, 25, 20, 20 };
         public double[] Radius = { 120, 70, 40, 20, 8, 0 };
-        public int[] Dps = { 1, 2, 4, 6, 8, 10 };
+        /// <summary>The last two phases out-damage healing so the end can't drag on (Ben 2026-11-28: 15 and 40 a second;
+        /// a first-aid kit heals about 28.6 a second, a bandage 25).</summary>
+        public int[] Dps = { 1, 2, 4, 6, 15, 40 };
         public int StormHurtEveryTicks = 60 * SimTime.Per60;
 
         // ---- Loot.
@@ -114,7 +117,16 @@ namespace Sculpt.Core.Net
                 case MatchPhase.Waiting:
                     if (Match.Phase != MatchPhase.Waiting) SetPhase(MatchPhase.Waiting, 0);
                     ReviveLobby();
-                    if (n >= Br.MinPlayers && (n >= Br.MaxPlayers || Tick - Match.PhaseStartTick >= Br.LobbyTicks)) BeginBr();
+                    // The lobby always runs its whole time from when the first player is in it (Ben 2026-11-28), even
+                    // once bots have filled it, so a friend joining a few seconds late still gets in. Clients see when it
+                    // ends in PhaseEndTick.
+                    if (n == 0)
+                    {
+                        if (Match.PhaseEndTick != 0) { Match.PhaseEndTick = 0; _matchDirty = true; }
+                        break;
+                    }
+                    if (Match.PhaseEndTick == 0) { Match.PhaseEndTick = Tick + Br.LobbyTicks; _matchDirty = true; }
+                    if (n >= Br.MinPlayers && Tick >= Match.PhaseEndTick) BeginBr();
                     break;
                 case MatchPhase.Countdown:
                     SitOutLateJoiners();
@@ -390,6 +402,8 @@ namespace Sculpt.Core.Net
         {
             Bag b = p.State.Hand.Bag;
             Vec3d at = p.State.Position;
+            // Fell off the world: the loot stays in the match where you last stood.
+            if (at.Y < Config.KillY + 1 && p.HasLastGround) at = p.LastGround;
             int k = 0;
             for (int slot = 0; slot < global::Sculpt.Core.Items.Slots; slot++)
             {
@@ -500,6 +514,9 @@ namespace Sculpt.Core.Net
         private PickupResult OpenChest(ServerPlayer p, in GroundItem chest, Vec3d eye)
         {
             ItemConfig cfg = Movement.Items;
+            // The same state rules as a pickup: not dead, not disarmed.
+            PickupPlan plan = ItemRules.Plan(p.State, chest, p.Id, Tick, cfg, p.Prefs);
+            if (!plan.Allowed) return plan.Result;
             if ((chest.Centre - eye).Length > cfg.Reach + cfg.ServerReachSlack) return PickupResult.TooFar;
             if (!ItemRules.Visible(Grid, eye, chest.Centre)) return PickupResult.Blocked;
             Items.Remove(chest.Id);
