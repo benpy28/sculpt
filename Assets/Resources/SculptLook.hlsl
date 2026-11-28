@@ -52,7 +52,8 @@ float3 SculptDetailNormal(float3 n, float3 ws, float4 positionCS)
                       SLNoise(p + float3(0, e, 0)) + 0.5 * SLNoise((p + float3(0, e, 0)) * 3.7),
                       SLNoise(p + float3(0, 0, e)) + 0.5 * SLNoise((p + float3(0, 0, e)) * 3.7)) - b;
     g -= n * dot(g, n); // only the part along the surface tilts it
-    return normalize(n - g * (2.2 * fade));
+    // Walls get half the relief of the ground (brick already has its own pattern).
+    return normalize(n - g * (lerp(0.6, 1.4, saturate(n.y)) * fade));
 }
 
 // The world's lighting on top of the baked per-axis shade. n = world normal (unit), positionCS = SV_POSITION.

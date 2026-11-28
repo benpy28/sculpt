@@ -67,6 +67,7 @@ namespace Sculpt.Game.Rendering
         private float _shadowDistanceBefore;
         private int _cascadesBefore;
         private int _shadowResBefore;
+        private float _depthBiasBefore, _normalBiasBefore;
         private readonly List<(ScriptableRendererFeature feature, bool active, object settings, Dictionary<string, object> before)> _ao =
             new List<(ScriptableRendererFeature, bool, object, Dictionary<string, object>)>();
         private bool _aoFound;
@@ -240,17 +241,23 @@ namespace Sculpt.Game.Rendering
                 _shadowDistanceBefore = asset.shadowDistance;
                 _cascadesBefore = asset.shadowCascadeCount;
                 _shadowResBefore = asset.mainLightShadowmapResolution;
+                _depthBiasBefore = asset.shadowDepthBias;
+                _normalBiasBefore = asset.shadowNormalBias;
             }
             if (l.Shadows == 0)
             {
                 asset.shadowDistance = _shadowDistanceBefore; asset.shadowCascadeCount = _cascadesBefore;
                 asset.mainLightShadowmapResolution = _shadowResBefore;
+                asset.shadowDepthBias = _depthBiasBefore; asset.shadowNormalBias = _normalBiasBefore;
                 return;
             }
             asset.shadowDistance = l.Shadows == 3 ? 150f : l.Shadows == 2 ? 80f : 40f;
             asset.shadowCascadeCount = l.Shadows >= 2 ? 4 : 2;
             // Ultra: a bigger map so the longer distance stays as sharp as High's; Low and High keep the asset's own.
             asset.mainLightShadowmapResolution = l.Shadows == 3 ? 4096 : _shadowResBefore;
+            // Smaller bias than the template's 1 / 1: low walls' shadows meet their foot instead of floating off it.
+            asset.shadowDepthBias = 0.4f;
+            asset.shadowNormalBias = 0.35f;
         }
 
         // The template's SSAO renderer feature. Its settings class is internal, so the two numbers we change are set
@@ -375,6 +382,8 @@ namespace Sculpt.Game.Rendering
             _asset.shadowDistance = _shadowDistanceBefore;
             _asset.shadowCascadeCount = _cascadesBefore;
             _asset.mainLightShadowmapResolution = _shadowResBefore;
+            _asset.shadowDepthBias = _depthBiasBefore;
+            _asset.shadowNormalBias = _normalBiasBefore;
             _asset = null;
         }
 
