@@ -100,6 +100,63 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(moved, Is.GreaterThan(16), "off they go once it is GO");
         }
 
+        /// <summary>
+        /// The last two circles out-damage healing so the end can't drag on (Ben 2026-11-28: 15 and 40 a second). A
+        /// player outside them with a full stack of first-aid kits and bandages, healing non-stop, still goes down soon.
+        /// </summary>
+        [TestCase(1, 40.0)]
+        [TestCase(0, 25.0)]
+        public void OutsideTheLastCircles_EvenAFullStackOfHeals_OnlyBuysSeconds(int fromLast, double maxSeconds)
+        {
+            var cfg = new BrConfig();
+            int last = cfg.Dps.Length - 1;
+            Assert.That(cfg.Dps[last], Is.EqualTo(40));
+            Assert.That(cfg.Dps[last - 1], Is.EqualTo(15));
+            var mc = new MovementConfig();
+            Assert.That(cfg.Dps[last], Is.GreaterThan(100.0 / 3.5), "the final circle beats a first-aid kit (the fastest heal)");
+
+            var brains = new List<Scripted>();
+            NetServer s = NewServer(Quick(BrMode.Solos, brains), out BrMapInfo br);
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            ServerPlayer x = s.Players[0];
+            Vec3d inside = ItemRules.Settle(s.Grid, br.Centre + new Vec3d(0, 5, 0));
+            foreach (ServerPlayer p in s.Players) if (p != x) Place(p, inside); // everyone else safe in the middle
+            Vec3d outside = ItemRules.Settle(s.Grid, br.Centre + new Vec3d(0, 5, 30));
+            Place(x, outside);
+            x.State.Hand.Bag = new Bag { S0 = Item.Medkit, N0 = (byte)mc.Items.MedkitCarry, S1 = Item.Bandage, N1 = (byte)mc.Items.BandageCarry };
+            x.State.Hand.Slot = 0;
+            int k = cfg.Dps.Length - 1 - fromLast;
+            s.Match.Storm = new StormState
+            {
+                Phase = k, PhaseCount = cfg.Dps.Length, FromX = br.Centre.X, FromZ = br.Centre.Z, FromRadius = 10,
+                ToX = br.Centre.X, ToZ = br.Centre.Z, ToRadius = 10, ShrinkStart = s.Tick - 10, ShrinkEnd = s.Tick + 100000,
+                Dps = s.Br.Dps[k],
+            };
+            int healed = 0, lastDamage = 0;
+            BrainOf(s, x).Make = (srv, me) =>
+            {
+                var c = new InputCmd { Tick = srv.Tick, ViewTick = srv.Tick };
+                Bag b = me.State.Hand.Bag;
+                int kit = b.SlotOf(Item.Medkit), band = b.SlotOf(Item.Bandage);
+                int want = band >= 0 ? band : kit;
+                if (want >= 0 && me.State.Hand.Slot != want) c.Hand.WeaponKey = (byte)(want + 1);
+                c.Move.FireHeld = c.Move.FirePressed = true;
+                return c;
+            };
+            int start = s.Tick;
+            while (!x.State.Dead && s.Tick - start < 60 * SimTime.TicksPerSecond)
+            {
+                foreach (ServerPlayer p in s.Players) if (p != x && !p.State.Dead) Place(p, inside);
+                s.Step();
+                if (x.State.Damage < lastDamage) healed++;
+                lastDamage = x.State.Damage;
+            }
+            double secs = (s.Tick - start) / (double)SimTime.TicksPerSecond;
+            Assert.That(x.State.Dead, Is.True, $"dead within a minute ({secs:0.0} s)");
+            Assert.That(healed, Is.GreaterThan(1), "it did heal along the way");
+            Assert.That(secs, Is.LessThan(maxSeconds), $"down in {secs:0.0} s");
+        }
+
         private static Scripted BrainOf(NetServer s, ServerPlayer p)
         {
             Assert.That(s.Bots.TryGetValue(p.Id, out IBotBrain brain));

@@ -33,7 +33,9 @@ namespace Sculpt.Core.Net
         public double[] WaitSeconds = { 60, 45, 35, 30, 25, 20 };
         public double[] ShrinkSeconds = { 45, 35, 30, 25, 20, 20 };
         public double[] Radius = { 120, 70, 40, 20, 8, 0 };
-        public int[] Dps = { 1, 2, 4, 6, 8, 10 };
+        /// <summary>The last two phases out-damage healing so the end can't drag on (Ben 2026-11-28: 15 and 40 a second;
+        /// a first-aid kit heals about 28.6 a second, a bandage 25).</summary>
+        public int[] Dps = { 1, 2, 4, 6, 15, 40 };
         public int StormHurtEveryTicks = 60 * SimTime.Per60;
 
         // ---- Loot.
