@@ -33,10 +33,7 @@ namespace Sculpt.Core.Tests
             SubGrid ground = BrMap.BuildGround();
             _t = BrMap.Terrain(ground, open);
             Rect2 r = BrLayout.Bounds(BrLayout.Centre);
-            // The walking grid finds at most 12 floors down a column, so a tall tower's stair lane (a slab and a flight a
-            // storey) is lost below its sixth floor or so. The town grid stops above the citadel's blocks (four storeys
-            // over the ground at most); the towers are then checked storey by storey in thin bands (Band).
-            _nav = BotNav.Build(_t, r.X0, r.Z0, r.X1 - r.X0, r.Z1 - r.Z0, 1.0, topY: CentreSegment.CitadelLevel + 4 * GreyboxBlock.StoreyHeight, floorY: BrGround.Lowest - 2);
+            _nav = BotNav.Build(_t, r.X0, r.Z0, r.X1 - r.X0, r.Z1 - r.Z0, 1.0, topY: BrMap.NavTop, floorY: BrGround.Lowest - 2);
             // On the east main road outside the city wall: where a player walks in from the East segment.
             _road = _nav.Nearest(new Vec3d(C + 190, CentreSegment.TownLevel, C), 3);
             Assert.That(_road, Is.GreaterThanOrEqualTo(0));
@@ -75,49 +72,26 @@ namespace Sculpt.Core.Tests
                 }
         }
 
-        /// <summary>A walking grid of one storey of a tower and what stands round it (its bridges): from just under floor
-        /// <paramref name="storey"/> to just over the next.</summary>
-        private BotNav Band(GreyboxBlock.Building t, int storey)
-        {
-            Aabb b = t.Bounds;
-            double y = t.Y0 + storey * GreyboxBlock.StoreyHeight;
-            return BotNav.Build(_t, b.Min.X - 12, b.Min.Z - 12, b.Max.X - b.Min.X + 24, b.Max.Z - b.Min.Z + 24, 1.0,
-                                topY: y + GreyboxBlock.StoreyHeight + 0.5, floorY: y - 0.5);
-        }
-
-        private static bool Joined(BotNav n, Vec3d a, Vec3d b, int search = 2)
-        {
-            int p = n.Nearest(a, search), q = n.Nearest(b, search);
-            return p >= 0 && q >= 0 && Math.Abs(n.Feet(p).Y - a.Y) < 0.6 && Math.Abs(n.Feet(q).Y - b.Y) < 0.6 && n.SameArea(p, q);
-        }
-
         [Test]
         public void EveryTowerRoof_EveryStairLanding_AndEveryBridge_CanBeWalkedTo()
         {
-            var bridgesSeen = new bool[_p.Bridges.Count];
             for (int k = 0; k < _p.Towers.Count; k++)
             {
                 GreyboxBlock.Building t = _p.Towers[k];
                 string name = _p.TowerNames[k];
-                Vec3d Landing(int s) => new Vec3d(t.Cx(0) + 3.3, t.Y0 + s * GreyboxBlock.StoreyHeight, t.Cz(2) + 3.3);
-                // The ground floor from the roads, then each storey's landing to the next one's, up to the roof.
-                Assert.That(Walkable(Landing(0)), Is.True, $"{name}'s ground floor");
                 for (int s = 0; s < t.Storeys; s++)
                 {
-                    BotNav band = Band(t, s);
-                    Vec3d up = s + 1 < t.Storeys ? Landing(s + 1) : new Vec3d(t.Cx(t.Mx - 1) + 3.3, t.Top, t.Cz(1) + 3.3);
-                    Assert.That(Joined(band, Landing(s), up), Is.True, s + 1 < t.Storeys ? $"{name}: the stairs from floor {s} to {s + 1}" : $"{name}: the stairs to the roof");
-                    // Bridges whose deck is level with this storey's top: walkable from it.
-                    for (int i = 0; i < _p.Bridges.Count; i++)
-                    {
-                        Aabb br = _p.Bridges[i];
-                        if (Math.Abs(br.Min.Y - up.Y) > 1e-6 || !Rect2.Of(t.Bounds).Grow(12).Contains((br.Min.X + br.Max.X) / 2, (br.Min.Z + br.Max.Z) / 2)) continue;
-                        var mid = new Vec3d((br.Min.X + br.Max.X) / 2, br.Min.Y, (br.Min.Z + br.Max.Z) / 2);
-                        if (Joined(band, up, mid, 1)) bridgesSeen[i] = true;
-                    }
+                    var landing = new Vec3d(t.Cx(0) + 3.3, t.Y0 + s * GreyboxBlock.StoreyHeight, t.Cz(2) + 3.3);
+                    Assert.That(Walkable(landing), Is.True, $"{name}'s stair landing on floor {s}");
                 }
+                var roof = new Vec3d(t.Cx(t.Mx - 1) + 3.3, t.Top, t.Cz(1) + 3.3);
+                Assert.That(Walkable(roof), Is.True, $"{name}'s roof at {roof}");
             }
-            for (int i = 0; i < bridgesSeen.Length; i++) Assert.That(bridgesSeen[i], Is.True, $"the bridge at {_p.Bridges[i].Min} can be walked onto");
+            foreach (Aabb br in _p.Bridges)
+            {
+                var mid = new Vec3d((br.Min.X + br.Max.X) / 2, br.Min.Y, (br.Min.Z + br.Max.Z) / 2);
+                Assert.That(Walkable(mid, 1), Is.True, $"the bridge at {br.Min}");
+            }
         }
 
         [Test]
@@ -134,24 +108,10 @@ namespace Sculpt.Core.Tests
         {
             foreach (var (room, chest, what) in _p.Sealed)
             {
-                // Walking: the room has floor, and it isn't joined to the roads (low rooms, on the town grid) or to its
-                // tower's stair landing on that floor (rooms up a tower, on a band of that storey).
-                int ti = _p.Towers.FindIndex(t => Rect2.Of(t.Bounds).Contains(chest.X, chest.Z));
-                if (ti < 0)
-                {
-                    int n = _nav.Nearest(chest, 1);
-                    Assert.That(n >= 0 && Math.Abs(_nav.Feet(n).Y - chest.Y) < 0.6, Is.True, $"{what} at {chest} has a floor");
-                    Assert.That(_nav.SameArea(_road, n), Is.False, $"{what} at {chest} can be walked into");
-                }
-                else
-                {
-                    GreyboxBlock.Building t = _p.Towers[ti];
-                    int s = (int)Math.Round((chest.Y - t.Y0) / GreyboxBlock.StoreyHeight);
-                    BotNav band = Band(t, s);
-                    int n = band.Nearest(chest, 1), l = band.Nearest(new Vec3d(t.Cx(0) + 3.3, chest.Y, t.Cz(2) + 3.3), 2);
-                    Assert.That(n >= 0 && Math.Abs(band.Feet(n).Y - chest.Y) < 0.6 && l >= 0, Is.True, $"{what} at {chest} has a floor");
-                    Assert.That(band.SameArea(l, n), Is.False, $"{what} at {chest} can be walked into from its tower's stairs");
-                }
+                // Walking: the room has floor, and it isn't joined to the roads (every door open).
+                int n = _nav.Nearest(chest, 1);
+                Assert.That(n >= 0 && Math.Abs(_nav.Feet(n).Y - chest.Y) < 0.6, Is.True, $"{what} at {chest} has a floor");
+                Assert.That(_nav.SameArea(_road, n), Is.False, $"{what} at {chest} can be walked into");
                 // Every line out of it (64 directions round, three heights, three pitches) hits something before it
                 // leaves the room.
                 Aabb grown = room.Expand(0.6);
