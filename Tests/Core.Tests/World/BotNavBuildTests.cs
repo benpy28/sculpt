@@ -41,8 +41,8 @@ namespace Sculpt.Core.Tests
             SubGrid g = BrMap.BuildGround();
             ITerrain t = BrMap.Terrain(g, w);
             double x0 = br.Centre.X + 390, z0 = br.Centre.Z + 200;
-            BotNav fast = BotNav.Build(t, x0, z0, 160, 120, 1.0, topY: BrMap.NavTop, floorY: BrGround.QuarryFloor - 2, columnTop: BrMap.NavColumnTop(w, g));
-            BotNav slow = BotNav.Build(t, x0, z0, 160, 120, 1.0, topY: BrMap.NavTop, floorY: BrGround.QuarryFloor - 2);
+            BotNav fast = BotNav.Build(t, x0, z0, 160, 120, 1.0, topY: BrMap.NavTop, floorY: BrGround.Lowest - 2, columnTop: BrMap.NavColumnTop(w, g));
+            BotNav slow = BotNav.Build(t, x0, z0, 160, 120, 1.0, topY: BrMap.NavTop, floorY: BrGround.Lowest - 2);
             Assert.That(fast.Nodes.Count, Is.GreaterThan(15000));
             AssertSame(fast, slow);
         }

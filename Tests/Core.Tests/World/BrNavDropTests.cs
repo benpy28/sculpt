@@ -18,12 +18,12 @@ namespace Sculpt.Core.Tests
             BrushWorld w = BrMap.BuildBrushes(out BreachMapInfo info, out _);
             ITerrain t = BrMap.Terrain(BrMap.BuildGround(), w);
             var path = new List<int>();
-            // First floors of the big POI halls, the outpost and the farmhouse (in the design eighth), where bots were found stuck.
+            // First floors of two-storey buildings (spawn regions and houses), where bots were found stuck.
             int tried = 0;
             for (int k = 0; k < info.Block.Buildings.Count && tried < 4; k++)
             {
                 string name = info.Block.Names[k];
-                if (name != "Halls" && name != "Outpost" && name != "Farmhouse") continue;
+                if (name != "Spawn region" && name != "House") continue;
                 Aabb b = info.Block.Buildings[k];
                 double floor = b.Min.Y + GreyboxBlock.StoreyHeight, ground = b.Min.Y;
                 int a = -1;

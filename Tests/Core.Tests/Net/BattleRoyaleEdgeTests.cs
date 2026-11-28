@@ -17,6 +17,33 @@ namespace Sculpt.Core.Tests.Net
                 Make != null ? Make(server, me) : new InputCmd { Tick = server.Tick, ViewTick = server.Tick };
         }
 
+        /// <summary>
+        /// Two spots on open, level ground <paramref name="gap"/> apart along z with a clear line between them at eye height
+        /// and nothing over them, searched outward from the map's centre (whatever a segment builds there).
+        /// </summary>
+        private static void OpenLine(ITerrain t, BrMapInfo br, double gap, out Vec3d a, out Vec3d b, bool level = true)
+        {
+            for (double r = 0; r < 400; r += 7)
+                for (int k = 0; k < Math.Max(1, (int)(r / 7) * 6); k++)
+                {
+                    double ang = k * 2 * Math.PI / Math.Max(1, (int)(r / 7) * 6);
+                    Vec3d c = br.Centre + new Vec3d(Math.Cos(ang) * r, 0, Math.Sin(ang) * r);
+                    a = ItemRules.Settle(t, c + new Vec3d(0, 90, -gap / 2));
+                    b = ItemRules.Settle(t, c + new Vec3d(0, 90, gap / 2));
+                    if (Math.Abs(a.Y - b.Y) > (level ? 1e-6 : 0.6)) continue;
+                    Vec3d eyes = b - a;
+                    if (t.Raycast(a + new Vec3d(0, 1.6, 0), eyes * (1 / eyes.Length), eyes.Length).Hit) continue;
+                    if (level && t.Raycast(a + new Vec3d(0, 0.5, 0), new Vec3d(0, 0, 1), gap).Hit) continue;
+                    if (t.Raycast(a + new Vec3d(0, 2, 0), new Vec3d(0, 1, 0), 60).Hit || t.Raycast(b + new Vec3d(0, 2, 0), new Vec3d(0, 1, 0), 60).Hit) continue;
+                    if (level && t.BoxOverlapsSolid(new Aabb(a + new Vec3d(-1, 0.05, -1), b + new Vec3d(1, 2, 1)))) continue;
+                    bool flat = level;
+                    if (!level) return;
+                    for (double f = 0; f <= 1 && flat; f += 0.1) flat = Math.Abs(ItemRules.Settle(t, a + (b - a) * f + new Vec3d(0, 3, 0)).Y - a.Y) < 1e-6;
+                    if (flat) return;
+                }
+            throw new AssertionException("no open ground near the map's centre");
+        }
+
         private static NetServer NewServer(BrConfig cfg, out BrMapInfo br)
         {
             SubGrid g = BrMap.BuildGround();
@@ -62,11 +89,8 @@ namespace Sculpt.Core.Tests.Net
                 NetServer s = NewServer(Quick(BrMode.Solos, brains), out BrMapInfo br);
                 StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
                 ServerPlayer a = s.Players[0], b = s.Players[1];
-                // Open ground in the middle of the plaza, 4 m apart, facing each other.
-                Vec3d at = br.Centre + new Vec3d(0, 0, -2);
-                Vec3d bt = br.Centre + new Vec3d(0, 0, 2);
-                at = ItemRules.Settle(s.Grid, at + new Vec3d(0, 30, 0)); // the plaza is on the plateau (map v3)
-                bt = ItemRules.Settle(s.Grid, bt + new Vec3d(0, 30, 0));
+                // Open, level ground, 4 m apart, facing each other (the map's design changes: found, not fixed).
+                OpenLine(s.Grid, br, 4, out Vec3d at, out Vec3d bt);
                 Assert.That(bt.Y, Is.EqualTo(at.Y).Within(1e-6), "flat");
                 Assert.That(s.Grid.Raycast(at + new Vec3d(0, 1.6, 0), new Vec3d(0, 0, 1), 4).Hit, Is.False, "a clear line on the plaza");
                 Place(a, at);
@@ -122,9 +146,8 @@ namespace Sculpt.Core.Tests.Net
             StepUntil(s, () => x.State.Dead, 10 * SimTime.TicksPerSecond);
             Assert.That(s.InBrMatch(x.Id) && x.State.Dead, "x is out of the match");
             x.State.Position = x.Spawn; // went down indoors (the entrance hall), out of sight of the plaza
-            // y and z face off across the open plaza, 24 m apart, standing still (no noise).
-            Vec3d yAt = ItemRules.Settle(s.Grid, br.Centre + new Vec3d(0, 5, -12));
-            Vec3d zAt = ItemRules.Settle(s.Grid, br.Centre + new Vec3d(0, 5, 12));
+            // y and z face off across open ground, 24 m apart, standing still (no noise), far from x's spawn.
+            OpenLine(s.Grid, br, 24, out Vec3d yAt, out Vec3d zAt, level: false);
             for (int i = 0; i < 2 * SimTime.TicksPerSecond; i++) { Place(y, yAt); Place(z, zAt); s.Step(); }
             Assert.That(s.IsSentTo(y.Id, z.Id), Is.True, "y sees z across the plaza");
             Assert.That((x.State.Position - zAt).HorizontalLength, Is.GreaterThan(40), "x went down far away");

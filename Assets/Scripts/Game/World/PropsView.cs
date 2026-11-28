@@ -6,9 +6,9 @@ using UnityEngine;
 namespace Sculpt.Game.World
 {
     /// <summary>
-    /// The battle royale's plains (<see cref="BrNature"/>): every prop of the design eighth is meshed once and placed
-    /// eight times like the map's symmetries; the copies are merged into one mesh per 128 m cluster of the map (map v3
-    /// groundwork: 520 renderers became about 60). The props are the same sub-cells in Core (collision, bullets): this
+    /// The battle royale's plains (<see cref="BrNature"/>): every library shape is meshed once and each prop is a copy
+    /// of its shape, turned or mirrored and moved into place; the copies are merged into one mesh per 128 m cluster of
+    /// the map. The props are the same sub-cells in Core (collision, bullets): this
     /// only draws them. Past <see cref="BrushView.FarDetailFrom"/> a cluster swaps to stand-ins: each tree and bush as
     /// the plain boxes of its own sub-cells with their faces merged (no chamfers), so its outline stays within about
     /// 0.1 m of the real one (under a pixel at that range) and nothing appears or disappears that could hide a player.
@@ -31,50 +31,48 @@ namespace Sculpt.Game.World
 
         private struct Part
         {
-            public int Prop;
-            public int Sym;
+            public int Variant;
+            public int Orient;
+            /// <summary>Where the shape's origin lands (metres).</summary>
+            public Vector3 At;
         }
 
         public void Build(Material material)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             BrNature.Plan plan = BrNature.GetPlan();
-            float c = (float)(BrMap.Size / 2);
             const int cs = SubGrid.ChunkSize;
             float sub = (float)SubGrid.SubSize;
             var mesher = new ChunkMesher { AnchorsOnly = true, MarkSculptable = false, FlatFastPath = false };
             var chunks = new List<Int3>();
             var offsets = new List<Vector3>();
-            var nearMeshes = new Mesh[plan.Props.Count];
-            var farMeshes = new Mesh[plan.Props.Count];
-            for (int k = 0; k < plan.Props.Count; k++)
+            int shapes = plan.Library.Count;
+            var nearMeshes = new Mesh[shapes];
+            var farMeshes = new Mesh[shapes];
+            var used = new bool[shapes];
+            foreach (BrNature.Prop p in plan.Props) used[p.Variant] = true;
+            for (int k = 0; k < shapes; k++)
             {
-                BrNature.Prop p = plan.Props[k];
+                if (!used[k]) continue;
+                BrNature.Variant v = plan.Library[k];
                 int x0 = int.MaxValue, z0 = int.MaxValue, x1 = int.MinValue, z1 = int.MinValue, y0 = int.MaxValue, y1 = int.MinValue;
-                bool stone = false;
-                for (int i = p.CellStart; i < p.CellStart + p.CellCount; i++)
+                var kinds = new Dictionary<(int, int, int), byte>();
+                foreach (BrNature.Cell q in v.Cells)
                 {
-                    BrNature.Cell q = plan.Cells[i];
                     x0 = Mathf.Min(x0, q.X); x1 = Mathf.Max(x1, q.X);
                     z0 = Mathf.Min(z0, q.Z); z1 = Mathf.Max(z1, q.Z);
                     y0 = Mathf.Min(y0, q.Y); y1 = Mathf.Max(y1, q.Y);
-                    if (q.Kind == (byte)ChunkMesher.KindStone) stone = true;
+                    kinds[(q.X, q.Y, q.Z)] = q.Kind;
                 }
-                // A scratch grid round the prop, one sub-cell of air round it. The prop stands on the smooth ground (map
-                // v3): its lowest layers are under the ground, so the faces down there are never seen.
-                int ox = x0 - 2, oz = z0 - 2;
-                int oy = (int)Math.Floor((y0 - 2) / (double)cs) * cs;
-                int cx = (x1 - ox + 3 + cs - 1) / cs, cz = (z1 - oz + 3 + cs - 1) / cs, cy = (y1 + 2 - oy + cs) / cs;
-                var g = new SubGrid(cx, cy, cz, oy);
-                for (int i = p.CellStart; i < p.CellStart + p.CellCount; i++)
-                {
-                    BrNature.Cell q = plan.Cells[i];
-                    g.Set(q.X - ox, q.Y, q.Z - oz, SubId.Anchor);
-                }
-                mesher.DecorOf = s => BrNature.KindAt(new Int3(s.X + ox, s.Y, s.Z + oz));
+                // A scratch grid round the shape, one sub-cell of air round it (cells go in at +ox, +oy, +oz).
+                int ox = 2 - x0, oz = 2 - z0, oy = 2 - y0;
+                int cx = (x1 + ox + 3 + cs - 1) / cs, cz = (z1 + oz + 3 + cs - 1) / cs, cy = (y1 + oy + 3 + cs - 1) / cs;
+                var g = new SubGrid(cx, cy, cz, 0);
+                foreach (BrNature.Cell q in v.Cells) g.Set(q.X + ox, q.Y + oy, q.Z + oz, SubId.Anchor);
+                mesher.DecorOf = c => kinds.TryGetValue((c.X - ox, c.Y - oy, c.Z - oz), out byte kind) ? kind : BrNature.KindStone;
                 chunks.Clear();
                 offsets.Clear();
-                Vector3 origin = new Vector3(ox * sub, 0, oz * sub); // the scratch grid's corner on the map (design eighth)
+                Vector3 origin = new Vector3(-ox * sub, -oy * sub, -oz * sub); // so the shape's own origin is at 0
                 for (int yy = 0; yy < cy; yy++)
                     for (int zz = 0; zz < cz; zz++)
                         for (int xx = 0; xx < cx; xx++)
@@ -83,39 +81,37 @@ namespace Sculpt.Game.World
                             chunks.Add(cc);
                             offsets.Add(origin + g.ChunkOrigin(cc).ToUnity() * sub);
                         }
-                var mesh = new Mesh { name = $"Prop {k} ({p.Kind})" };
+                var mesh = new Mesh { name = $"Prop shape {k} ({v.Shape})" };
                 mesher.BuildGroup(g, chunks, offsets, mesh);
                 nearMeshes[k] = mesh;
-                farMeshes[k] = stone ? mesh : StandIn(plan, p);
+                farMeshes[k] = v.Shape == BrNature.Shape.Rocks ? mesh : StandIn(v);
             }
 
-            // Every copy of every prop goes into the cluster its centre lands in.
+            // Every prop goes into the cluster its centre lands in.
             var byCluster = new Dictionary<Vector2Int, List<Part>>();
-            for (int s = 0; s < BrMap.Sym.Length; s++)
-                for (int k = 0; k < plan.Props.Count; k++)
-                {
-                    BrNature.Prop p = plan.Props[k];
-                    Vec3d at = BrMap.Tr(new Vec3d(p.X, 0, p.Z), BrMap.Sym[s], c);
-                    var key = new Vector2Int(Mathf.FloorToInt((float)at.X / ClusterSize), Mathf.FloorToInt((float)at.Z / ClusterSize));
-                    if (!byCluster.TryGetValue(key, out var list)) byCluster[key] = list = new List<Part>();
-                    list.Add(new Part { Prop = k, Sym = s });
-                }
+            foreach (BrNature.Prop p in plan.Props)
+            {
+                var key = new Vector2Int(Mathf.FloorToInt((float)p.X / ClusterSize), Mathf.FloorToInt((float)p.Z / ClusterSize));
+                if (!byCluster.TryGetValue(key, out var list)) byCluster[key] = list = new List<Part>();
+                list.Add(new Part { Variant = p.Variant, Orient = p.Orient, At = new Vector3(p.SX * sub, p.SY * sub, p.SZ * sub) });
+            }
             long tris = 0, farTris = 0;
             foreach (var kv in byCluster)
             {
-                // A copy can reach out of its cluster a little: the area grows by a prop's reach so the switch is fair.
+                // A prop can reach out of its cluster a little: the area grows by a prop's reach so the switch is fair.
                 var cl = new Cluster { Area = new Rect(kv.Key.x * ClusterSize - 12f, kv.Key.y * ClusterSize - 12f, ClusterSize + 24f, ClusterSize + 24f) };
-                cl.Near = Renderer(material, $"Props {kv.Key}", Combine(nearMeshes, kv.Value, c), ref tris);
-                cl.Far = Renderer(material, $"Props far {kv.Key}", Combine(farMeshes, kv.Value, c), ref farTris);
+                cl.Near = Renderer(material, $"Props {kv.Key}", Combine(nearMeshes, kv.Value), ref tris);
+                cl.Far = Renderer(material, $"Props far {kv.Key}", Combine(farMeshes, kv.Value), ref farTris);
                 cl.Far.enabled = false;
                 _clusters.Add(cl);
             }
-            var gone = new HashSet<Mesh>(nearMeshes);
-            gone.UnionWith(farMeshes);
+            var gone = new HashSet<Mesh>();
+            foreach (Mesh m in nearMeshes) if (m != null) gone.Add(m);
+            foreach (Mesh m in farMeshes) if (m != null) gone.Add(m);
             foreach (Mesh m in gone) Destroy(m);
             Triangles = (int)tris;
             FarTriangles = (int)farTris;
-            Debug.Log($"[SCULPT] Plains: {plan.Props.Count} props meshed once each, placed 8 times in {_clusters.Count} clusters ({Triangles / 1000} thousand triangles near, {FarTriangles / 1000} thousand as stand-ins), in {sw.ElapsedMilliseconds} ms.");
+            Debug.Log($"[SCULPT] Plains: {plan.Props.Count} props from {gone.Count} meshed shapes in {_clusters.Count} clusters ({Triangles / 1000} thousand triangles near, {FarTriangles / 1000} thousand as stand-ins), in {sw.ElapsedMilliseconds} ms.");
         }
 
         private void Update()
@@ -158,23 +154,22 @@ namespace Sculpt.Game.World
         private static readonly List<Color> SrcC = new List<Color>();
         private static readonly List<int> SrcT = new List<int>();
 
-        /// <summary>The copies of props in one cluster as one mesh, each moved by its symmetry (mirrored ones turned round).</summary>
-        private static Mesh Combine(Mesh[] meshes, List<Part> parts, float c)
+        /// <summary>The props in one cluster as one mesh, each shape turned by its orientation (mirrored ones turned round) and moved into place.</summary>
+        private static Mesh Combine(Mesh[] meshes, List<Part> parts)
         {
             V.Clear(); N.Clear(); U0.Clear(); U1.Clear(); C.Clear(); T.Clear();
             foreach (Part part in parts)
             {
-                Mesh m = meshes[part.Prop];
-                int[] s = BrMap.Sym[part.Sym];
+                Mesh m = meshes[part.Variant];
+                int[] s = BrMap.Sym[part.Orient];
                 bool mirror = s[0] * s[3] - s[1] * s[2] < 0;
                 m.GetVertices(SrcV); m.GetNormals(SrcN); m.GetColors(SrcC); m.GetUVs(0, SrcU0); m.GetUVs(1, SrcU1); m.GetTriangles(SrcT, 0);
                 int baseV = V.Count;
                 for (int i = 0; i < SrcV.Count; i++)
                 {
                     Vector3 p = SrcV[i], n = SrcN.Count == SrcV.Count ? SrcN[i] : Vector3.up;
-                    // (u, v) = (x - c, z - c) -> (a u + b v, c u + d v): the map's own symmetry (BrMap.Tr).
-                    float u = p.x - c, w = p.z - c;
-                    V.Add(new Vector3(c + s[0] * u + s[1] * w, p.y, c + s[2] * u + s[3] * w));
+                    // (x, z) -> (a x + b z, c x + d z) about the shape's origin (BrNature.Orient), then into place.
+                    V.Add(part.At + new Vector3(s[0] * p.x + s[1] * p.z, p.y, s[2] * p.x + s[3] * p.z));
                     N.Add(new Vector3(s[0] * n.x + s[1] * n.z, n.y, s[2] * n.x + s[3] * n.z));
                 }
                 if (SrcC.Count == SrcV.Count) C.AddRange(SrcC); else for (int i = 0; i < SrcV.Count; i++) C.Add(Color.white);
@@ -203,13 +198,12 @@ namespace Sculpt.Game.World
         /// A tree or bush as the boxes of its own sub-cells, every face that shows merged into rectangles of one kind
         /// (bark or leaves). Same cells, so the same outline as the real prop give or take its 0.15 m chamfers.
         /// </summary>
-        private static Mesh StandIn(BrNature.Plan plan, BrNature.Prop p)
+        private static Mesh StandIn(BrNature.Variant shape)
         {
             var cells = new Dictionary<(int, int, int), byte>();
             int x0 = int.MaxValue, y0 = int.MaxValue, z0 = int.MaxValue, x1 = int.MinValue, y1 = int.MinValue, z1 = int.MinValue;
-            for (int i = p.CellStart; i < p.CellStart + p.CellCount; i++)
+            foreach (BrNature.Cell q in shape.Cells)
             {
-                BrNature.Cell q = plan.Cells[i];
                 cells[(q.X, q.Y, q.Z)] = q.Kind;
                 x0 = Mathf.Min(x0, q.X); x1 = Mathf.Max(x1, q.X);
                 y0 = Mathf.Min(y0, q.Y); y1 = Mathf.Max(y1, q.Y);
