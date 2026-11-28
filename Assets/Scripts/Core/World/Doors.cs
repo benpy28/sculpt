@@ -78,6 +78,23 @@ namespace Sculpt.Core
             return any;
         }
 
+        /// <summary>
+        /// Is the door still cooling down from a press (<see cref="BreachConfig.DoorToggleSeconds"/>) on
+        /// <paramref name="tick"/>? Then any press on it is refused quietly. Checked on the server and in the client's
+        /// own prediction, so both agree.
+        /// </summary>
+        public static bool Cooling(TileWalls w, int tile, int tick, List<int> scratch)
+        {
+            Leaves(w, tile, scratch);
+            int cd = SimTime.SecondsToTicks(w.Config.DoorToggleSeconds);
+            foreach (int l in scratch)
+            {
+                int at = w.DoorToggledAt(l);
+                if (at != int.MinValue && tick - at < cd) return true;
+            }
+            return false;
+        }
+
         /// <summary>Opens or shuts every leaf of the door (health kept). Returns how many leaves changed.</summary>
         public static int Set(TileWalls w, int tile, bool open, TileCause cause, int by, List<int> scratch)
         {
@@ -119,6 +136,7 @@ namespace Sculpt.Core
         public void Press(TileWalls w, int tile, bool open, int tick, int by, IReadOnlyList<Aabb> bodies)
         {
             if (!DoorRules.CanSet(w, tile, open, bodies, _leaves)) return;
+            if (DoorRules.Cooling(w, tile, tick, _leaves)) return; // the server refuses it too: nothing to show
             foreach (int l in _leaves)
             {
                 bool pending = false;

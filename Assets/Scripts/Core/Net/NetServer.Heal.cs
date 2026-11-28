@@ -74,7 +74,8 @@ namespace Sculpt.Core.Net
 
         /// <summary>
         /// A door press, right after the player's movement on the tick it was pressed: in reach (with the same lag
-        /// slack as heals), and when shutting, nobody (alive) inside a leaf's space. Refusals change nothing (the client
+        /// slack as heals), not within DoorToggleSeconds of the door's last press, and when shutting, nobody (alive)
+        /// inside a leaf's space. Refusals change nothing (the client
         /// puts its door back when no answer comes).
         /// </summary>
         private void HandleDoor(ServerPlayer p, in InputCmd cmd)
@@ -86,6 +87,8 @@ namespace Sculpt.Core.Net
             foreach (ServerPlayer o in _players)
                 if (!o.State.Dead) _doorBodies.Add(PlayerMovement.Box(o.State.Position, Movement.HalfWidth, PlayerMovement.HeightOf(o.State, Movement)));
             if (!DoorRules.CanSet(Walls, cmd.Hand.DoorTile, cmd.Hand.DoorOpen, _doorBodies, _doorLeaves)) return;
+            // Toggle cooldown: no open, shoot and shut within a tick (two players on one tick included). Quiet refusal.
+            if (DoorRules.Cooling(Walls, cmd.Hand.DoorTile, Tick, _doorLeaves)) return;
             Walls.Tick = Tick;
             DoorRules.Set(Walls, cmd.Hand.DoorTile, cmd.Hand.DoorOpen, TileCause.Door, p.Id, _doorLeaves);
         }
