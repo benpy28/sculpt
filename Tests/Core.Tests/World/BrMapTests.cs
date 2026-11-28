@@ -87,7 +87,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void EveryStairHasHeadroom_AndCanBeRunUp()
         {
-            Assert.That(B.Climbs.Count, Is.EqualTo(8 * 8), "two flights in each of four stairwells per eighth (region, halls, town, outpost)");
+            Assert.That(B.Climbs.Count, Is.EqualTo(8 * 10), "two flights in each of five stairwells per eighth (region, halls, town, outpost, farmhouse)");
             foreach (Brush s in B.Climbs)
             {
                 double len = Math.Max(s.Bounds.Max.X - s.Bounds.Min.X, s.Bounds.Max.Z - s.Bounds.Min.Z);
@@ -150,7 +150,7 @@ namespace Sculpt.Core.Tests
             Assert.That(all.Count, Is.EqualTo(32));
             TestContext.WriteLine($"pad to POI {_br.PadToPoi:0.0} m, pad to loot {_br.PadToLoot:0.0} m");
             Assert.That(_br.PadToLoot, Is.InRange(8.0, 20.0), "a short walk");
-            Assert.That(_br.PadToPoi, Is.InRange(90.0, 160.0)); // the 614 m map (was 35..90 on the 307 m one)
+            Assert.That(_br.PadToPoi, Is.InRange(120.0, 180.0)); // the 921 m map (90..160 on the 614 m one, 35..90 on the 307 m one)
         }
 
         [Test]
@@ -177,7 +177,7 @@ namespace Sculpt.Core.Tests
         [Test]
         public void ChestsAndItemsRestOnFloors_InTheClear()
         {
-            Assert.That(_br.Chests.Count, Is.EqualTo(8 * (4 + 4 + 2 + 1 + 3 + 2 + 1 + 1))); // pads, halls, town (2 + 1), outpost, barn, two hills
+            Assert.That(_br.Chests.Count, Is.EqualTo(8 * (4 + 4 + 2 + 1 + 3 + 2 + 1 + 1 + 2 + 2 + 1))); // pads, halls, town (2 + 1), outpost, barn, two hills, farmhouse, lodge, cottage
             foreach (BrChestSpot ch in _br.Chests)
             {
                 Vec3d p = ItemRules.Settle(_t, ch.Position + new Vec3d(0, 0.5, 0));

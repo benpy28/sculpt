@@ -28,14 +28,16 @@ namespace Sculpt.Core.Net
         public int Seed = 1;
 
         // ---- The circle. Phase k: wait, then shrink to Radius[k] over Shrink[k]; outside it you take Dps[k] each second.
-        // The 614 m map (Ben 2026-11-26): the first circles are bigger and give longer to get in (crossing half the map at
-        // a sprint takes about 30 s); the last ones are the same size as before, since the endgame is about the players
-        // left, not the map.
-        public double StartRadius = 400;   // covers the whole play area (its corners are 384 m from the middle)
-        public double[] WaitSeconds = { 75, 55, 40, 30, 25, 20 };
-        public double[] ShrinkSeconds = { 60, 45, 35, 25, 20, 20 };
-        public double[] Radius = { 250, 150, 80, 35, 12, 0 };
-        public int[] Dps = { 1, 2, 4, 6, 8, 10 };
+        // The 921 m map (2026-11-27, Ben: a game should last 10-15 minutes with 32 players): seven phases, 480 s of
+        // waits and 375 s of shrinking, so the circle closes to nothing 14 min 15 s after the start; 32-bot test matches
+        // end 10-12 minutes in, in the 65 m or 28 m circle. The first circle is big and slow to give everyone time to loot
+        // and get in from anywhere (the far corner of the play area is about 400 m from the first circle's edge at worst:
+        // 40 s at a sprint, with 210 s to do it); the shrinks never move faster than 2.5 m/s, well under a run.
+        public double StartRadius = 600;   // covers the whole play area (its corners are 576 m from the middle)
+        public double[] WaitSeconds = { 120, 100, 80, 60, 50, 40, 30 };
+        public double[] ShrinkSeconds = { 90, 75, 60, 50, 40, 35, 25 };
+        public double[] Radius = { 380, 230, 130, 65, 28, 10, 0 };
+        public int[] Dps = { 1, 2, 3, 5, 7, 9, 10 };
         public int StormHurtEveryTicks = 60 * SimTime.Per60;
 
         // ---- Loot.

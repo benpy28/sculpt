@@ -287,8 +287,11 @@ namespace Sculpt.Core.Net
         {
             int newest = cmds[cmds.Count - 1].Tick;
             int lead = newest - Tick;
-            // Too far ahead: a broken or cheating clock. Ignore the whole packet.
-            if (lead > Config.MaxCommandLeadTicks) { Flag(p, FlagKind.ClockAhead, lead); return; }
+            // Too far ahead: a broken or cheating clock. Ignore the whole packet, but tell the client how far ahead it is
+            // (its clock jumps back on the next snapshot). Without the report it never heard a lead at all and stayed
+            // ahead for good, every input ignored: a local server that stalled over a second at start (the client's
+            // clock ran on) left the player that way.
+            if (lead > Config.MaxCommandLeadTicks) { Flag(p, FlagKind.ClockAhead, lead); RecordLead(p, lead); return; }
 
             RecordLead(p, lead);
             if (newest > p.NewestReceived) p.NewestReceived = newest;
@@ -643,6 +646,8 @@ namespace Sculpt.Core.Net
         /// <summary>Lock end for a windup that keeps the gun away: its completion, plus follow-through for a throw.</summary>
         public static int GunLockUntil(SculptConfig cfg, in SculptCheck c, int startTick) =>
             startTick + c.WindupTicks + (c.Type == SculptActionType.Throw ? cfg.ThrowFollowThroughTicks : 0);
+
+        internal ServerPlayer FindPlayer(int id) => FindById(id);
 
         private ServerPlayer FindById(int id)
         {

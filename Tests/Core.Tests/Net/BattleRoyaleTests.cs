@@ -235,11 +235,12 @@ namespace Sculpt.Core.Tests.Net
                     // End this match fast: everyone dies.
                     StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
                     foreach (ServerPlayer p in s.Players) { p.State.Damage = 149; }
-                    s.Br.Dps[0] = 50;
-                    s.Br.WaitSeconds[0] = 0;
-                    StepUntil(s, () => s.Match.Phase != MatchPhase.Playing, 200 * SimTime.TicksPerSecond);
-                    s.Br.Dps[0] = 1;
-                    s.Br.WaitSeconds[0] = 60;
+                    int[] dps = (int[])s.Br.Dps.Clone();
+                    double[] wait = (double[])s.Br.WaitSeconds.Clone();
+                    for (int k = 0; k < dps.Length; k++) { s.Br.Dps[k] = 50; s.Br.WaitSeconds[k] = 0; }
+                    StepUntil(s, () => s.Match.Phase != MatchPhase.Playing, 400 * SimTime.TicksPerSecond);
+                    Array.Copy(dps, s.Br.Dps, dps.Length);
+                    Array.Copy(wait, s.Br.WaitSeconds, wait.Length);
                 }
                 return sb.ToString();
             }

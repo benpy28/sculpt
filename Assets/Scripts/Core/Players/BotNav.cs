@@ -103,9 +103,11 @@ namespace Sculpt.Core
                 if (groundTop.HasValue && h.Point.Y <= groundTop.Value + 1e-6) return; // the ground: solid all the way down
                 // Step down through the solid to the air under it (if any).
                 double s = h.Point.Y - 0.05;
+                // Down through the solid to the air under it, as far as the bottom (a tree's canopy can be over 4 m
+                // thick, with ground to walk on under it).
                 int k = 0;
-                while (k < 40 && t.BoxOverlapsSolid(new Aabb(new Vec3d(x - 0.01, s - 0.01, z - 0.01), new Vec3d(x + 0.01, s + 0.01, z + 0.01)))) { s -= 0.1; k++; }
-                if (k >= 40) return; // solid for 4 m: the ground
+                while (k < 120 && s > bottom && t.BoxOverlapsSolid(new Aabb(new Vec3d(x - 0.01, s - 0.01, z - 0.01), new Vec3d(x + 0.01, s + 0.01, z + 0.01)))) { s -= 0.1; k++; }
+                if (k >= 120 || s <= bottom) return; // solid all the way down: the ground
                 y = s;
             }
         }
@@ -187,6 +189,10 @@ namespace Sculpt.Core
                         var span = new Aabb(new Vec3d(Math.Min(ax, bxw) - Half, lo, Math.Min(az, bzw) - Half),
                                             new Vec3d(Math.Max(ax, bxw) + Half, hi, Math.Max(az, bzw) + Half));
                         if (t.BoxOverlapsSolid(span)) continue;
+                        // A drop needs open air all the way down the far column: the ground under a first floor is a
+                        // lower floor next door, but there is a slab in between (bots used to try to drop through it and
+                        // stood there until the circle killed them).
+                        if (kind == Link.Drop && t.BoxOverlapsSolid(new Aabb(new Vec3d(bxw - Half, b.Y + Lift, bzw - Half), new Vec3d(bxw + Half, a.Y + Lift, bzw + Half)))) continue;
                         if (kind == Link.Walk) open++;
                         tmpTo.Add(j);
                         tmpKind.Add(kind);

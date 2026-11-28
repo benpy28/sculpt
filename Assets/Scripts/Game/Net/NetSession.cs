@@ -569,6 +569,7 @@ namespace Sculpt.Game.Net
             UnityEngine.Profiling.Profiler.BeginThreadProfiling("SCULPT", "Server"); // shows in the profiler (development builds)
             try { fine = timeBeginPeriod(1) == 0; } catch { } // 1 ms sleeps (Windows; elsewhere the spin covers it)
             double tickMs = 1000.0 / SimTime.TicksPerSecond;
+            lock (ServerLock) server.PrepareSight(); // seconds on the big map: before the first tick, not in the middle of the run
             double next = clock.Elapsed.TotalMilliseconds;
             double sum = 0, worst = 0, windowStart = next;
             int count = 0;

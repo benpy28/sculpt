@@ -84,6 +84,29 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(hi, Is.LessThan((new NetConfig().TargetLeadTicks + 1.5) * tick), $"highest average hold {hi:0.0} ms");
         }
 
+        /// <summary>
+        /// A server that stalls for seconds (a threaded local server building something big) loses those ticks while
+        /// the client's clock runs on: the client ends up far ahead, past the furthest lead the server accepts. It must
+        /// hear how far and come back. It used to hear nothing (ignored packets were not reported), stay ahead for good
+        /// with every input ignored, and replay over a second of prediction on every snapshot.
+        /// </summary>
+        [TestCase(1.5)]
+        [TestCase(4.0)]
+        public void AClientFarAheadAfterAServerStall_ComesBack(double stallSeconds)
+        {
+            var h = NetHarness.Flat();
+            var p = h.AddClient(NetHarness.Lag(5), NetHarness.Lag(5), 1000.0 / 144.0, 3);
+            p.Script = Scripts.Wander;
+            h.RunSeconds(6);
+            h.StallServerUntilMs = h.NowMs + stallSeconds * 1000;
+            // The client holds its clock while the server catches up (it can't take back ticks it already predicted).
+            h.RunSeconds(2 * stallSeconds + 3);
+            int missed = p.ServerSide.MissedInputs;
+            h.RunSeconds(3);
+            Assert.That(p.Client.LastServerLead, Is.InRange(h.Config.TargetLeadTicks, h.Config.TargetLeadTicks + 2), "back on its lead");
+            Assert.That(p.ServerSide.MissedInputs - missed, Is.Zero, "and its inputs are used again");
+        }
+
         /// <summary>A rough link still gets the slack it needs: the clock follows the worst lead, it does not chase the average.</summary>
         [Test]
         public void JitterAndLoss_KeepTheirSlack()

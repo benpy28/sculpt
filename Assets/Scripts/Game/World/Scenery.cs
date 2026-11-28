@@ -54,8 +54,10 @@ namespace Sculpt.Game.World
             var col = new List<Color>();
             var tri = new List<int>();
             // Tree line (closer, darker, crowns as bumps), then rolling hills behind it.
-            Ring(v, col, tri, cx, cz, 125f, 12f, 18f, 0.9f, new Color(0.20f, 0.34f, 0.19f), new Color(0.14f, 0.24f, 0.14f), 7, linear);
-            Ring(v, col, tri, cx, cz, 185f, 20f, 46f, 0.05f, new Color(0.42f, 0.56f, 0.40f), new Color(0.30f, 0.42f, 0.30f), 3, linear);
+            // Out past the map's corners: on the big maps (the battle royale) fixed radii put the rings inside the play area.
+            float near = Mathf.Max(125f, Mathf.Sqrt(cx * cx + cz * cz) + 40f);
+            Ring(v, col, tri, cx, cz, near, 12f, 18f, 0.9f, new Color(0.20f, 0.34f, 0.19f), new Color(0.14f, 0.24f, 0.14f), 7, linear);
+            Ring(v, col, tri, cx, cz, near + 60f, 20f, 46f, 0.05f, new Color(0.42f, 0.56f, 0.40f), new Color(0.30f, 0.42f, 0.30f), 3, linear);
 
             var mesh = new Mesh { name = "Backdrop", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
             mesh.SetVertices(v);
@@ -80,7 +82,7 @@ namespace Sculpt.Game.World
         /// </summary>
         private static void BuildSkirt(float cx, float cz, Shader shader)
         {
-            float sx = cx * 2, sz = cz * 2, far = 420f;
+            float sx = cx * 2, sz = cz * 2, far = Mathf.Max(420f, Mathf.Sqrt(cx * cx + cz * cz) + 220f - Mathf.Min(cx, cz)); // past the backdrop
             var v = new List<Vector3>();
             var tri = new List<int>();
             void Rect(float x0, float z0, float x1, float z1)
