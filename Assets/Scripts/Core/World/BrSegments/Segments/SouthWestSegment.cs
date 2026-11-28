@@ -51,8 +51,17 @@ namespace Sculpt.Core
             return h;
         }
 
+        /// <summary>Chests behind walls with no way in (filled by <see cref="Build"/>, for the tests).</summary>
+        public static readonly System.Collections.Generic.List<Vec3d> SealedChests = new System.Collections.Generic.List<Vec3d>();
+        /// <summary>High spots that must be reachable on foot from the plaza (roofs, galleries, the tank, the containers).</summary>
+        public static readonly System.Collections.Generic.List<(string Name, Vec3d At)> HighSpots = new System.Collections.Generic.List<(string, Vec3d)>();
+
+        private static Vec3d Cell(GreyboxBlock.Building t, int i, int j, int storey) =>
+            new Vec3d(t.Cx(i) + C + 3, t.Y0 + storey * SH, t.Cz(j) + C + 3);
+
         public override void Build(BrBuild b)
         {
+            lock (SealedChests) { SealedChests.Clear(); HighSpots.Clear(); }
             b.Nature.Groves = 3;
             b.Nature.LoneTrees = 12;
             b.Nature.RockGroups = 14;
@@ -88,6 +97,8 @@ namespace Sculpt.Core
             b.Raise(office, "Company House");
             BrKit.Parapet(b, office);
             b.Chest(office, 2, 0, 0, 0);
+            SealedChests.Add(Cell(office, 2, 0, 0));
+            HighSpots.Add(("Company House roof", Cell(office, 1, 2, 6)));
             b.Chest(office, 2, 3, 3, Math.PI);
             b.Chest(office, 2, 2, 6, Math.PI);
 
@@ -103,6 +114,7 @@ namespace Sculpt.Core
             b.Raise(wages, "Wages office");
             b.Chest(wages, 0, 0, 0, 0);
             b.Chest(wages, 1, 0, 0, 0);
+            SealedChests.Add(Cell(wages, 0, 0, 0));
 
             // The weighbridge hut and the timekeeper's hut.
             b.Foot(362, 366, 362 + W(1), 366 + W(1), 2.2, y);
@@ -174,6 +186,10 @@ namespace Sculpt.Core
             b.Chest(mill, 4, 0, 2, 0);            // south gallery
             b.Chest(mill, 1, 0, 2, Math.PI / 2);
             b.Chest(mill, 6, 2, 3, Math.PI);      // roof
+            SealedChests.Add(Cell(mill, 1, 1, 0));
+            HighSpots.Add(("mill north gallery", Cell(mill, 6, 3, 1)));
+            HighSpots.Add(("mill south gallery", Cell(mill, 6, 0, 2)));
+            HighSpots.Add(("mill roof", Cell(mill, 4, 2, 3)));
             halls.Add(mill.Bounds);
 
             // ---- The foundry: 6 x 5 modules, two storeys tall round a double-height casting floor.
@@ -210,6 +226,9 @@ namespace Sculpt.Core
             b.Chest(fd, 3, 4, 1, Math.PI);
             b.Chest(fd, 5, 4, 1, Math.PI);
             b.Chest(fd, 2, 2, 2, 0);             // roof
+            SealedChests.Add(Cell(fd, 5, 2, 0));
+            HighSpots.Add(("foundry mezzanine", Cell(fd, 2, 4, 1)));
+            HighSpots.Add(("foundry roof", Cell(fd, 3, 3, 2)));
             halls.Add(fd.Bounds);
 
             // ---- The machine shop: 6 x 3, two storeys tall, a north mezzanine and stairs in its east lane.
@@ -217,6 +236,7 @@ namespace Sculpt.Core
             FactoryKit.HoleAll(ms, 0);
             FactoryKit.Floor(ms, 0, 4, 5, 0, 2);
             FactoryKit.Floor(ms, 0, 0, 5, 2, 2);
+            FactoryKit.Floor(ms, 0, 0, 1, 0, 0); // the store's ceiling
             b.Stairwell(ms, 5, true, -1);
             ms.AlongZ[0, 2, 0] = WallKind.Wall; // the sealed store
             ms.AlongX[0, 1, 0] = WallKind.Wall;
@@ -235,6 +255,8 @@ namespace Sculpt.Core
             b.Chest(ms, 2, 1, 0, 0);
             b.Chest(ms, 1, 2, 1, Math.PI);
             b.Chest(ms, 2, 1, 2, 0);
+            SealedChests.Add(Cell(ms, 0, 0, 0));
+            HighSpots.Add(("machine shop mezzanine", Cell(ms, 2, 2, 1)));
             halls.Add(ms.Bounds);
 
             // ---- The drawing office: four storeys.
@@ -246,6 +268,7 @@ namespace Sculpt.Core
             b.Chest(dw, 2, 2, 1, Math.PI);
             b.Chest(dw, 2, 0, 3, Math.PI);
             b.Chest(dw, 2, 2, 4, Math.PI);
+            HighSpots.Add(("drawing office roof", Cell(dw, 1, 1, 4)));
 
             // ---- The boiler house (double height) and its stack, twelve storeys, a door off the boiler roof.
             var bh = new GreyboxBlock.Building(197, 258, 3, 3, 2) { Y0 = y };
@@ -272,12 +295,17 @@ namespace Sculpt.Core
             b.Raise(st, "Boiler stack");
             BrKit.Parapet(b, st);
             double dz0 = st.Cz(2) + C + 1.5, dz1 = dz0 + 3.0;
-            FactoryKit.Parapet(b, bh, new Rect2(bh.Cx(3) - 1, dz0, bh.Cx(3) + 1, dz1));
+            // A fire escape up the boiler house's north side: a second way onto its roof (and to the stack's door).
+            double fe0 = bh.X0 + 3.5, fe1 = fe0 + 3.0, nz = bh.Cz(3) + C;
+            b.Climb(new Aabb(new Vec3d(fe0, y, nz), new Vec3d(fe1, bh.Top, nz + 2 * GreyboxBlock.StairRun)), Dir.South);
+            FactoryKit.Parapet(b, bh, new Rect2(bh.Cx(3) - 1, dz0, bh.Cx(3) + 1, dz1), new Rect2(fe0, nz - 1, fe1, nz + 1));
             FactoryKit.Deck(b, bh.Cx(3) + C, dz0, stackX, dz1, bh.Top);
             b.Chest(st, 1, 2, 5, Math.PI);
             b.Chest(st, 1, 0, 7, 0);
             b.Chest(st, 1, 0, 9, 0);
             b.Chest(st, 1, 2, 12, Math.PI);
+            HighSpots.Add(("boiler stack roof", Cell(st, 1, 1, 12)));
+            HighSpots.Add(("boiler house roof", Cell(bh, 1, 1, 2)));
 
             // ---- The water tower in the works yard: the tank room 35 m up.
             var tank = FactoryKit.WaterTower(b, 285, y, 235, 7, out GreyboxBlock.Building core);
@@ -286,6 +314,7 @@ namespace Sculpt.Core
             b.Chest(new Vec3d(tank.X0 + 3.2, tank.Y0, tank.Z0 + 16), Math.PI / 2);
             b.Chest(new Vec3d(tank.Cx(4) - 2.9, tank.Y0, tank.Z0 + 16), -Math.PI / 2);
             b.Chest(new Vec3d(tank.X0 + 16, tank.Y0, tank.Cz(5) - 2.9), Math.PI);
+            HighSpots.Add(("water tank (overhang)", new Vec3d(tank.X0 + 3.2, tank.Y0, tank.Z0 + 10)));
 
             // ---- The stockyard: 4.5 m walls (too tall to climb), one gate on the north side.
             Stockyard(b, y);
@@ -295,6 +324,7 @@ namespace Sculpt.Core
             var bs = new GreyboxBlock.Building(232, 190, 8, 3, 2) { Y0 = y };
             FactoryKit.HoleAll(bs, 0);
             FactoryKit.Floor(bs, 0, 6, 7, 0, 2);
+            FactoryKit.Floor(bs, 0, 0, 5, 0, 0); // a gallery over the bays (their ceiling)
             b.Stairwell(bs, 7, true, +1);
             for (int i = 0; i < 6; i++) bs.AlongX[0, 1, i] = WallKind.Wall;
             bs.AlongZ[0, 2, 0] = WallKind.Wall;
@@ -315,6 +345,8 @@ namespace Sculpt.Core
             b.Chest(bs, 5, 1, 0, Math.PI / 2);
             b.Chest(bs, 6, 1, 1, Math.PI / 2);
             b.Chest(bs, 1, 1, 2, 0);
+            SealedChests.Add(Cell(bs, 2, 0, 0));
+            HighSpots.Add(("bonded store gallery", Cell(bs, 3, 0, 1)));
 
             b.Style = BrStyle.Industrial; b.Variant = 2;
             BrKit.Warehouse(b, 292, y, 190);
@@ -358,6 +390,8 @@ namespace Sculpt.Core
             b.Variant = 2; BrKit.Shed(b, 158 + W(1), y, cz);
             FactoryKit.Box(b, 158, cz, 158 + W(1), cz + W(1), y + SH, 3); // the stacked one: sealed
             b.Chest(new Vec3d(158 + W(1) / 2, y + SH, cz + W(1) / 2), 0);
+            SealedChests.Add(new Vec3d(158 + W(1) / 2, y + SH, cz + W(1) / 2 + 1.5));
+            HighSpots.Add(("container roof", new Vec3d(158 + W(1) * 1.5, y + SH, cz + W(1) / 2)));
             double sx = 158 + 2 * W(1);
             b.Climb(new Aabb(new Vec3d(sx, y, cz + 1.8), new Vec3d(sx + GreyboxBlock.StairRun, y + SH, cz + 4.8)), Dir.West);
             b.Variant = 4; BrKit.Shed(b, 190, y, cz);
@@ -436,6 +470,7 @@ namespace Sculpt.Core
             b.Chest(rs, 2, 2, 2, Math.PI);
             b.Chest(rs, 2, 0, 4, 0);
             b.Chest(rs, 2, 2, 5, Math.PI);
+            HighSpots.Add(("research block roof", Cell(rs, 1, 1, 5)));
 
             // Pond Row: three terraces of five along z.
             double py = b.Foot(350, 196, 393, 232, 2.2);
@@ -465,6 +500,7 @@ namespace Sculpt.Core
             b.Style = BrStyle.Concrete; b.Variant = 2;
             b.Raise(pump, "Pump house");
             b.Chest(pump, 1, 1, 0, Math.PI);
+            SealedChests.Add(Cell(pump, 1, 1, 0));
             b.Chest(pump, 0, 0, 0, 0);
             b.Poi("Settling pond", new Vec3d(Pond.CX, ph, Pond.CZ));
 
@@ -501,6 +537,7 @@ namespace Sculpt.Core
             BrKit.Parapet(b, sig);
             b.Chest(sig, 1, 2, 1, Math.PI);
             b.Chest(sig, 1, 2, 3, Math.PI);
+            HighSpots.Add(("signal box roof", Cell(sig, 1, 0, 3)));
 
             double ly = b.Foot(245, 95, 245 + W(4), 95 + W(3), 3);
             b.Style = BrStyle.Industrial; b.Variant = 5;

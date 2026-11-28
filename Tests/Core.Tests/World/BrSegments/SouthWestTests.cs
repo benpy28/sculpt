@@ -1,44 +1,84 @@
 using System;
+using System.Collections.Generic;
 using NUnit.Framework;
 
 namespace Sculpt.Core.Tests
 {
+    /// <summary>
+    /// The South West segment's (the Factory's) own promises: every roof, gallery and the water tank is a walk from the
+    /// home plaza (stairs, the roof bridge, the door off the boiler roof, the stair onto the containers), and every
+    /// sealed room really has no way in. Checked on the bots' walking grid with every door open.
+    /// </summary>
     public class SouthWestTests
     {
-        [Test]
-        public void DebugLevel()
+        private static BotNav _nav;
+        /// <summary>The walking grid finds at most 12 floors down a column (BotNav.FindFloors), so it can't see the whole
+        /// twelve-storey stack: spots above this are checked on the stairs instead (BrMapTests runs every flight).</summary>
+        private const double NavTop = 41;
+
+        private static BotNav Nav()
         {
-            HeightField f = BrMap.Field;
-            BrMap.BuildBrushes(out BreachMapInfo info, out _);
-            foreach (Aabb b in info.Block.Buildings)
+            if (_nav != null) return _nav;
+            BrushWorld w = BrMap.BuildBrushes(out BreachMapInfo info, out _);
+            foreach (int d in info.Block.Doors) w.Tiles.Set(d, TileState.DoorOpen, w.Tiles[d].Health, TileCause.Built);
+            Rect2 a = BrLayout.Buildable(0);
+            ITerrain t = BrMap.Terrain(BrMap.BuildGround(), w);
+            _nav = BotNav.Build(t, a.X0 - 4, a.Z0 - 4, a.X1 - a.X0 + 8, a.Z1 - a.Z0 + 8, 1.0, topY: NavTop, floorY: BrGround.Lowest - 2);
+            return _nav;
+        }
+
+        private static int At(BotNav nav, Vec3d p)
+        {
+            int n = nav.Nearest(p, 2);
+            if (n < 0 || Math.Abs(nav.Feet(n).Y - p.Y) > 0.4) return -1;
+            return n;
+        }
+
+        private static int Home(BotNav nav) => At(nav, BrLayout.Anchor(0) + new Vec3d(-8, 0, -2));
+
+        [Test]
+        public void EveryRoofGalleryAndTheTank_IsAWalkFromTheHomePlaza()
+        {
+            BotNav nav = Nav();
+            int home = Home(nav);
+            Assert.That(home, Is.GreaterThanOrEqualTo(0), "the plaza is on the grid");
+            Assert.That(SouthWestSegment.HighSpots.Count, Is.GreaterThanOrEqualTo(15));
+            var bad = new List<string>();
+            foreach (var (name, p) in SouthWestSegment.HighSpots)
             {
-                if (b.Min.X != 300 || b.Min.Z != 342) continue;
-                for (double z = b.Min.Z; z <= b.Max.Z; z += 1.3)
-                    for (double x = b.Min.X; x <= b.Max.X; x += 1.3)
-                        if (Math.Abs(f.HeightAt(x, z) - b.Min.Y) > 1e-4) TestContext.WriteLine($"{x:0.00},{z:0.00}: {f.HeightAt(x, z):0.0000} natural {BrMap.Natural(x, z):0.0000}");
+                if (p.Y > NavTop - 2) continue;
+                int n = At(nav, p);
+                if (n < 0) bad.Add($"{name} at {p}: no walking spot there");
+                else if (!nav.SameArea(home, n)) bad.Add($"{name} at {p}: no way there from the plaza");
             }
-            int i0 = (int)Math.Floor((300 - f.OriginX) / f.Cell), j0 = (int)Math.Floor((342 - f.OriginZ) / f.Cell);
-            for (int dj = -1; dj <= 2; dj++) for (int di = -1; di <= 2; di++)
-                TestContext.WriteLine($"v {f.VertexX(i0 + di):0.00},{f.VertexZ(j0 + dj):0.00} = {f[i0 + di, j0 + dj]:0.0000}");
-            var fs = BrMap.FootingsUsed;
-            for (int k = 0; k < fs.Count; k++)
-            {
-                var ft = fs[k];
-                if (GroundShapes.ToRect(306, 348, ft.X0, ft.Z0, ft.X1, ft.Z1) < 40) TestContext.WriteLine($"footing {k} {ft.X0},{ft.Z0}..{ft.X1},{ft.Z1} level {ft.Level} apron {ft.Apron}");
-            }
+            Assert.That(bad, Is.Empty, string.Join("\n", bad));
         }
 
         [Test]
-        public void Dump()
+        public void TheSealedRooms_HaveNoWayIn()
         {
+            BotNav nav = Nav();
+            int home = Home(nav);
+            Assert.That(SouthWestSegment.SealedChests.Count, Is.GreaterThanOrEqualTo(8));
+            var bad = new List<string>();
+            foreach (Vec3d p in SouthWestSegment.SealedChests)
+            {
+                int n = At(nav, p);
+                if (n < 0) bad.Add($"sealed room at {p}: no walking spot inside");
+                else if (nav.SameArea(home, n)) bad.Add($"sealed room at {p} can be walked into");
+            }
+            Assert.That(bad, Is.Empty, string.Join("\n", bad));
+        }
+
+        [Test]
+        public void TheSkylineIsTallButUnderTheCap()
+        {
+            double top = 0;
             BrBuild b = BrMap.Template.Segments[0];
-            TestContext.WriteLine($"area {b.Area} anchor {b.Anchor}");
-            foreach (Rect2 r in b.Reserved) TestContext.WriteLine($"reserved {r}");
-            foreach (var l in b.Lanes) TestContext.WriteLine($"lane {l.From} -> {l.To} half {l.Half}");
-            BrRegion reg = BrMap.Template.Br.Regions.Find(x => x.Segment == 0);
-            TestContext.WriteLine($"spawn {reg.Building.Min} .. {reg.Building.Max}");
-            for (int i = 0; i < 4; i++) TestContext.WriteLine($"pad {reg.Pads[i]} loot {reg.LootSpots[i]}");
-            foreach (PropRequest q in BrNature.GetPlan().Dropped) if (q.Segment == 0) TestContext.WriteLine($"dropped {q.Shape} at {q.X},{q.Z}");
+            foreach (BrBuilding bd in b.Buildings) top = Math.Max(top, bd.Bounds.Max.Y);
+            TestContext.WriteLine($"tallest: {top:0.0} m");
+            Assert.That(top, Is.GreaterThan(55), "the boiler stack is the landmark");
+            Assert.That(top, Is.LessThan(85));
         }
     }
 }
