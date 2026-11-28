@@ -94,7 +94,7 @@ namespace Sculpt.Game.Settings
             .Int(SettingsGroup.Video, "sculpt.look.ao", 0, 0, 2, v => v.Look.Ao, (v, i) => v.Look.Ao = i)
             .Int(SettingsGroup.Video, "sculpt.look.shadows", 0, 0, 2, v => v.Look.Shadows, (v, i) => v.Look.Shadows = i)
             .Int(SettingsGroup.Video, "sculpt.look.lighting", 0, 0, 1, v => v.Look.Lighting, (v, i) => v.Look.Lighting = i)
-            .Int(SettingsGroup.Video, "sculpt.look.fog", 1, 0, 2, v => v.Look.Fog, (v, i) => v.Look.Fog = i)
+            .Int(SettingsGroup.Video, "sculpt.look.fog", 1, 1, 2, v => v.Look.Fog, (v, i) => v.Look.Fog = i)
             .Bool(SettingsGroup.Video, "sculpt.look.shafts", false, v => v.Look.Shafts, (v, b) => v.Look.Shafts = b)
             .Int(SettingsGroup.Video, "sculpt.look.dof", 0, 0, 1, v => v.Look.Dof, (v, i) => v.Look.Dof = i)
             .Int(SettingsGroup.Video, "sculpt.look.motionblur", 0, 0, 2, v => v.Look.MotionBlur, (v, i) => v.Look.MotionBlur = i)

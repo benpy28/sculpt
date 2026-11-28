@@ -29,7 +29,7 @@ namespace Sculpt.Game.Cameras
             Camera.clearFlags = RenderSettings.skybox != null ? CameraClearFlags.Skybox : CameraClearFlags.SolidColor;
             Camera.backgroundColor = Sky;
             Camera.nearClipPlane = 0.05f;
-            Camera.farClipPlane = 400f;
+            Camera.farClipPlane = Sculpt.Game.World.Scenery.ViewDistance + 20f; // the same for everyone, whatever the settings (map v3: 800 m)
             go.AddComponent<AudioListener>();
         }
 

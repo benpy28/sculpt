@@ -130,7 +130,7 @@ namespace Sculpt.Game.UI
             Add(TabVideo, "Picture", "Shadows", "shadows sun shadow quality cascades", true, () => LookChoice("Sun shadows", ref v.Look.Shadows, LookValues.LowHighNames, "Low: hard, 40 m. High: soft, 80 m."));
             Add(TabVideo, "Picture", "Ambient occlusion", "ambient occlusion ao ssao contact shadows corners", true, () => LookChoice("Ambient occlusion (soft shade in corners)", ref v.Look.Ao, LookValues.LowHighNames, null));
             Add(TabVideo, "Picture", "Lighting", "lighting sun light sky bounce rich flat", true, () => LookChoice("Lighting", ref v.Look.Lighting, LookValues.LightingNames, "Rich: warm sun on the sunny side, cool sky light in shade, a little bounce from the ground."));
-            Add(TabVideo, "Picture", "Fog", "fog haze atmosphere volumetric atmospheric distance", false, () => LookChoice("Fog", ref v.Look.Fog, LookValues.FogNames, "Atmospheric: height fog that is thicker low down and glows toward the sun. Players are never fogged by it."));
+            Add(TabVideo, "Picture", "Fog", "fog haze atmosphere volumetric atmospheric distance", false, () => FogChoice(v));
             Add(TabVideo, "Picture", "Light shafts", "light shafts god rays sun rays volumetric light", false, () => { if (Toggle("Light shafts (rays round the sun)", ref v.Look.Shafts)) VideoChanged(); });
             Add(TabVideo, "Picture", "Tonemapping", "tonemapping hdr filmic tone mapping", false, () => LookChoice("Tonemapping", ref v.Look.Tonemap, LookValues.TonemapNames, "Filmic rolls off bright highlights softly and keeps every hue true, so team and rarity colours never shift."));
             Add(TabVideo, "Picture", "Colour grading", "colour color grading saturation contrast vivid natural", false, () => LookChoice("Colour grading", ref v.Look.Grading, LookValues.GradingNames, null));
@@ -560,6 +560,14 @@ namespace Sculpt.Game.UI
         }
 
         private void Note(string text) => GUILayout.Label(text, _note, GUILayout.MaxWidth(880));
+
+        /// <summary>Fog: the distance haze is the same for everyone and always on; Atmospheric adds height fog to the scenery.</summary>
+        private void FogChoice(VideoSettings v)
+        {
+            int n = Choice("Fog", Mathf.Clamp(v.Look.Fog - 1, 0, 1), LookValues.FogChoices) + 1;
+            if (n != v.Look.Fog) { v.Look.Fog = n; VideoChanged(); }
+            Note("The distance haze is the same on every setting, so nobody sees further. Atmospheric adds height fog to the scenery that glows toward the sun; players are never fogged by it.");
+        }
 
         private void LookChoice(string name, ref int value, string[] names, string note)
         {

@@ -118,7 +118,9 @@ namespace Sculpt.Game.World
             {
                 if (_chunkObjects != null) foreach (var go in _chunkObjects) Destroy(go);
                 if (_meshes != null) foreach (var m in _meshes) Destroy(m);
-                _group = grid.AllocatedChunks == 0 || _fixedGround ? 4 : 1;
+                // Ground that never changes in play (the battle royale's) is drawn in big squares of 16 x 16 chunks (77 m): it
+                // is flat merged quads, and 4 x 4 groups were 2,300 renderers on the 921 m map for a plane.
+                _group = _fixedGround ? 16 : grid.AllocatedChunks == 0 ? 4 : 1;
                 _groupsX = (grid.ChunksX + _group - 1) / _group;
                 _groupsZ = (grid.ChunksZ + _group - 1) / _group;
                 int groups = _groupsX * _groupsZ * (_group == 1 ? grid.ChunksY : 1);

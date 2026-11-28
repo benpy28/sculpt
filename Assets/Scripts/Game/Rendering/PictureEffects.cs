@@ -286,15 +286,14 @@ namespace Sculpt.Game.Rendering
         private void ApplyFog(in LookValues l)
         {
             if (!_fogSaved) { _fogSaved = true; _fogBefore = RenderSettings.fog; }
-            RenderSettings.fog = l.Fog > 0;
+            RenderSettings.fog = true; // the distance haze is the same for everyone (map v3): the setting can't turn it off
         }
 
         /// <summary>Every frame: the scenery (sun, fog) may be built after the settings were applied.</summary>
         public void Tick()
         {
             if (_sun == null) UpdateSun();
-            bool fog = _look.Fog > 0;
-            if (RenderSettings.fog != fog) RenderSettings.fog = fog;
+            if (!RenderSettings.fog) RenderSettings.fog = true;
             if (!_diagLogged && Debug.isDebugBuild && Time.realtimeSinceStartup > 6f) LogDiagnostics();
         }
 

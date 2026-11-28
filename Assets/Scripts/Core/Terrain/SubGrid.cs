@@ -59,6 +59,8 @@ namespace Sculpt.Core
         // allocated on the first differing write, so big maps only pay for chunks with surface detail.
         private readonly ushort[][] _chunks;
         private readonly ushort[] _uniform;
+        // Chunk arrays another copy may also read (see ShareCopy): copied before this grid first writes into one.
+        private bool[] _sharedChunk;
         private readonly HashSet<int> _dirtyChunks = new HashSet<int>();
         private readonly List<Int3> _changes = new List<Int3>();
 
@@ -159,6 +161,15 @@ namespace Sculpt.Core
                 arr = new ushort[ChunkVolume];
                 if (_uniform[ci] != 0) for (int k = 0; k < ChunkVolume; k++) arr[k] = _uniform[ci];
                 _chunks[ci] = arr;
+            }
+            else if (_sharedChunk != null && _sharedChunk[ci])
+            {
+                ushort[] a0 = arr;
+                int k0 = (((ly & 15) << 4) + (z & 15) << 4) + (x & 15);
+                if (a0[k0] == id) return;
+                arr = (ushort[])a0.Clone();
+                _chunks[ci] = arr;
+                _sharedChunk[ci] = false;
             }
             ref ushort slot = ref arr[(((ly & 15) << 4) + (z & 15) << 4) + (x & 15)];
             if (slot == id) return;
@@ -284,6 +295,26 @@ namespace Sculpt.Core
 
         public void ClearChanges() => _changes.Clear();
 
+        /// <summary>
+        /// A copy that shares every chunk array with this grid until either writes into it (map v3 groundwork: the server
+        /// and the client each need the ground, and almost none of it changes in a match). Call before other threads use either.
+        /// </summary>
+        public SubGrid ShareCopy()
+        {
+            var g = new SubGrid(ChunksX, ChunksY, ChunksZ, MinY);
+            _sharedChunk ??= new bool[_chunks.Length];
+            g._sharedChunk = new bool[_chunks.Length];
+            for (int i = 0; i < _chunks.Length; i++)
+            {
+                g._uniform[i] = _uniform[i];
+                g._chunks[i] = _chunks[i];
+                bool shared = _chunks[i] != null;
+                g._sharedChunk[i] = shared;
+                if (shared) _sharedChunk[i] = true;
+            }
+            return g;
+        }
+
         /// <summary>Copies every sub-cell (used by tests and for late-join snapshots).</summary>
         public SubGrid Clone()
         {
@@ -304,6 +335,7 @@ namespace Sculpt.Core
             {
                 ushort[] a = _chunks[i], b = o._chunks[i];
                 if (a == null && b == null) { if (_uniform[i] != o._uniform[i]) return false; continue; }
+                if (a == b) continue; // one array shared by two copies (ShareCopy)
                 for (int k = 0; k < ChunkVolume; k++)
                     if ((a != null ? a[k] : _uniform[i]) != (b != null ? b[k] : o._uniform[i])) return false;
             }

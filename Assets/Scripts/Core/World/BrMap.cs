@@ -201,11 +201,11 @@ namespace Sculpt.Core
 
         /// <summary>The walking grid from a copy of the map the caller no longer needs (its doors are opened): the game
         /// passes the copy it drew the map from, so the village map isn't built a fourth time.</summary>
-        public static BotNav BuildNav(BrushWorld w, BreachMapInfo info, double cell)
+        public static BotNav BuildNav(BrushWorld w, BreachMapInfo info, double cell, SubGrid ground = null)
         {
             foreach (int d in info.Block.Doors) w.Tiles.Set(d, TileState.DoorOpen, w.Tiles[d].Health, TileCause.Built);
             w.Tiles.Changes.Clear();
-            return BotNav.Build(Terrain(BuildGround(), w), 0, 0, info.SizeX, info.SizeZ, cell, groundTop: 0); // flat base ground at y 0
+            return BotNav.Build(Terrain(ground ?? BuildGround(), w), 0, 0, info.SizeX, info.SizeZ, cell, groundTop: 0); // flat base ground at y 0
         }
 
         // ================================================================ The design eighth

@@ -27,15 +27,15 @@ namespace Sculpt.Core
     /// </summary>
     public sealed partial class TileWalls
     {
-        private byte[] _hp = new byte[0];
+        private readonly CowList<byte> _hp = new CowList<byte>();
         private int _shapeDepth;
         private readonly HashSet<int> _shapeDirty = new HashSet<int>();
 
         private void GrowCells(int id)
         {
             int need = (id + 1) * Cells;
-            if (_hp.Length < need) Array.Resize(ref _hp, Math.Max(need, _hp.Length * 2));
             byte full = (byte)Config.MaxCellHealth(false, false);
+            _hp.GrowTo(need, full);
             for (int c = 0; c < Cells; c++) _hp[id * Cells + c] = full;
         }
 
@@ -56,7 +56,7 @@ namespace Sculpt.Core
         public byte[] CellHealths(int tile)
         {
             var a = new byte[Cells];
-            if (_tiles[tile].State != TileState.Broken) Array.Copy(_hp, tile * Cells, a, 0, Cells);
+            if (_tiles[tile].State != TileState.Broken) _hp.CopyTo(tile * Cells, a, 0, Cells);
             return a;
         }
 
@@ -120,7 +120,7 @@ namespace Sculpt.Core
             }
             if (same) return;
             TileState from = t.State;
-            Array.Copy(nh, 0, _hp, tile * Cells, Cells);
+            _hp.CopyFrom(nh, 0, tile * Cells, Cells);
             Summarise(tile, open, patch, steel, out TileState state, out int health);
             t.State = state;
             t.Health = health;

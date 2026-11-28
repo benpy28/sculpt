@@ -13,6 +13,14 @@ namespace Sculpt.Game.World
         public static readonly Color Horizon = new Color(0.80f, 0.87f, 0.92f);
         public static readonly Color Zenith = new Color(0.36f, 0.57f, 0.86f);
 
+        /// <summary>
+        /// How far anyone sees (Ben's map v3 plan: about 800 m, so towers and hills read across the map). The haze is the
+        /// same on every setting and always on (Video > Picture > Fog only adds the atmospheric look on top), so nobody
+        /// sees further than anyone else: soft from <see cref="HazeFrom"/>, everything gone by the view distance, where
+        /// the camera stops drawing.
+        /// </summary>
+        public const float ViewDistance = 800f, HazeFrom = 100f;
+
         /// <summary>Builds sky, fog and backdrop around an arena centred at (centreX, centreZ). Returns the sun.</summary>
         public static Light Build(float centreX, float centreZ)
         {
@@ -37,8 +45,8 @@ namespace Sculpt.Game.World
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
             RenderSettings.fogColor = Horizon;
-            RenderSettings.fogStartDistance = 60f;
-            RenderSettings.fogEndDistance = 330f;
+            RenderSettings.fogStartDistance = HazeFrom;
+            RenderSettings.fogEndDistance = ViewDistance;
 
             BuildBackdrop(centreX, centreZ);
             return sun;

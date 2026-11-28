@@ -182,22 +182,28 @@ namespace Sculpt.Game.Bootstrap
             if (NextMap == MapChoice.BattleRoyale)
             {
                 // The battle royale (Ben 2026-11-26): 32 players, bots fill the lobby.
-                build = BrMap.BuildGround;
-                // The village map takes a second or so to build, and the game needs three copies (what is drawn, the
-                // server's and the client's): build them side by side.
-                var serverCopy = System.Threading.Tasks.Task.Run(() => BrMap.BuildBrushes(out _, out _, breach));
-                var clientCopy = System.Threading.Tasks.Task.Run(() => BrMap.BuildBrushes(out _, out _, breach));
-                _grid = BrMap.BuildGround();
+                // One build of the map; the server's and the client's copies share everything that never changes with
+                // it and copy a page of tile state only when it is first damaged (map v3 groundwork: three full copies
+                // of the 921 m map were about 3 x 115 MB).
+                var groundTask = System.Threading.Tasks.Task.Run(BrMap.BuildGround); // side by side with the buildings
                 brushes = BrMap.BuildBrushes(out breachInfo, out brInfo, breach);
-                int copies = 0;
-                terrain = g => BrMap.Terrain(g, copies++ == 0 ? serverCopy.Result : copies == 2 ? clientCopy.Result : BrMap.BuildBrushes(out _, out _, breach));
+                SubGrid ground = groundTask.Result;
+                _grid = ground;
+                build = ground.ShareCopy;
+                brushes.Tiles.Prepare(); // which tile lies across each cell edge: worked out once, shared
+                brushes.Freeze();        // before the bots' walking grid reads it on a worker
+                BrushWorld template = brushes;
+                terrain = g => BrMap.Terrain(g, template.ShareCopy());
                 spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
                 yaw = new double[] { brInfo.Regions[0].PadYaw[0], brInfo.Regions[0].PadYaw[0] };
-                // The bots' walking grid from the copy the map is drawn from (only its static parts are drawn from it; the
-                // tiles drawn are the client's own copy).
-                BrushWorld navCopy = brushes;
+                // The bots' walking grid from a shared copy of its own (it opens every door), made here before the worker starts.
                 BreachMapInfo navInfo = breachInfo;
-                _brNav ??= System.Threading.Tasks.Task.Run(() => BrMap.BuildNav(navCopy, navInfo, 1.0));
+                if (_brNav == null)
+                {
+                    BrushWorld navCopy = brushes.ShareCopy();
+                    SubGrid navGround = ground.ShareCopy();
+                    _brNav = System.Threading.Tasks.Task.Run(() => BrMap.BuildNav(navCopy, navInfo, 1.0, navGround));
+                }
                 Sculpt.Game.UI.BrHud.SetBuildings(breachInfo.Block.Buildings); // the minimap
             }
             else if (NextMap == MapChoice.Duel)
