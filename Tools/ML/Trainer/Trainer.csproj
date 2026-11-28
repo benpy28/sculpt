@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    SCULPT learned-bot trainer: runs the real Core server headless and sped up, many matches on many threads, and trains
+    the bot network (behaviour cloning from a teacher, then PPO self-play). Pure C#, no packages.
+      Run: dotnet run, Release, project Tools/ML/Trainer, argument help
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <CoreSourceDir>$(MSBuildThisFileDirectory)..\..\..\Assets\Scripts\Core\</CoreSourceDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(CoreSourceDir)**\*.cs" LinkBase="Core" />
+  </ItemGroup>
+</Project>

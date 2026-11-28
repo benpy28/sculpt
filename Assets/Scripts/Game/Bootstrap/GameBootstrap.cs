@@ -48,6 +48,8 @@ namespace Sculpt.Game.Bootstrap
         public static string ReplayError = "";
         /// <summary>How good the bot is in a "Play vs bot" launch.</summary>
         public static BotLevel NextBotLevel = BotLevel.Normal;
+        /// <summary>Play vs bot with a learned bot (-mlbot model.sbm): the model file, or null for the scripted bot.</summary>
+        public static string NextMlBotModel;
         /// <summary>Solos, duos or squads in a battle royale launch.</summary>
         public static BrMode NextBrMode = BrMode.Solos;
         /// <summary>
@@ -256,7 +258,8 @@ namespace Sculpt.Game.Bootstrap
                     foreach (GroundItem g in bi.ItemSpawns) server.SpawnItem(g.Kind, g.Count, g.Position);
                     var sw = System.Diagnostics.Stopwatch.StartNew();
                     BotNav nav = NextMap == MapChoice.Duel ? (_duelNav ??= DuelMap.BuildNav()) : BotNav.Build(server.Grid, 0, 0, bi.SizeX, bi.SizeZ); // duel: doors count as open (the bot punches them)
-                    server.AddBot(new DuelBot(nav, DuelBotConfig.For(level), Environment.TickCount), 2, botSpawn, botYaw);
+                    IBotBrain brain = MlBotFor(nav, level) ?? new DuelBot(nav, DuelBotConfig.For(level), Environment.TickCount);
+                    server.AddBot(brain, 2, botSpawn, botYaw);
                     Debug.Log($"[SCULPT] Bot ({level}) added; nav {nav.Nodes.Count} spots in {sw.ElapsedMilliseconds} ms.");
                 };
             }
@@ -540,6 +543,25 @@ namespace Sculpt.Game.Bootstrap
             if (addr.Length > 0) _session.Join(addr, port, spectate);
         }
 
+        /// <summary>A learned bot from <see cref="NextMlBotModel"/> at the menu's level, or null (no model, or it won't load).</summary>
+        private static IBotBrain MlBotFor(BotNav nav, BotLevel level)
+        {
+            if (string.IsNullOrEmpty(NextMlBotModel)) return null;
+            try
+            {
+                Sculpt.Core.ML.MlModel model = Sculpt.Core.ML.MlModel.Load(NextMlBotModel);
+                Sculpt.Core.ML.MlSkill skill = level == BotLevel.Easy ? Sculpt.Core.ML.MlSkill.Easy : level == BotLevel.Hard ? Sculpt.Core.ML.MlSkill.Hard : Sculpt.Core.ML.MlSkill.Normal;
+                ulong seed = (ulong)Environment.TickCount;
+                Debug.Log($"[SCULPT] Learned bot from {NextMlBotModel}: {model.Note}");
+                return new Sculpt.Core.ML.MlBrain(nav, new Sculpt.Core.ML.MlModelActor(model, seed), skill, seed);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[SCULPT] Learned bot model {NextMlBotModel} didn't load ({e.Message}); playing the scripted bot.");
+                return null;
+            }
+        }
+
         /// <summary>First boot only: -host / -connect address[:port] / -breach skip the menu.</summary>
         private static void ReadLaunchArgs()
         {
@@ -552,6 +574,7 @@ namespace Sculpt.Game.Bootstrap
                 else if (a == "-connect" && i + 1 < args.Length) { NextLaunch = Launch.Join; NextAddress = args[i + 1]; }
                 else if (a == "-offline") NextLaunch = Launch.Offline;
                 else if (a == "-bot") NextLaunch = Launch.VsBot;
+                else if (a == "-mlbot" && i + 1 < args.Length) { NextLaunch = Launch.VsBot; NextMlBotModel = args[i + 1]; }
                 else if (a == "-breach") NextMap = MapChoice.Breach;
                 else if (a == "-br") { NextMap = MapChoice.BattleRoyale; if (NextLaunch == Launch.Menu) NextLaunch = Launch.Offline; }
                 else if (a == "-duos") NextBrMode = BrMode.Duos;
