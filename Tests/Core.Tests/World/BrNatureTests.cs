@@ -92,6 +92,37 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
+        public void EveryTrunk_ReachesTheGround_AndTreesGrowOnHillsides()
+        {
+            // The lowest trunk cell of every tree is under the ground at its foot; and some trees stand where the ground
+            // under their canopy rises more than a metre (walkable hillsides are no longer bare).
+            BrNature.Plan plan = BrNature.GetPlan();
+            HeightField f = BrMap.Field;
+            double s = SubGrid.SubSize;
+            int onSlopes = 0;
+            foreach (BrNature.Prop p in plan.Props)
+            {
+                if (p.Kind != "tree") continue;
+                int bottom = int.MaxValue;
+                double groundAtFoot = double.PositiveInfinity, lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+                foreach (BrNature.Cell c in plan.CellsOf(p))
+                {
+                    if (c.Kind == BrNature.KindWood && c.Y < bottom) bottom = c.Y;
+                    double g = f.HeightAt((c.X + 0.5) * s, (c.Z + 0.5) * s);
+                    lo = Math.Min(lo, g); hi = Math.Max(hi, g);
+                }
+                foreach (BrNature.Cell c in plan.CellsOf(p))
+                    if (c.Kind == BrNature.KindWood && c.Y == bottom) 
+                        for (int k = 0; k < 5; k++)
+                            groundAtFoot = Math.Min(groundAtFoot, f.HeightAt((c.X + (k == 4 ? 0.5 : k % 2)) * s, (c.Z + (k == 4 ? 0.5 : k / 2)) * s));
+                Assert.That(bottom * s, Is.LessThanOrEqualTo(groundAtFoot), $"tree at {p.X:0.0},{p.Z:0.0}: the trunk floats");
+                if (hi - lo > 1.0) onSlopes++;
+            }
+            TestContext.WriteLine($"{onSlopes} trees on hillsides");
+            Assert.That(onSlopes, Is.GreaterThan(3));
+        }
+
+        [Test]
         public void PropsStayInTheirSegment_ClearOfEverythingBuilt()
         {
             BrNature.Plan plan = BrNature.GetPlan();
@@ -127,8 +158,8 @@ namespace Sculpt.Core.Tests
                     double under = f.MaxOver(c.X * s, c.Z * s, (c.X + 1) * s, (c.Z + 1) * s);
                     if (p.Kind == "tree" && c.Kind == BrNature.KindLeaves)
                         Assert.That(c.Y * s - under, Is.GreaterThanOrEqualTo(3.3 - 1e-6), $"tree at {p.X:0.0},{p.Z:0.0}: leaves within jump reach");
-                    if (p.Kind == "bush") Assert.That((c.Y + 1) * s - lowest, Is.LessThanOrEqualTo(1.8 + BrNature.MaxRise + 1e-6), $"bush at {p.X:0.0},{p.Z:0.0} too tall");
-                    if (p.Kind == "rocks") Assert.That((c.Y + 1) * s - lowest, Is.LessThanOrEqualTo(3.0 + BrNature.MaxRise + 1e-6), $"boulder at {p.X:0.0},{p.Z:0.0} too tall");
+                    if (p.Kind == "bush") Assert.That((c.Y + 1) * s - lowest, Is.LessThanOrEqualTo(1.8 + BrNature.MaxRiseBush + 1e-6), $"bush at {p.X:0.0},{p.Z:0.0} too tall");
+                    if (p.Kind == "rocks") Assert.That((c.Y + 1) * s - lowest, Is.LessThanOrEqualTo(3.0 + BrNature.MaxRiseRocks + 1e-6), $"boulder at {p.X:0.0},{p.Z:0.0} too tall");
                 }
             }
         }
