@@ -41,7 +41,7 @@ namespace Sculpt.Trainer
                 case "check": return GradCheck.Run();
                 case "bc": Bc(Arg(1, "bc.sbm"), int.Parse(Arg(2, "300000")), int.Parse(Arg(3, "12"))); return 0;
                 case "ppo": Ppo(MlModel.Load(Arg(1, "bc.sbm")), Arg(2, "run"), int.Parse(Arg(3, "200")), MlModel.Load(Arg(1, "bc.sbm"))); return 0;
-                case "br": Ppo(MlModel.Load(Arg(1, "latest.sbm")), Arg(2, "run-br"), int.Parse(Arg(3, "200")), MlModel.Load(Arg(1, "latest.sbm")), br: true, brLearners: int.Parse(Arg(4, "16"))); return 0;
+                case "br": Ppo(MlModel.Load(Arg(1, "latest.sbm")), Arg(2, "run-br"), int.Parse(Arg(3, "200")), MlModel.Load(Arg(1, "latest.sbm")), br: true, brLearners: int.Parse(Arg(4, "24"))); return 0;
                 case "eval": Eval(MlModel.Load(Arg(1, "model.sbm")), D(Arg(2, "10")), Arg(3, "normal")); return 0;
                 case "train":
                 {

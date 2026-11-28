@@ -117,9 +117,10 @@ namespace Sculpt.Trainer
             {
                 Shuffle(order, rng);
                 last = default;
-                for (int s = 0; s + minibatch / 2 <= b.N; s += minibatch)
+                for (int s = 0; s < b.N; s += minibatch)
                 {
                     int m = Math.Min(minibatch, b.N - s);
+                    if (m < minibatch / 4 && s > 0) break; // a small tail: left for the next epoch's shuffle
                     last.Add(Step(b, adv, order, s, m, ppo: true));
                 }
             }
@@ -136,9 +137,10 @@ namespace Sculpt.Trainer
             {
                 Shuffle(order, rng);
                 last = default;
-                for (int s = 0; s + minibatch / 2 <= b.N; s += minibatch)
+                for (int s = 0; s < b.N; s += minibatch)
                 {
                     int m = Math.Min(minibatch, b.N - s);
+                    if (m < minibatch / 4 && s > 0) break; // a small tail: left for the next epoch's shuffle
                     last.Add(Step(b, null, order, s, m, ppo: false));
                 }
                 report?.Invoke(ep, last);
