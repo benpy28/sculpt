@@ -33,7 +33,7 @@ namespace Sculpt.Core
         // ================================================================ ground
 
         /// <summary>The hill's level summit (the fort stands on it, exactly at <see cref="SummitY"/>).</summary>
-        public static readonly Rect2 Summit = new Rect2(1080, 1075, 1155, 1150);
+        public static readonly Rect2 Summit = new Rect2(1080, 1075, 1168, 1150);
         public const double SummitY = 31.5;
         /// <summary>The walkable slopes fall from the summit over this distance (steepest about 26.6 degrees).</summary>
         public const double HillReach = 90;
@@ -74,8 +74,44 @@ namespace Sculpt.Core
                 double d = GroundShapes.ToRect(x, z, t.X0, t.Z0, t.X1, t.Z1);
                 if (d < TerraceBlend) g += (Base - g) * (1 - GroundShapes.Smoothstep(d / TerraceBlend));
             }
-            double h = Math.Max(g, Hill(x, z));
+            double h = Math.Min(Math.Max(g, Hill(x, z)), Cleft(x, z));
             return Math.Max(h, Base + GroundShapes.Ridge(x, z, RidgeAx, RidgeAz, RidgeBx, RidgeBz, RidgeHalf, RidgeHeight));
+        }
+
+        /// <summary>
+        /// The Cleft: a gully cut up into the cliff east of the fort. Its floor starts at the cliff's foot, climbs at 30
+        /// degrees (walkable) to a level landing <see cref="CleftLanding"/> m up, and ends at a rock headwall; a breakable
+        /// stair (<see cref="CleftStair"/>) climbs the last stretch to the summit's east edge. Its sides and headwall are
+        /// rock faces, at least 8 m tall everywhere (a narrow face makes half-steep cells). Floor edges sit on the ground's
+        /// vertex lines (4.8 + 1.5 k).
+        /// </summary>
+        public const double CleftX = 1162.8, CleftHalf = 3.0, CleftZ0 = 1058.55, CleftDegrees = 30, CleftEnd = 1112;
+        /// <summary>The landing: sixteen 0.6 m stair segments under the hill's slope beside the summit (the same at any z there).</summary>
+        public static readonly double CleftLanding = Hill(CleftX, CleftEnd) - 16 * GreyboxBlock.SegmentRise;
+        private static readonly double CleftTan = Math.Tan(CleftDegrees * Math.PI / 180);
+
+        /// <summary>The highest the ground may be at a point because of the Cleft (infinite away from it).</summary>
+        public static double Cleft(double x, double z)
+        {
+            if (z < CleftZ0 - 20) return double.PositiveInfinity;
+            double floor = Math.Min(CleftLanding, Base + Math.Max(0, z - CleftZ0) * CleftTan);
+            if (z > CleftEnd) floor = CleftLanding + (z - CleftEnd) * FaceTan;
+            return floor + Math.Max(0, Math.Abs(x - CleftX) - CleftHalf) * FaceTan;
+        }
+
+        /// <summary>The Cleft's stair: from the landing up the headwall to where the ground meets the hill's slope.</summary>
+        public static Aabb CleftStair
+        {
+            get
+            {
+                // The headwall's lip: where the cut stops biting the hill.
+                double z = CleftEnd;
+                while (Cleft(CleftX, z) < Hill(CleftX, z) - 0.01) z += 0.05;
+                // A whole number of 0.6 m stair segments, so every segment lies on the flight's one slope.
+                double rise = Math.Round((Hill(CleftX, z) - CleftLanding) / GreyboxBlock.SegmentRise) * GreyboxBlock.SegmentRise;
+                double top = CleftLanding + rise;
+                return new Aabb(new Vec3d(CleftX - CleftHalf, CleftLanding, z - 2 * rise), new Vec3d(CleftX + CleftHalf, top, z));
+            }
         }
 
         private static List<(double X, double Z, double H)> _face;
@@ -97,6 +133,10 @@ namespace Sculpt.Core
                             double h0 = seg.Ground(x, z), h1 = seg.Ground(x, z - 1);
                             if (h0 - h1 > 1.4) list.Add((x, z - 0.5, (h0 + h1) / 2));
                         }
+                    // The Cleft too: its floor and both side faces.
+                    for (double z = CleftZ0; z <= CleftEnd + 4; z += 1)
+                        for (double dx = -9; dx <= 9; dx += 1.5)
+                            list.Add((CleftX + dx, z, seg.Ground(CleftX + dx, z)));
                     _face = list;
                     return _face;
                 }
@@ -144,8 +184,11 @@ namespace Sculpt.Core
 
         // ---------------------------------------------------------------- placement helpers
 
+        private bool _quiet;
+
         private bool Skip(string what, string why)
         {
+            if (_quiet) return false;
             Skipped.Add($"{what}: {why}");
             return false;
         }
@@ -162,9 +205,10 @@ namespace Sculpt.Core
         }
 
         /// <summary>A building's rectangle on its own footing (never one that would carve the cliff); returns its level.</summary>
-        private bool Footed(BrBuild b, string what, double x, double z, double w, double d, double apron, out double y)
+        private bool Footed(BrBuild b, string what, double x, double z, double w, double d, double apron, out double y, bool record = true)
         {
             y = double.NaN;
+            _quiet = !record;
             var r = new Rect2(x, z, x + w, z + d);
             if (!b.IsClear(r, Math.Max(apron, 2) + Cell) || b.InHome(r, 2)) return Skip(what, $"{r} is not clear");
             // The footing grows to put its apron's edges on the ground's vertices, so no ground cell straddles the edge.
@@ -239,8 +283,18 @@ namespace Sculpt.Core
         /// <summary>A chest on its own small level spot (a hillside), checked against the cliff.</summary>
         private void HillChest(BrBuild b, string what, double x, double z, double yaw)
         {
-            if (!Footed(b, what, x - 1.5, z - 1.5, 3, 3, 1.0, out double y)) return;
-            b.Chest(new Vec3d(x, y, z), yaw);
+            // The first of a few spots round the one asked for whose footing fits (slopes crowd footings).
+            for (int k = 0; k < 9; k++)
+            {
+                double px = x + (k % 3 - 1) * 4 * (k == 0 ? 0 : 1), pz = z + (k / 3 - 1) * 4;
+                if (k == 0) pz = z;
+                if (!Footed(b, what, px - 1.5, pz - 1.5, 3, 3, 1.0, out double y, record: false)) continue;
+                _quiet = false;
+                b.Chest(new Vec3d(px, y, pz), yaw);
+                return;
+            }
+            _quiet = false;
+            Skip(what, "no spot nearby takes a footing");
         }
 
         // ---------------------------------------------------------------- Hillgate (home POI)
@@ -429,6 +483,16 @@ namespace Sculpt.Core
             Cover(b, "fort cover 1", 1108, y, 1112, 4.5, true, 1);
             Cover(b, "fort cover 2", 1115.5, y, 1128, 4.5, false, 2);
             Cover(b, "fort cover 3", 1143.5, y, 1112, 4.5, false, 1);
+
+            // Wall walks: a 1.5 m walk of floor tiles along the inside of the south, east and north walls, its top
+            // 1.2 m under the walls' top (chest-high cover to shoot over), reached by one stair from the courtyard. The
+            // west wall has none (the gate towers stand against it and look over it). Dropping off the outside is a
+            // way out, never in: the walls are 6 m from outside.
+            double walk = y + WalkHeight, th2 = Fort.X1 - th;
+            Walk(b, Fort.X0 + th, Fort.Z0 + th, th2 - WalkWidth, Fort.Z0 + th + WalkWidth, walk);           // south
+            Walk(b, th2 - WalkWidth, Fort.Z0 + th, th2, Fort.Z1 - th - WalkWidth, walk);                      // east
+            Walk(b, Fort.X0 + th, Fort.Z1 - th - WalkWidth, th2, Fort.Z1 - th, walk);                         // north
+            b.Climb(new Aabb(new Vec3d(WalkStairX, y, Fort.Z1 - th - WalkWidth - GreyboxBlock.StairRun), new Vec3d(WalkStairX + WalkWidth, walk, Fort.Z1 - th - WalkWidth)), Dir.North);
             b.Open(Fort.Grow(6));
             b.Poi("Hilltop Fort", new Vec3d(Fort.CX, y, Fort.CZ), fort.ToArray());
         }
@@ -613,6 +677,24 @@ namespace Sculpt.Core
             b.Poi("Cliffside", new Vec3d(1160, y, 1000), v.All.ToArray());
         }
 
+        /// <summary>The fort's wall walks: their top above the courtyard, width, and where the stair up to them runs.</summary>
+        public const double WalkHeight = 4.8, WalkWidth = 1.5, WalkStairX = 1131;
+
+        /// <summary>A walk of floor tiles (no more than 1.5 m each way), its top at <paramref name="top"/>.</summary>
+        private static void Walk(BrBuild b, double x0, double z0, double x1, double z1, double top)
+        {
+            double s = b.World.Tiles.Config.TileSize, sx = x1 - x0, sz = z1 - z0;
+            int nx = (int)Math.Ceiling(sx / s - 1e-9), nz = (int)Math.Ceiling(sz / s - 1e-9);
+            for (int i = 0; i < nx; i++)
+                for (int k = 0; k < nz; k++)
+                {
+                    var box = new Aabb(new Vec3d(x0 + sx * i / nx, top - Col, z0 + sz * k / nz), new Vec3d(x0 + sx * (i + 1) / nx, top, z0 + sz * (k + 1) / nz));
+                    int id = b.World.Tiles.AddTile(box, Dir.Up, TileKind.Floor);
+                    b.Info.Tiles.Add(id);
+                    b.Info.Floors.Add(id);
+                }
+        }
+
         /// <summary>A bridge of floor tiles (about 1.5 m each), its top at <paramref name="top"/>.</summary>
         private static void Bridge(BrBuild b, double x0, double z0, double x1, double z1, double top)
         {
@@ -701,9 +783,14 @@ namespace Sculpt.Core
         private void Slopes(BrBuild b)
         {
             var f = new Builder(this, b, terrace: false);
-            // A watch post on the north slope and a lodge on the east slope (flat roofs over the slopes).
-            f.Tower("North watch post", 1140, 1188, 2, 3, true, BrStyle.Stone, 7);
-            f.House("East lodge", 1203, 1098, BrStyle.Timber, 17);
+            // The north slope's hamlet: a row of two-room cottages along one contour (so their footings sit at about
+            // one level and never crowd each other), each with a sealed room; a watch tower at its east end.
+
+            int sealedRoom = 0;
+            foreach (double x in new[] { 1022.0, 1052.0, 1082.0, 1112.0, 1142.0 })
+                f.Row("North slope cottage", x, 1204, 2, true, sealedRoom++ % 2, BrStyle.Plaster, 20 + sealedRoom);
+            f.Tower("North watch post", 1170, 1196, 2, 3, true, BrStyle.Stone, 7);
+
 
             Look(b, BrStyle.Ruin, 1);
             // West slope, the way up from Underhill to the gate.
@@ -713,34 +800,38 @@ namespace Sculpt.Core
             FootedWall(b, "west slope wall 4", 1056, 1130, 6, false, 2);
             FootedWall(b, "west slope wall 5", 1070, 1128, 6, false, 1);
             FootedWall(b, "west slope wall 6", 1034, 1150, 7.5, true, 2);
+            FootedWall(b, "west slope wall 7", 1004, 1125, 6, false, 2);
+            FootedWall(b, "west slope wall 8", 1060, 1152, 6, true, 1);
             // North slope.
             FootedWall(b, "north slope wall 1", 1098, 1168, 9, true, 2);
             FootedWall(b, "north slope wall 3", 1150, 1166, 6, true, 1);
-            FootedWall(b, "north slope wall 4", 1080, 1196, 7.5, true, 2);
             // East slope.
-            FootedWall(b, "east slope wall 1", 1172, 1118, 7.5, false, 2);
             FootedWall(b, "east slope wall 2", 1182, 1134, 6, false, 2);
             FootedWall(b, "east slope wall 3", 1196, 1160, 7.5, false, 1);
-
-            f.Shed("shepherd's hut", 1048, 1182, BrStyle.Timber, 16);
-            f.Shed("east slope hut", 1200, 1192, BrStyle.Stone, 9);
-            HillChest(b, "west slope chest", 1022, 1140, 0);
-            HillChest(b, "north slope chest", 1112, 1200, Math.PI);
-            HillChest(b, "north-east slope chest", 1175, 1195, Math.PI);
-            HillChest(b, "east slope chest", 1186, 1150, -Math.PI / 2);
-            HillChest(b, "north-west slope chest", 1068, 1215, Math.PI);
-
-            // More broken wall on the climb (props only stand on near-level ground, so the slopes' cover is wall).
-            FootedWall(b, "west slope wall 7", 1004, 1125, 6, false, 2);
-            FootedWall(b, "west slope wall 8", 1060, 1152, 6, true, 1);
-            FootedWall(b, "north slope wall 5", 1112, 1210, 7.5, true, 2);
             FootedWall(b, "east slope wall 4", 1210, 1130, 6, false, 2);
 
-            // Trees, bushes and rocks on the level ground round the hill's foot.
+            f.Shed("east slope hut", 1200, 1192, BrStyle.Stone, 9);
+            HillChest(b, "west slope chest", 1050, 1185, 0);
+            HillChest(b, "east slope chest", 1186, 1150, -Math.PI / 2);
+
+            // The Cleft: a chest at its mouth, a C4 pair beside it (a breaching kit for whoever takes the short way).
+            b.Climb(CleftStair, Dir.North);
+            b.Chest(new Vec3d(CleftX, Base, CleftZ0 - 3.5), 0);
+            b.Item(Item.C4, 2, new Vec3d(CleftX, Base, CleftZ0 - 1.5));
+            b.Poi("The Cleft", new Vec3d(CleftX, Base, CleftZ0));
+
+            // Trees on the slopes (cover on the climb), bushes and rocks where it is gentler round the summit, and some
+            // on the level ground round the hill's foot.
             int seed = 8100;
-            foreach (var (x, z) in new[] { (984.0, 1076.0), (940.0, 1216.0), (962.0, 1218.0) }) b.Tree(x, z, seed++);
-            foreach (var (x, z) in new[] { (978.0, 1064.0), (1215.0, 1215.0) }) b.Bush(x, z, seed++);
-            foreach (var (x, z) in new[] { (992.0, 1062.0), (944.0, 1200.0) }) b.Rocks(x, z, seed++);
+            foreach (var (x, z) in new[] { (1020.0, 1115.0), (1050.0, 1145.0), (1072.0, 1145.0), (998.0, 1162.0), (1030.0, 1172.0),
+                                            (1070.0, 1180.0), (1100.0, 1185.0), (1125.0, 1180.0), (1160.0, 1182.0),
+                                            (1190.0, 1100.0), (1200.0, 1140.0), (1180.0, 1175.0),
+                                            (984.0, 1076.0), (940.0, 1216.0), (962.0, 1218.0) })
+                b.Tree(x, z, seed++);
+            foreach (var (x, z) in new[] { (1078.0, 1100.0), (1078.0, 1140.0), (1160.0, 1140.0), (1120.0, 1158.0), (978.0, 1064.0), (1215.0, 1215.0) })
+                b.Bush(x, z, seed++);
+            foreach (var (x, z) in new[] { (992.0, 1062.0), (944.0, 1200.0) })
+                b.Rocks(x, z, seed++);
         }
     }
 }

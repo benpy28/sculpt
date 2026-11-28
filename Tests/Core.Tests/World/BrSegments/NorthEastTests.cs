@@ -21,6 +21,9 @@ namespace Sculpt.Core.Tests
         {
             _ = T;
             Assert.That(Seg.Skipped, Is.Empty, string.Join("\n", Seg.Skipped));
+            var dropped = new List<string>();
+            foreach (PropRequest q in BrNature.GetPlan().Dropped) if (q.Segment == 8) dropped.Add($"{q.Shape} at {q.X:0},{q.Z:0}");
+            Assert.That(dropped, Is.Empty, string.Join(", ", dropped));
             var names = new List<string>();
             foreach (BrPoi p in B.Pois) names.Add(p.Name);
             Assert.That(names, Is.SupersetOf(new[] { "Hillgate", "Hilltop Fort", "Underhill", "Cliffside", "Rim Farm", "West Road", "Lookout Ridge" }));
@@ -32,7 +35,7 @@ namespace Sculpt.Core.Tests
         {
             HeightField f = BrMap.Field;
             // Across the fort's width, every column south of the summit drops at least 20 m within 16 m: no footing filled it.
-            for (double x = NorthEastSegment.Fort.X0 - 8; x <= NorthEastSegment.Fort.X1 + 6; x += 1.5)
+            for (double x = NorthEastSegment.Fort.X0 - 8; x <= NorthEastSegment.Fort.X1; x += 1.5)
             {
                 double lip = NorthEastSegment.Lip(x);
                 Assert.That(f.HeightAt(x, lip + 3), Is.EqualTo(NorthEastSegment.SummitY).Within(0.05), $"the summit at x {x:0.0}");
@@ -41,7 +44,7 @@ namespace Sculpt.Core.Tests
                 Assert.That(drop, Is.GreaterThan(20), $"the cliff at x {x:0.0}");
             }
             // The west, north and east slopes are walkable (under 35 degrees) on the way up.
-            foreach (var (x0, z0, dx, dz) in new[] { (995.0, 1112.0, 1.0, 0.0), (1117.0, 1235.0, 0.0, -1.0), (1225.0, 1112.0, -1.0, 0.0) })
+            foreach (var (x0, z0, dx, dz) in new[] { (995.0, 1112.0, 1.0, 0.0), (1117.0, 1235.0, 0.0, -1.0), (1225.0, 1128.0, -1.0, 0.0) })
                 for (double s = 0; s < 80; s += 1)
                 {
                     double x = x0 + dx * s, z = z0 + dz * s;
@@ -120,11 +123,19 @@ namespace Sculpt.Core.Tests
                 ("Underhill's main street", 1000, BrGround.Base, 1006),
                 ("Cliffside under the cliff", 1160, BrGround.Base, 1045),
                 ("the lift tower's roof", 1121, BrGround.Base + 7 * 4.8, 1046),
+                ("the north wall walk", 1115, s + NorthEastSegment.WalkHeight, 1145),
+                ("the east wall walk", 1147, s + NorthEastSegment.WalkHeight, 1110),
+                ("the south wall walk", 1112, s + NorthEastSegment.WalkHeight, 1093),
+                ("half way up the Cleft", NorthEastSegment.CleftX, double.NegativeInfinity, 1085),
+                ("the Cleft's landing", NorthEastSegment.CleftX, double.NegativeInfinity, 1095),
+                ("a north slope cottage", 1022 + 6.3 + 3.3, double.NegativeInfinity, 1204 + 3.3),
+                ("the north watch post's roof", 1180, double.NaN, 1206),
             };
             foreach (var (name, x, y0, z) in goals)
             {
                 double y = y0;
-                if (double.IsNaN(y)) y = T.Segments[8].Buildings.Find(bd => bd.Name == "Ridge lookout").Bounds.Max.Y;
+                if (double.IsNaN(y)) y = T.Segments[8].Buildings.Find(bd => bd.Bounds.Min.X < x && bd.Bounds.Max.X > x && bd.Bounds.Min.Z < z && bd.Bounds.Max.Z > z).Bounds.Max.Y;
+                if (double.IsNegativeInfinity(y)) y = BrMap.Field.HeightAt(x, z);
                 int n = Spot(x, y, z);
                 Assert.That(Nav.SameArea(home, n), Is.True, $"{name} can be reached from Hillgate");
             }
@@ -169,6 +180,38 @@ namespace Sculpt.Core.Tests
             double drop = bridge.Max.Y - NorthEastSegment.SummitY;
             Assert.That(drop, Is.InRange(1.0, 5.0), "a short drop down onto it");
             Assert.That(bridge.Max.Z, Is.LessThan(NorthEastSegment.Fort.Z0 - 6), "it lands outside the fort's south wall");
+        }
+        [Test]
+        public void TheCleft_IsAWalkableClimbBetweenRockWalls()
+        {
+            HeightField f = BrMap.Field;
+            double x = NorthEastSegment.CleftX, top = 0;
+            for (double z = NorthEastSegment.CleftZ0 - 3; z < NorthEastSegment.CleftEnd - 1; z += 1)
+            {
+                double rise = f.HeightAt(x, z + 1) - f.HeightAt(x, z);
+                Assert.That(Math.Abs(rise), Is.LessThan(Math.Tan(35 * Math.PI / 180)), $"the Cleft's floor at z {z:0}");
+                top = Math.Max(top, f.HeightAt(x, z));
+            }
+            Assert.That(top, Is.EqualTo(NorthEastSegment.CleftLanding).Within(0.05), "it climbs to the landing under the stair");
+            // Half way up, rock walls stand at least 8 m over the floor on both sides.
+            double zm = NorthEastSegment.CleftZ0 + 30, floor = f.HeightAt(x, zm);
+            Assert.That(f.HeightAt(x - 8, zm) - floor, Is.GreaterThan(8), "west wall");
+            Assert.That(f.HeightAt(x + 8, zm) - floor, Is.GreaterThan(8), "east wall");
+        }
+
+        [Test]
+        public void TheWallWalks_LeaveChestHighCoverOverTheWalls()
+        {
+            BrushWorld w = T.World;
+            double walk = NorthEastSegment.SummitY + NorthEastSegment.WalkHeight;
+            Rect2 fort = NorthEastSegment.Fort;
+            // Standing on the north walk: solid floor under the feet, the wall's top 1.5 m above them.
+            foreach (double x in new[] { 1095.0, 1120.0, 1145.0 })
+            {
+                Assert.That(Solid(w, x, walk - 0.1, fort.Z1 - 1.0), Is.True, $"walk floor at x {x}");
+                Assert.That(Solid(w, x, walk + 1.0, fort.Z1 - 0.15), Is.True, $"cover at x {x}");
+                Assert.That(Solid(w, x, walk + 1.4, fort.Z1 - 0.15), Is.False, $"open over the cover at x {x}");
+            }
         }
     }
 }
