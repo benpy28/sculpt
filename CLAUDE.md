@@ -584,7 +584,7 @@ Goal: bots that play like people, play for placement in the battle royale, with 
 - **Measured (Ben's 7800X3D):** self-play bench 10,000 decisions a second on 8 threads; PPO with scripted opponents about 5,000-6,000 on 10 threads; a battle royale server about 500 a second with 8 learners (use 24+). Imitation: 300,000 decisions collected in 45 s, 12 epochs in 40 s.
 - **First trained 1v1 bot** (`Tools/ML/models/duel-v1.sbm`, run 2026-11-28): imitation of the scripted bot (300,000 decisions) then 3,000 PPO iterations (39 million decisions, 2 h 5 min on 10 threads). Share of kills over 60 game minutes per pairing, the model at each skill dial against the scripted bot:
 
-  | learned \ scripted | Easy | Normal | Hard |
+  | learned vs scripted | Easy | Normal | Hard |
   |---|---|---|---|
   | Easy | 72% | 56% | 42% |
   | Normal | 83% | 64% | 51% |
