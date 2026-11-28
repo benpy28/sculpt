@@ -30,6 +30,126 @@ namespace Sculpt.Core.Tests
                 TestContext.WriteLine($"  {g.Key}: {g.Count()} x, {g.Sum(c => c.Tiles)} tiles");
         }
 
+        // ---------------------------------------------------------------- walking: what you can and can't walk to
+
+        private static BotNav _nav;
+        private static readonly object NavLock = new object();
+
+        /// <summary>The walking grid over the segment (doors open, as bots use it; built from the intact map, no holes).</summary>
+        private static BotNav Nav
+        {
+            get
+            {
+                lock (NavLock)
+                {
+                    if (_nav != null) return _nav;
+                    BrushWorld w = BrMap.BuildBrushes(out BreachMapInfo info, out _);
+                    foreach (int d in info.Block.Doors) w.Tiles.Set(d, TileState.DoorOpen, w.Tiles[d].Health, TileCause.Built);
+                    SubGrid g = BrMap.BuildGround();
+                    Rect2 sq = BrLayout.Bounds(Id);
+                    _nav = BotNav.Build(BrMap.Terrain(g, w), sq.X0, sq.Z0, sq.X1 - sq.X0, sq.Z1 - sq.Z0, 0.75, topY: BrMap.NavTop,
+                                        floorY: BrGround.Lowest - 2, columnTop: BrMap.NavColumnTop(w, g));
+                    return _nav;
+                }
+            }
+        }
+
+        private static int Spot(Vec3d feet, string what)
+        {
+            BotNav n = Nav;
+            int s = n.Nearest(feet, 2);
+            Assert.That(s, Is.GreaterThanOrEqualTo(0), $"{what}: no standing spot near {feet}");
+            Assert.That(Math.Abs(n.Nodes[s].Y - feet.Y), Is.LessThan(0.6), $"{what}: the nearest standing spot to {feet} is at {n.Nodes[s].Feet(n)}");
+            return s;
+        }
+
+        private static readonly string[] SealedWords = { "sealed", "vault", "strongroom", "grain store", "clerk's office", "scale room", "sack store", " shed" };
+
+        [Test]
+        public void SouthWalk_EveryRoofTowerAndOpenChest_IsReachableFromTheSquare_EverySealedChestIsNot()
+        {
+            _ = T;
+            BotNav n = Nav;
+            SouthKit k = SouthKit.Last;
+            int square = Spot(BrLayout.Anchor(Id) + new Vec3d(0, 0, -12), "the square");
+            // The roofs (and the top of every stair) you are promised: towers, the market hall, the exchange, the inn.
+            var roofs = new (string Name, Vec3d At)[]
+            {
+                ("clock tower roof", SouthKit.CellMid(new GreyboxBlock.Building(SouthPlan.TowerX, SouthPlan.TowerZ, 3, 3, SouthPlan.TowerStoreys) { Y0 = SouthPlan.Core }, 1, 1, SouthPlan.TowerStoreys)),
+                ("clock tower belfry", SouthKit.CellMid(new GreyboxBlock.Building(SouthPlan.TowerX, SouthPlan.TowerZ, 3, 3, SouthPlan.TowerStoreys) { Y0 = SouthPlan.Core }, 0, 1, SouthPlan.TowerStoreys - 1)),
+                ("market hall roof", new Vec3d(652.8, SouthPlan.Core + 2 * SouthKit.SH, SouthPlan.HallZ + 9.6)),
+            };
+            var bad = new List<string>();
+            foreach (var r in roofs)
+                if (!n.SameArea(square, Spot(r.At, r.Name))) bad.Add($"can't walk to the {r.Name} at {r.At}");
+            int open = 0, shut = 0;
+            foreach (var (at, what) in k.Placed)
+            {
+                bool sealedRoom = SealedWords.Any(w => what.Contains(w)) || what.EndsWith(" X") || (what.EndsWith(" H") && at.Y > BrMap.Field.HeightAt(at.X, at.Z) + 2);
+                if (what.EndsWith(" garden")) continue; // behind chest-high garden walls: you climb over (the walking grid doesn't)
+                int s = Spot(at, what);
+                bool reach = n.SameArea(square, s);
+                if (sealedRoom && reach) bad.Add($"the sealed '{what}' chest at {at} can be walked to");
+                if (!sealedRoom && !reach) bad.Add($"the '{what}' chest at {at} can't be walked to");
+                if (sealedRoom) shut++; else open++;
+            }
+            TestContext.WriteLine($"{open} chests you walk to, {shut} you breach for");
+            Assert.That(bad, Is.Empty, string.Join("\n", bad));
+            Assert.That(shut, Is.GreaterThanOrEqualTo(40), "plenty of loot behind walls");
+        }
+
+        [Test, Explicit]
+        public void SouthWalk_Debug()
+        {
+            _ = T;
+            BotNav n = Nav;
+            int square = n.Nearest(BrLayout.Anchor(Id) + new Vec3d(0, 0, -12), 2);
+            foreach (string s in (Environment.GetEnvironmentVariable("SOUTH_PTS") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var v = s.Split(',').Select(double.Parse).ToArray();
+                int q = n.Nearest(new Vec3d(v[0], v[1], v[2]), 2);
+                TestContext.WriteLine($"{s}: node {(q >= 0 ? n.Nodes[q].Feet(n).ToString() : "none")} same area {n.SameArea(square, q)} area {n.AreaOf(q)}");
+            }
+            BrushWorld w = T.World;
+            var near = new List<int>();
+            foreach (string s in (Environment.GetEnvironmentVariable("SOUTH_BOX") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var v = s.Split(',').Select(double.Parse).ToArray();
+                var box = new Aabb(new Vec3d(v[0] - 0.35, v[1] + 0.05, v[2] - 0.35), new Vec3d(v[0] + 0.35, v[1] + 1.8, v[2] + 0.35));
+                w.BrushesNear(box, near);
+                foreach (int o in near)
+                    if (w[o].Solid && BrushWorld.Overlaps(w[o], box)) TestContext.WriteLine($"box {s}: {w[o].Kind} {w[o].Bounds.Min}..{w[o].Bounds.Max}");
+            }
+        }
+
+        [Test]
+        public void SouthPads_SeeNoOtherRegion_TheTownBlocksEveryLine()
+        {
+            var c = new MovementConfig();
+            var t = BrMap.Terrain(BrMap.BuildGround(), T.World);
+            BrRegion mine = T.Br.Regions.Find(r => r.Segment == Id);
+            Rect2 sq = BrLayout.Bounds(Id);
+            var bad = new List<string>();
+            foreach (Vec3d p in mine.Pads)
+            {
+                Vec3d eye = p + new Vec3d(0, c.StandEye, 0);
+                foreach (BrRegion other in T.Br.Regions)
+                {
+                    if (other.Segment == Id) continue;
+                    foreach (Vec3d q in other.Pads)
+                        foreach (double up in new[] { c.StandHeight - 0.15, c.StandHeight * 0.6, 0.35 })
+                        {
+                            Vec3d d = q + new Vec3d(0, up, 0) - eye;
+                            double len = d.Length;
+                            TerrainHit hit = t.Raycast(eye, d / len, len);
+                            Vec3d at = eye + d / len * hit.Distance;
+                            if (!hit.Hit || !sq.Contains(at.X, at.Z)) bad.Add($"pad {p} to {other.Name} pad {q}: {(hit.Hit ? $"first stopped at {at}, outside the South" : "clear")}");
+                        }
+                }
+            }
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
         /// <summary>Dev tool: SCULPT_PLAN_DIR=dir writes south_plan.png, a floor plan of the segment (0.25 m a pixel).</summary>
         [Test]
         public void SouthPlan_Picture()

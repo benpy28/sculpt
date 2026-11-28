@@ -201,6 +201,9 @@ namespace Sculpt.Core
                         Front(s, m, (Next() & 7) == 0 ? WallKind.Wall : WallKind.Window);
                         Back(s, m, (Next() & 1) == 0 ? WallKind.Window : WallKind.Wall);
                     }
+                    // A window over every door of a tall house (a wall solid from the door's lintel to the parapet is
+                    // more than the walking grid looks through: bots would never find the door).
+                    if (storeys >= 3 && (front == WallKind.ShutDoor || front == WallKind.WideDoor)) Front(1, m, WallKind.Window);
                     // A partition between the front room and the rest in some lanes (never across a stair or an arch).
                     if (!(stair && main) && r != 'A' && depth >= 2)
                         for (int s = 0; s < storeys; s++)

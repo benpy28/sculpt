@@ -37,7 +37,7 @@ namespace Sculpt.Core
             if (gardenChestPlot >= 0)
             {
                 k.Chest(new Vec3d(gx0 + (gardenChestPlot * 2 + 1) * M, y, zGarden0 + garden * 0.25), 0, nameS + " garden");
-                k.Chest(new Vec3d(gx0 + (gardenChestPlot * 2 + 3) * M, y, zGarden0 + garden * 0.25), 0, nameS + " garden");
+                k.Chest(new Vec3d(gx0 + (gardenChestPlot * 2 - 1) * M, y, zGarden0 + garden * 0.75), Math.PI, nameN + " garden");
             }
             return y;
         }
@@ -107,7 +107,7 @@ namespace Sculpt.Core
             b.Open(new Rect2(492, 232, 541, 290));
             double ex = 503.0, ez = 256 - W(3) / 2;
             var ce = new GreyboxBlock.Building(ex, ez, 4, 3, 2);
-            ce.Y0 = k.Level(SouthKit.RectOf(ex, ez, 4, 3), 2, double.NaN, "corn exchange");
+            ce.Y0 = k.Level(new Rect2(493, 236, 540, 284), 2, double.NaN, "corn market"); // the whole plaza on one level
             for (int i = 0; i < 4; i++) { ce.AlongX[0, 0, i] = WallKind.WideDoor; ce.AlongX[0, 3, i] = i == 0 ? WallKind.Wall : WallKind.WideDoor; }
             for (int j = 0; j < 3; j++) { ce.AlongZ[0, 0, j] = j == 2 ? WallKind.Wall : WallKind.WideDoor; ce.AlongZ[0, 4, j] = WallKind.WideDoor; }
             k.Stairs(ce, 2, false, -1, 1);                    // north aisle, rising west, up to the roof
@@ -265,7 +265,7 @@ namespace Sculpt.Core
             b.Open(new Rect2(768, 232, 816, 292));
             double wx = 782.4, wz = 256 - W(3) / 2;
             var wh = new GreyboxBlock.Building(wx, wz, 3, 3, 2);
-            wh.Y0 = k.Level(SouthKit.RectOf(wx, wz, 3, 3), 2, double.NaN, "weigh house");
+            wh.Y0 = k.Level(new Rect2(770, 236, 814, 284), 2, double.NaN, "horse fair"); // the whole place on one level
             k.Stairs(wh, 0, true, +1);
             for (int s = 0; s < 2; s++) { wh.AlongZ[s, 1, 0] = WallKind.Door; wh.AlongZ[s, 1, 1] = WallKind.Wall; wh.AlongZ[s, 1, 2] = WallKind.Door; }
             wh.AlongZ[0, 3, 1] = WallKind.WideDoor;
@@ -336,7 +336,7 @@ namespace Sculpt.Core
             mill.AlongZ[0, 3, 1] = WallKind.Door;
             k.Raise(mill, "Windmill", BrStyle.Timber, 0);
             BrKit.Parapet(b, mill);
-            k.Chest(mill, 2, 1, 2, Math.PI, "windmill");
+            k.Chest(mill, 2, 1, 2, Math.PI, "windmill sack store");
             k.Chest(mill, 1, 1, 4, 0, "windmill roof");
             k.Chest(mill, 2, 2, 0, Math.PI, "windmill floor");
             b.Poi("Mill Hill", new Vec3d(mx + W(3) / 2, mill.Y0, mz + W(3) / 2), mill.Bounds);
@@ -357,6 +357,7 @@ namespace Sculpt.Core
             f.Y0 = k.Level(SouthKit.RectOf(fx, fz, 3, 2), 3, double.NaN, "folly");
             k.Stairs(f, 0, false, +1, 0);
             f.AlongX[0, 2, 1] = WallKind.ShutDoor;
+            f.AlongX[1, 2, 1] = WallKind.Window; // over the door
             for (int s = 1; s < 3; s++) { f.AlongX[s, 2, 0] = WallKind.Window; f.AlongZ[s, 3, 1] = WallKind.Window; f.AlongX[s, 2, 2] = WallKind.Window; }
             k.Raise(f, "Folly", BrStyle.Ruin, 0);
             BrKit.Parapet(b, f);
@@ -398,6 +399,18 @@ namespace Sculpt.Core
                 BrKit.Shed(b, seed == 1 ? x0 + 4 : x0 + 29.6, y, 156);
                 k.Wall(x0 + 14, 165, y, 12, true, 1);
                 k.Chest(new Vec3d(x0 + 20, y, 172), 0, seed == 1 ? "tanners' yard" : "dyers' yard");
+            }
+            // Dry-stone field walls (chest high) across the open slopes round the town: cover between the districts.
+            foreach (var (x, z, len, alongX) in new[]
+            {
+                (470.0, 130.0, 18.0, true), (480.0, 170.0, 15.0, false), (600.0, 115.0, 12.0, false), (735.0, 120.0, 18.0, true),
+                (752.0, 150.0, 15.0, false), (830.0, 190.0, 15.0, true), (460.0, 290.0, 15.0, false), (840.0, 370.0, 15.0, false),
+                (700.0, 140.0, 12.0, false), (628.0, 360.0, 9.0, true), (748.0, 345.0, 12.0, false), (560.0, 412.0, 12.0, true),
+            })
+            {
+                double th = 0.3, x1 = alongX ? x + len : x + th, z1 = alongX ? z + th : z + len;
+                if (!b.IsClear(new Rect2(x, z, x1, z1), 2.5) || !b.TryFoot(x, z, x1, z1, 1.2, out double wy)) continue;
+                k.Wall(x, z, wy, len, alongX, 1);
             }
             // An avenue of limes along the road in.
             for (int i = 0; i < 3; i++)

@@ -38,7 +38,7 @@ namespace Sculpt.Core
             SquareBlocks(k);
             // The open ground round the town (the hills, the outskirts): more groves, trees, rocks and bushes than the
             // default, so crossing between districts is never a run over bare grass.
-            b.Nature.Groves = 9; b.Nature.LoneTrees = 30; b.Nature.RockGroups = 20; b.Nature.Bushes = 45;
+            b.Nature.Groves = 14; b.Nature.LoneTrees = 60; b.Nature.RockGroups = 40; b.Nature.Bushes = 110;
             Districts(k);
             if (k.HomeChests != BrLayout.HomeChests)
                 throw new InvalidOperationException($"South: {k.HomeChests} home chests, want {BrLayout.HomeChests}");
