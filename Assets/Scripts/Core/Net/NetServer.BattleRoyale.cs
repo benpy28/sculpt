@@ -12,7 +12,8 @@ namespace Sculpt.Core.Net
         public BrMode Mode = BrMode.Solos;
         public int TeamSize => Mode == BrMode.Duos ? 2 : Mode == BrMode.Squads ? 4 : 1;
         public int MaxPlayers = 32;
-        /// <summary>A match starts once the lobby is full, or once this many players have waited <see cref="LobbyTicks"/>.</summary>
+        /// <summary>A match starts once this many players have waited <see cref="LobbyTicks"/> (counted from the first
+        /// player in the lobby). A full lobby still waits it out (Ben 2026-11-28: late friends get in).</summary>
         public int MinPlayers = 1;
         public int LobbyTicks = (10 * 60) * SimTime.Per60;
         public int CountdownTicks = (5 * 60) * SimTime.Per60;
@@ -114,7 +115,16 @@ namespace Sculpt.Core.Net
                 case MatchPhase.Waiting:
                     if (Match.Phase != MatchPhase.Waiting) SetPhase(MatchPhase.Waiting, 0);
                     ReviveLobby();
-                    if (n >= Br.MinPlayers && (n >= Br.MaxPlayers || Tick - Match.PhaseStartTick >= Br.LobbyTicks)) BeginBr();
+                    // The lobby always runs its whole time from when the first player is in it (Ben 2026-11-28), even
+                    // once bots have filled it, so a friend joining a few seconds late still gets in. Clients see when it
+                    // ends in PhaseEndTick.
+                    if (n == 0)
+                    {
+                        if (Match.PhaseEndTick != 0) { Match.PhaseEndTick = 0; _matchDirty = true; }
+                        break;
+                    }
+                    if (Match.PhaseEndTick == 0) { Match.PhaseEndTick = Tick + Br.LobbyTicks; _matchDirty = true; }
+                    if (n >= Br.MinPlayers && Tick >= Match.PhaseEndTick) BeginBr();
                     break;
                 case MatchPhase.Countdown:
                     SitOutLateJoiners();
