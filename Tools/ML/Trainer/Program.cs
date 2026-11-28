@@ -41,6 +41,15 @@ namespace Sculpt.Trainer
                 case "check": return GradCheck.Run();
                 case "bc": Bc(Arg(1, "bc.sbm"), int.Parse(Arg(2, "300000")), int.Parse(Arg(3, "12"))); return 0;
                 case "ppo": Ppo(MlModel.Load(Arg(1, "bc.sbm")), Arg(2, "run"), int.Parse(Arg(3, "200")), MlModel.Load(Arg(1, "bc.sbm"))); return 0;
+                case "league":
+                {
+                    // Long self-play against a growing league, aiming for a top model the skill dials scale down.
+                    League = true;
+                    MlModel start = MlModel.Load(Arg(1, "duel-v1.sbm"));
+                    Champion = MlModel.Load(Arg(1, "duel-v1.sbm"));
+                    Ppo(start, Arg(3, "run-league"), int.Parse(Arg(4, "12000")), MlModel.Load(Arg(2, "bc.sbm")));
+                    return 0;
+                }
                 case "br": Ppo(MlModel.Load(Arg(1, "latest.sbm")), Arg(2, "run-br"), int.Parse(Arg(3, "200")), MlModel.Load(Arg(1, "latest.sbm")), br: true, brLearners: int.Parse(Arg(4, "24"))); return 0;
                 case "eval": Eval(MlModel.Load(Arg(1, "model.sbm")), D(Arg(2, "10")), Arg(3, "normal")); return 0;
                 case "ladder": Ladder(MlModel.Load(Arg(1, "model.sbm")), D(Arg(2, "30"))); return 0;
@@ -187,6 +196,12 @@ namespace Sculpt.Trainer
 
         // ================================================================ Self-play
 
+        /// <summary>League mode: mostly itself and past copies, a little scripted Hard, a weak pull toward imitation, and a
+        /// champion it must beat (every 250 iterations both play at Pro skill; over 58% of the kills crowns the new one).</summary>
+        private static bool League;
+        private static MlModel Champion;
+        private static int ChampionNumber = 1;
+
         private static MlModel Ppo(MlModel m, string dir, int iterations, MlModel reference, bool br = false, int brLearners = 16)
         {
             Directory.CreateDirectory(dir);
@@ -197,6 +212,7 @@ namespace Sculpt.Trainer
                 lock (rng)
                 {
                     double u = rng.NextDouble();
+                    if (League) return u < 0.45 ? Opp.Self : u < 0.82 ? Opp.Snapshot : u < 0.97 ? Opp.ScriptHard : Opp.ScriptNormal;
                     return u < 0.4 ? Opp.Self : u < 0.6 ? Opp.Snapshot : u < 0.7 ? Opp.ScriptEasy : u < 0.85 ? Opp.ScriptNormal : Opp.ScriptHard;
                 }
             }
@@ -227,6 +243,7 @@ namespace Sculpt.Trainer
                 ticksPerIter = 2048;
             }
             var learner = new Learner(m, Threads, 4096) { Reference = reference };
+            if (League) { learner.RefCoef = 0.005; lock (pool) pool.Add(Champion.Clone()); }
             var log = new StreamWriter(Path.Combine(dir, "log.csv"), append: true) { AutoFlush = true };
             log.WriteLine("iter,seconds,decisions,samples,stats,policy,value,entropy,kl,clip,refkl");
             var sw = Stopwatch.StartNew();
@@ -236,7 +253,7 @@ namespace Sculpt.Trainer
             var stats = new Dictionary<string, double>();
             for (int it = 1; it <= iterations; it++)
             {
-                learner.Lr = 3e-4 * Math.Max(0.1, 1 - (it - 1.0) / iterations);
+                learner.Lr = League ? 2e-4 * Math.Max(0.25, 1 - (it - 1.0) / iterations) : 3e-4 * Math.Max(0.1, 1 - (it - 1.0) / iterations);
                 Parallel.ForEach(envs, new ParallelOptions { MaxDegreeOfParallelism = Threads }, e => e.Run(ticksPerIter));
                 trajs.Clear();
                 foreach (ITrainEnv e in envs) { trajs.AddRange(e.Trajs); totalDec += e.TakeDecisions(); e.TakeStats(stats); }
@@ -256,11 +273,34 @@ namespace Sculpt.Trainer
                     m.Note = $"PPO {(br ? "battle royale" : "1v1")} from: {reference.Note}; iteration {it}, {totalDec} decisions";
                     m.Save(Path.Combine(dir, $"ckpt-{it:0000}.sbm"));
                     m.Save(Path.Combine(dir, "latest.sbm"));
-                    lock (pool) { pool.Add(m.Clone()); if (pool.Count > 12) pool.RemoveAt(1); }
+                    lock (pool) { pool.Add(m.Clone()); if (pool.Count > (League ? 24 : 12)) pool.RemoveAt(1); }
                 }
+                if (League && it % 250 == 0) Gauntlet(m, dir, it, log, pool);
             }
             log.Dispose();
             return m;
+        }
+
+        /// <summary>Both at Pro skill: the model against the champion and against the scripted Hard bot.</summary>
+        private static void Gauntlet(MlModel m, string dir, int it, StreamWriter log, List<MlModel> pool)
+        {
+            var sw = Stopwatch.StartNew();
+            (int k, int d) = Play(m, 30, MlSkill.Pro, Opp.Snapshot, Champion, MlSkill.Pro);
+            (int hk, int hd) = Play(m, 20, MlSkill.Pro, Opp.ScriptHard);
+            double share = k + d == 0 ? 0.5 : (double)k / (k + d), hard = hk + hd == 0 ? 0.5 : (double)hk / (hk + hd);
+            string line = $"gauntlet at {it}: vs champion {ChampionNumber} {share:P0} of {k + d}, vs scripted Hard {hard:P0} of {hk + hd} ({sw.Elapsed.TotalSeconds:0} s)";
+            if (share > 0.58 && k + d >= 40)
+            {
+                ChampionNumber++;
+                Champion = m.Clone();
+                Champion.Note = $"champion {ChampionNumber}: {m.Note}";
+                Champion.Save(Path.Combine(dir, $"champion-{ChampionNumber:00}.sbm"));
+                Champion.Save(Path.Combine(dir, "champion.sbm"));
+                lock (pool) pool.Add(Champion.Clone());
+                line += $"; new champion {ChampionNumber}";
+            }
+            Console.WriteLine(line);
+            log.WriteLine("# " + line);
         }
 
         private static string DuelLine(Dictionary<string, double> s)
@@ -303,16 +343,17 @@ namespace Sculpt.Trainer
 
         private static MlSkill Skill(string name) => name == "easy" ? MlSkill.Easy : name == "hard" ? MlSkill.Hard : name == "pro" ? MlSkill.Pro : MlSkill.Normal;
 
-        private static (int k, int d) Play(MlModel m, double minutes, MlSkill skill, Opp o)
+        private static (int k, int d) Play(MlModel m, double minutes, MlSkill skill, Opp o, MlModel opponent = null, MlSkill oppSkill = null)
         {
             int n = Threads;
             BotNav[] navs = Navs(n);
             int k = 0, d = 0;
             Parallel.For(0, n, new ParallelOptions { MaxDegreeOfParallelism = n }, i =>
             {
-                var e = new DuelEnv(navs[i], 9000 + i) { RandomSkill = false, FixedSkill = skill, ResetTicks = 180 * SimTime.TicksPerSecond };
-                e.Build(m, o);
+                var e = new DuelEnv(navs[i], 9000 + i) { RandomSkill = false, FixedSkill = skill, OppSkill = oppSkill ?? MlSkill.Normal, ResetTicks = 180 * SimTime.TicksPerSecond };
+                e.Build(m, o, opponent);
                 e.PickOpp = () => o;
+                e.PickSnapshot = () => opponent;
                 int ticks = (int)(minutes * 60 * SimTime.TicksPerSecond / n);
                 for (int done = 0; done < ticks; done += 1200) { e.Run(Math.Min(1200, ticks - done)); foreach (var l in e.Learners) l.actor.Traj.Clear(); }
                 lock (navs) { k += e.Kills; d += e.Deaths; }
