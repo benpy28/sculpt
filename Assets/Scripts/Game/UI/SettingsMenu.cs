@@ -276,7 +276,6 @@ namespace Sculpt.Game.UI
                 }
                 return;
             }
-            if (_open) UpdateDisplayRevert();
             if (kb == null || !kb.escapeKey.wasPressedThisFrame || Time.frameCount - _rebindEndedFrame < 2) return;
             if (_open)
             {
@@ -300,7 +299,8 @@ namespace Sculpt.Game.UI
         private void Close()
         {
             CancelRebind();
-            if (_displayRevertAt > 0) KeepDisplay();
+            // Closing with the display question unanswered is "go back": a change you couldn't see to keep must not stay.
+            DisplayRevert.GoBack();
             _open = false;
             Save();
             ClosedFrame = Time.frameCount;
@@ -406,7 +406,7 @@ namespace Sculpt.Game.UI
             // The page (or the search results).
             var content = new Rect(box.x + 270, box.y + 82, box.width - 294, box.height - 160);
             GUILayout.BeginArea(content);
-            if (_displayRevertAt > 0) DrawDisplayRevert();
+            if (DisplayRevert.Pending) DrawDisplayRevert();
             _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
             if (searching) DrawSearch();
             else DrawTab(_tab);
@@ -595,9 +595,6 @@ namespace Sculpt.Game.UI
 
         private static readonly FullScreenMode[] Modes = { FullScreenMode.ExclusiveFullScreen, FullScreenMode.FullScreenWindow, FullScreenMode.Windowed };
         private static readonly string[] ModeNames = { "Fullscreen", "Borderless", "Windowed" };
-        private float _displayRevertAt;
-        private int _revertW, _revertH;
-        private FullScreenMode _revertMode;
 
         private void DrawDisplayMode()
         {
@@ -650,35 +647,17 @@ namespace Sculpt.Game.UI
         private static string RenderProfileRefresh() => Mathf.RoundToInt((float)Rendering.RenderProfile.RefreshHz).ToString();
 
         /// <summary>Changes the display, keeping what it was so it can go back if the player can't see the screen to keep it.</summary>
-        private void SetDisplay(int width, int height, FullScreenMode mode)
-        {
-            if (_displayRevertAt <= 0)
-            {
-                _revertW = Screen.width; _revertH = Screen.height;
-                _revertMode = Screen.fullScreenMode;
-            }
-            Screen.SetResolution(width, height, mode);
-            _displayRevertAt = Time.unscaledTime + 12f;
-        }
-
-        private void UpdateDisplayRevert()
-        {
-            if (_displayRevertAt > 0 && Time.unscaledTime > _displayRevertAt)
-            {
-                Screen.SetResolution(_revertW, _revertH, _revertMode);
-                _displayRevertAt = 0;
-            }
-        }
-
-        private void KeepDisplay() => _displayRevertAt = 0;
+        /// <remarks>The timer runs on <see cref="DisplayRevert"/>, which lives across scene loads and ticks whether
+        /// or not this menu is open.</remarks>
+        private static void SetDisplay(int width, int height, FullScreenMode mode) => DisplayRevert.Begin(width, height, mode);
 
         private void DrawDisplayRevert()
         {
             GUILayout.BeginHorizontal();
-            int secs = Mathf.CeilToInt(_displayRevertAt - Time.unscaledTime);
-            GUILayout.Label("Keep this display setting? Going back in " + Mathf.Max(0, secs) + " s.", _warn, GUILayout.Width(420));
-            if (GUILayout.Button("Keep", _button, GUILayout.Width(90), GUILayout.Height(30))) KeepDisplay();
-            if (GUILayout.Button("Go back", _button, GUILayout.Width(100), GUILayout.Height(30))) _displayRevertAt = Time.unscaledTime - 1f;
+            int secs = Mathf.CeilToInt(DisplayRevert.SecondsLeft);
+            GUILayout.Label("Keep this display setting? Going back in " + secs + " s.", _warn, GUILayout.Width(420));
+            if (GUILayout.Button("Keep", _button, GUILayout.Width(90), GUILayout.Height(30))) DisplayRevert.Keep();
+            if (GUILayout.Button("Go back", _button, GUILayout.Width(100), GUILayout.Height(30))) DisplayRevert.GoBack();
             GUILayout.EndHorizontal();
         }
 
