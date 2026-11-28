@@ -568,7 +568,9 @@ namespace Sculpt.Core.Net
             int max = 0;
             foreach (ServerPlayer o in _players) if (o.Id > max) max = o.Id;
             if (_sendMask.Length <= max) _sendMask = new bool[Math.Max(max + 1, _sendMask.Length * 2)];
-            Array.Clear(_sendMask, 0, _sendMask.Length);
+            // Only current players' entries are read (and every one is set below), so no clearing of the whole array
+            // (ids go up to 65535).
+            _sendMask[to.Id] = false;
             bool watching = WatchesTeammates(to, _watchMates);
             foreach (ServerPlayer o in _players)
             {

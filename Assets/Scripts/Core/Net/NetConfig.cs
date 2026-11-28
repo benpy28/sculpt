@@ -91,6 +91,15 @@ namespace Sculpt.Core.Net
         /// </summary>
         public bool AllowDevRespawn;
 
+        /// <summary>Highest player id (ids are 1..this). Ids ride as 16 bits in snapshots and in world, combat, tile and
+        /// item messages, so never above 65535; lower only in tests.</summary>
+        public int MaxPlayerId = ushort.MaxValue;
+        /// <summary>A player id that left is not handed out again for this long (ticks), so a client's or spectator's
+        /// leftover view of the old player, and records in a replay, never mix two players. 60 minutes: to run out, a
+        /// server would need about 18 joins a second for an hour; then the next free id is used anyway (a join is never
+        /// refused while an id is free).</summary>
+        public int PlayerIdQuietTicks = SimTime.SecondsToTicks(60 * 60);
+
         /// <summary>Anti-cheat checks and interest management (who goes in whose snapshots).</summary>
         public AntiCheat.AntiCheatConfig AntiCheat = new AntiCheat.AntiCheatConfig();
         public Vec3d DevWarpPoint;

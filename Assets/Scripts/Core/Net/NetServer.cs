@@ -155,6 +155,46 @@ namespace Sculpt.Core.Net
         private readonly List<PlayerSnap> _others = new List<PlayerSnap>();
         private readonly SnapshotCodec _snapCodec = new SnapshotCodec();
         private int _nextId = 1;
+        private readonly HashSet<int> _idsInUse = new HashSet<int>();
+        private readonly Dictionary<int, int> _idLeftAt = new Dictionary<int, int>();
+
+        /// <summary>
+        /// The id the next join tries first. Ids are 1..<see cref="NetConfig.MaxPlayerId"/> and wrap; a join skips ids in
+        /// use and ids that left less than <see cref="NetConfig.PlayerIdQuietTicks"/> ago. Settable so a replay re-run
+        /// can start where the recording did (and tests can start near the wrap).
+        /// </summary>
+        public int NextPlayerId
+        {
+            get => _nextId;
+            set
+            {
+                if (value < 1 || value > MaxId) throw new ArgumentOutOfRangeException(nameof(value));
+                _nextId = value;
+            }
+        }
+
+        private int MaxId => Math.Max(1, Math.Min(ushort.MaxValue, Config.MaxPlayerId));
+
+        private int AllocatePlayerId()
+        {
+            int max = MaxId;
+            for (int pass = 0; pass < 2; pass++)
+            {
+                int at = _nextId;
+                for (int k = 0; k < max; k++)
+                {
+                    int id = at > max ? 1 : at;
+                    at = id >= max ? 1 : id + 1;
+                    if (_idsInUse.Contains(id)) continue;
+                    // Pass 0 skips ids that left recently; pass 1 (every free id left recently) takes the next free one.
+                    if (pass == 0 && _idLeftAt.TryGetValue(id, out int left) && Tick - left < Config.PlayerIdQuietTicks) continue;
+                    _idLeftAt.Remove(id);
+                    _nextId = at;
+                    return id;
+                }
+            }
+            throw new InvalidOperationException("No free player id.");
+        }
         private readonly int _ringSize;
 
         public NetServer(ITerrain grid, MovementConfig movement, NetConfig config, SendFn send, int startTick = 1000)
@@ -186,7 +226,7 @@ namespace Sculpt.Core.Net
             if (_byConn.ContainsKey(connectionId)) throw new InvalidOperationException("Connection already has a player.");
             var p = new ServerPlayer(_ringSize, Config.LeadWindowTicks, Config.ServerHistoryTicks)
             {
-                Id = _nextId++,
+                Id = AllocatePlayerId(),
                 ConnectionId = connectionId,
                 Team = team,
                 Spawn = spawn,
@@ -197,6 +237,7 @@ namespace Sculpt.Core.Net
             p.Body = new PlayerBody(p.Id, team, spawn);
             PlayerMovement.WriteBody(p.State, Movement, p.Body);
             _players.Add(p);
+            _idsInUse.Add(p.Id);
             _byConn[connectionId] = p;
             Sculpt?.AddPlayer(p.Body);
             Stream?.OnJoin(Tick, p, kind, countsAsPlayer);
@@ -228,6 +269,8 @@ namespace Sculpt.Core.Net
             OnBrLeave(p);
             _byConn.Remove(connectionId);
             _players.Remove(p);
+            _idsInUse.Remove(p.Id);
+            _idLeftAt[p.Id] = Tick;
             _matchDirty = true;
             Healing?.Cancel(p.Id, HealResult.Stopped, null, Tick);
             _dummies.Remove(p.Id);

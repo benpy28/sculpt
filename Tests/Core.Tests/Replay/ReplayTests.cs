@@ -80,7 +80,7 @@ namespace Sculpt.Core.Tests.Replay
         }
 
         /// <summary>Two duel bots playing the match on the duel map, recorded from before anyone joined.</summary>
-        private static Rig RecordBotMatch(double seconds, out byte[] file, int seedA = 5, int seedB = 4, ReplayConfig cfg = null, Action<NetServer, int> during = null)
+        private static Rig RecordBotMatch(double seconds, out byte[] file, int seedA = 5, int seedB = 4, ReplayConfig cfg = null, Action<NetServer, int> during = null, Action<NetServer> before = null)
         {
             var rig = new Rig();
             rig.Server = NewDuelServer(out rig.Info, (c, d, r) => { if (rig.Links.TryGetValue(c, out var l)) l(d, r); });
@@ -91,6 +91,7 @@ namespace Sculpt.Core.Tests.Replay
             MatchStream stream = rig.Server.StartStream(cfg);
             rig.Capture();
             var writer = new ReplayWriter(ms, new ReplayHeader { Map = "Duel", Mode = "test", Build = "tests", StartedUtcTicks = 1 }, stream);
+            before?.Invoke(rig.Server);
             rig.Server.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Normal), seedA), 1, rig.Info.TeamSpawns[0][0], rig.Info.SpawnYaw[0]);
             rig.Server.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Normal), seedB), 2, rig.Info.TeamSpawns[1][0], rig.Info.SpawnYaw[1]);
             int n = (int)(seconds * SimTime.TicksPerSecond);
@@ -524,6 +525,40 @@ namespace Sculpt.Core.Tests.Replay
             Assert.That(check.Passed, check.ToString());
             Assert.That(check.HashesChecked, Is.EqualTo(75 * 4));
             Assert.That(check.TicksRun, Is.EqualTo(rig.Server.Tick - 1000));
+        }
+
+        [Test]
+        public void ReRun_AcrossAPlayerIdWrap_MatchesEveryStateHash()
+        {
+            // Ids are 1..65535 and wrap (skipping ids in use or recently left). A server that started near the top: the
+            // bots are 65534 and 65535, then one leaves and a new bot joins as 1, then another as 2. The re-run starts
+            // its ids where the recording did and must hand out exactly the same ones.
+            var ids = new List<int>();
+            RecordBotMatch(8, out byte[] file, before: s => s.NextPlayerId = 65534, during: (s, k) =>
+            {
+                if (k == 3 * SimTime.TicksPerSecond)
+                {
+                    ServerPlayer gone = s.Players[0];
+                    s.RemovePlayer(gone.ConnectionId);
+                    s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Normal), 8), gone.Team, gone.Spawn, gone.SpawnYaw);
+                }
+                if (k == 5 * SimTime.TicksPerSecond)
+                    s.AddBot(new DuelBot(Nav(), DuelBotConfig.For(BotLevel.Normal), 9), 2, s.Players[0].Spawn, 0);
+                foreach (ServerPlayer p in s.Players) if (!ids.Contains(p.Id)) ids.Add(p.Id);
+            });
+            Assert.That(ids, Is.EqualTo(new[] { 65534, 65535, 1, 2 }).Or.EqualTo(new[] { 65535, 65534, 1, 2 }));
+            ReplayFile f = ReplayFile.Read(file);
+            ReplayCheck check = ReplayVerifier.Run(f, () =>
+            {
+                NetServer s = NewDuelServer(out BreachMapInfo info, (c, d, r) => { });
+                SpawnItems(s, info);
+                s.MatchConfig.Enabled = true;
+                s.MatchConfig.CountdownTicks = 60 * SimTime.Per60;
+                return s;
+            });
+            TestContext.WriteLine(check.ToString());
+            Assert.That(check.Passed, check.ToString());
+            Assert.That(check.HashesChecked, Is.EqualTo(8 * 4));
         }
 
         [Test]

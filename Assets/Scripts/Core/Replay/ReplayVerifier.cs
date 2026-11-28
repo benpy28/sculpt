@@ -139,6 +139,13 @@ namespace Sculpt.Core.Replay
                 if (s.Br == null) { check.Problem = "the recording is a battle royale, the fresh server isn't"; return check; }
                 s.Br.Seed = brSeed.Value;
             }
+            // Player ids wrap and skip recent ones; the recording server's first join took its next id, so the fresh
+            // server starts there too and every later id must come out the same (checked below).
+            if (joins.Count > 0)
+            {
+                if (joins[0].Id < 1 || joins[0].Id > s.Config.MaxPlayerId) { check.Problem = $"bad player id {joins[0].Id}"; return check; }
+                s.NextPlayerId = joins[0].Id;
+            }
             int ji = 0, li = 0, ki = 0, pi = 0;
             var byId = new Dictionary<int, ServerPlayer>();
             for (int t = file.FirstTick; t <= file.LastTick; t++)
