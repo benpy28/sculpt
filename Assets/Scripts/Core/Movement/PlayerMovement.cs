@@ -254,9 +254,10 @@ namespace Sculpt.Core
                 speed = newSpeed;
             }
 
-            // In a slide, holding forward (W) steers: looking round a corner carves instead of braking. Sideways or
-            // back keys alone still brake (the counter-strafe stop out of a slide).
-            if (speed > 1e-9 && input.MoveZ <= 0.1)
+            // In a slide, holding forward (W, W+A, W+D) steers: looking round a corner carves instead of braking.
+            // Without W (A, D or S alone, S+A, S+D) the keys only brake (the counter-strafe stop), never steer.
+            bool steering = input.MoveZ > 0.1;
+            if (speed > 1e-9 && !steering)
             {
                 vh = CounterBrake(c, ref s, vh, wish, events);
                 speed = vh.Length;
@@ -264,7 +265,7 @@ namespace Sculpt.Core
             else s.Braking = false;
 
             // Steering toward the wish direction: free up to SlideTurnRate, a carve (costs speed) up to SlideCarveTurnRate.
-            if (speed > 1e-6 && wish.LengthSquared > 1e-9)
+            if (steering && speed > 1e-6 && wish.LengthSquared > 1e-9)
             {
                 double maxTurn = Math.Max(c.SlideTurnRate, c.SlideCarveTurnRate) * dt;
                 Vec3d turned = RotateToward(vh, wish, maxTurn);

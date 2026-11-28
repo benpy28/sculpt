@@ -395,6 +395,37 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
+        public void SideOrBackKeysWithoutForwardNeverSteerASlide()
+        {
+            // Ben: holding W steers; S, A or D alone brake. A, D, S, S+A and S+D never turn the slide, and above the
+            // counter-brake floor they brake exactly like the counter-strafe brake.
+            int n = SimTime.TicksPerSecond / 5;
+            foreach (var (x, z, name) in new[] { (-1.0, 0.0, "A"), (1.0, 0.0, "D"), (0.0, -1.0, "S"), (-0.7071, -0.7071, "S+A"), (0.7071, -0.7071, "S+D") })
+            {
+                _ev.Clear();
+                var (turned, speed) = SlideSteer(13, East, x, z, n);
+                Assert.That(turned, Is.LessThan(1e-6), name + " alone must not steer the slide");
+                Assert.That(Had(MoveEventType.Braked), Is.True, name + " brakes");
+                Assert.That(_s.Carving, Is.False, name);
+                Assert.That(speed, Is.LessThan(13 - _c.SlideFriction * n * _c.Dt - 1), name + " lost speed to the brake");
+            }
+            // Looking 90 degrees off the slide and pressing D (so D points along the motion): no steer, no brake.
+            _ev.Clear();
+            var (t2, s2) = SlideSteer(13, North, 1, 0, n);
+            Assert.That(t2, Is.LessThan(1e-6), "D along the motion doesn't steer either");
+            Assert.That(Had(MoveEventType.Braked), Is.False);
+            Assert.That(s2, Is.EqualTo(13 - _c.SlideFriction * n * _c.Dt).Within(1e-6), "only friction");
+            // W+A and W+D still steer.
+            foreach (double x in new[] { -1.0, 1.0 })
+            {
+                _ev.Clear();
+                var (t3, _) = SlideSteer(13, East, x * 0.7071, 0.7071, n);
+                Assert.That(t3, Is.GreaterThan(0.3), "W plus a side key steers");
+                Assert.That(Had(MoveEventType.Braked), Is.False);
+            }
+        }
+
+        [Test]
         public void SlidingIntoALedgeAndJumpingMantlesIt()
         {
             _w.AddBox(new Vec3d(10, 0, -5), new Vec3d(14, 3, 5), BrushKind.Frame); // a 3 m ledge
