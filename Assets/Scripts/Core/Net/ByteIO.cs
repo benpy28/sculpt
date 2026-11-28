@@ -44,6 +44,18 @@ namespace Sculpt.Core.Net
             _buf[Length++] = (byte)(v >> 8);
         }
 
+        /// <summary>An unsigned 24-bit number (tile ids: the battle royale map has more than 65 thousand tiles).</summary>
+        public void U24(int v)
+        {
+            if (v < 0 || v > MaxU24) throw new System.ArgumentOutOfRangeException(nameof(v));
+            Ensure(3);
+            _buf[Length++] = (byte)v;
+            _buf[Length++] = (byte)(v >> 8);
+            _buf[Length++] = (byte)(v >> 16);
+        }
+
+        public const int MaxU24 = (1 << 24) - 1;
+
         public void I32(int v)
         {
             Ensure(4);
@@ -128,6 +140,14 @@ namespace Sculpt.Core.Net
             int v = _buf[Position] | (_buf[Position + 1] << 8);
             Position += 2;
             return (ushort)v;
+        }
+
+        public int U24()
+        {
+            Need(3);
+            int v = _buf[Position] | (_buf[Position + 1] << 8) | (_buf[Position + 2] << 16);
+            Position += 3;
+            return v;
         }
 
         public int I32()

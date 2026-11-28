@@ -285,7 +285,7 @@ namespace Sculpt.Core
     {
         public readonly BrushWorld World;
         public readonly BreachConfig Config;
-        private readonly List<WallTile> _tiles = new List<WallTile>();
+        private readonly CowList<WallTile> _tiles = new CowList<WallTile>();
         private readonly Dictionary<int, int> _byBrush = new Dictionary<int, int>();
         /// <summary>Changes since the owner last cleared them (the server sends and clears them every tick).</summary>
         public readonly List<TileChange> Changes = new List<TileChange>();
@@ -305,8 +305,48 @@ namespace Sculpt.Core
             Config = config;
         }
 
+        /// <summary>A copy for <see cref="BrushWorld.ShareCopy"/>: fixed data shared, tile state copied page by page on write.</summary>
+        internal TileWalls(BrushWorld world, TileWalls from)
+        {
+            World = world;
+            Config = from.Config;
+            from.EnsureEdges(); // once, shared (which tile lies across each edge never changes)
+            _edge = from._edge;
+            _tiles = from._tiles.ShareCopy();
+            _hp = from._hp.ShareCopy();
+            _byBrush = from._byBrush;
+            _doors = from._doors;
+            _doorPartner = from._doorPartner;
+            _followers = from._followers;
+            Changes.AddRange(from.Changes);
+            Revision = from.Revision;
+            Tick = from.Tick;
+            CopyOnly = from.CopyOnly;
+            foreach (var kv in from._chargedAt) _chargedAt[kv.Key] = kv.Value;
+            foreach (var kv in from._shutAs) _shutAs[kv.Key] = kv.Value;
+            _touched.AddRange(from._touched);
+        }
+
+        private readonly List<int> _touched = new List<int>();
+
+        /// <summary>
+        /// Every tile play has ever changed (in the order they first changed): the rest are exactly as built. Lets the
+        /// replay state hash skip the untouched hundreds of thousands (map v3: it walked all of them, ~8 ms in Mono).
+        /// </summary>
+        public IReadOnlyList<int> Touched => _touched;
+
+        /// <summary>Notes a tile's first change by play (every write that isn't the build goes through here).</summary>
+        internal void Touch(int tile, ref WallTile t)
+        {
+            if (t.Changed) return;
+            t.Changed = true;
+            _touched.Add(tile);
+        }
+
         public int Count => _tiles.Count;
         public WallTile this[int i] => _tiles[i];
+        /// <summary>Pages of tile state this copy holds alone (see <see cref="BrushWorld.ShareCopy"/>).</summary>
+        public int OwnTilePages => _tiles.OwnPages + _hp.OwnPages;
         public Aabb BoundsOf(int tile) => World[_tiles[tile].Brush].Bounds;
 
         /// <summary>Tile index of a brush, or -1 if it is not a tile.</summary>
@@ -477,7 +517,7 @@ namespace Sculpt.Core
             t.State = state;
             t.Health = health;
             t.Open = o;
-            if (cause != TileCause.Built) t.Changed = true;
+            if (cause != TileCause.Built && !t.Changed) { t.Changed = true; _touched.Add(tile); }
             _tiles[tile] = t;
             if (state == TileState.DoorOpen && !Gone(from)) _shutAs[tile] = from; // what it is again when it shuts
             else if (state != TileState.DoorOpen) _shutAs.Remove(tile);

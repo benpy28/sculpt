@@ -416,7 +416,7 @@ namespace Sculpt.Core.Tests
             Assert.That(into[0].Hand.HealTile, Is.EqualTo(1234));
             Assert.That(into[0].Hand.HealReinforce, Is.True);
             Assert.That(c.AsRepeat(51).Hand.Heal, Is.False);
-            var bad = InputCmd.Quantize(new InputCmd { Hand = new HandInput { Heal = true, HealTile = 70000 } });
+            var bad = InputCmd.Quantize(new InputCmd { Hand = new HandInput { Heal = true, HealTile = 1 << 24 } });
             Assert.That(bad.Hand.Heal, Is.False, "a tile id the wire can't carry is dropped");
             var stray = InputCmd.Quantize(new InputCmd { Hand = new HandInput { HealReinforce = true } });
             Assert.That(stray.Hand.HealReinforce, Is.False);
@@ -443,7 +443,7 @@ namespace Sculpt.Core.Tests
             Assert.That(back[0].Tile, Is.EqualTo(77));
             Assert.That(back[0].EndTick, Is.EqualTo(548));
             Assert.That(back[1].Result, Is.EqualTo(HealResult.PlayerInside));
-            d[d.Length - 9] = 0x0F; // bad event type
+            d[d.Length - 10] = 0x0F; // bad event type (10 bytes per event since tile ids went 24-bit)
             var bad = new ByteReader(d, 0, d.Length);
             Assert.Throws<NetFormatException>(() => TileProtocol.Read(ref bad, new List<TileChange>(), back));
         }

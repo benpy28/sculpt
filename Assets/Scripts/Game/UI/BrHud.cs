@@ -75,6 +75,20 @@ namespace Sculpt.Game.UI
             float mm = MinimapSize * s, mx = w - mm - MinimapMargin * s, my = h - mm - MinimapMargin * s;
             Rect mid = new Rect(w / 2 - 330 * s, h * 0.38f - 70 * s, 660 * s, 140 * s);
             bool card = m.Phase != MatchPhase.Playing || dead;
+            Texture2D map = MapTexture();
+            if (map != null)
+            {
+                // The map picture (hills, rock faces, the river bed, buildings), under everything the minimap draws on it.
+                _gl.SetPass(0);
+                GL.PushMatrix();
+                try
+                {
+                    HudDraw.LoadPixels();
+                    HudDraw.RoundRect(mx - 4 * s, my - 4 * s, mm + 8 * s, mm + 8 * s, 10 * s, new Color(0.05f, 0.06f, 0.08f, 0.62f));
+                }
+                finally { GL.PopMatrix(); }
+                GUI.DrawTexture(new Rect(mx, h - my - mm, mm, mm), map);
+            }
             _gl.SetPass(0);
             GL.PushMatrix();
             try
@@ -189,12 +203,15 @@ namespace Sculpt.Game.UI
         private void DrawMinimap(NetClient net, MatchState m, float x, float y, float size, double now, float s)
         {
             // The whole square map, north up. Map metres to pixels.
-            HudDraw.RoundRect(x - 4 * s, y - 4 * s, size + 8 * s, size + 8 * s, 10 * s, new Color(0.05f, 0.06f, 0.08f, 0.62f));
-            HudDraw.Quad(x, y, size, size, new Color(0.30f, 0.40f, 0.26f, 0.55f));
             float k = size / (float)BrMap.Size;
             Vector2 P(double wx, double wz) => new Vector2(x + (float)wx * k, y + (float)wz * k);
-            // Buildings as dark blocks.
-            foreach (Aabb b in BuildingsOnMap()) HudDraw.Quad(x + (float)b.Min.X * k, y + (float)b.Min.Z * k, (float)(b.Max.X - b.Min.X) * k, (float)(b.Max.Z - b.Min.Z) * k, new Color(0.12f, 0.12f, 0.13f, 0.8f));
+            if (_mapTex == null)
+            {
+                HudDraw.RoundRect(x - 4 * s, y - 4 * s, size + 8 * s, size + 8 * s, 10 * s, new Color(0.05f, 0.06f, 0.08f, 0.62f));
+                HudDraw.Quad(x, y, size, size, new Color(0.30f, 0.40f, 0.26f, 0.55f));
+                // Buildings as dark blocks.
+                foreach (Aabb b in BuildingsOnMap()) HudDraw.Quad(x + (float)b.Min.X * k, y + (float)b.Min.Z * k, (float)(b.Max.X - b.Min.X) * k, (float)(b.Max.Z - b.Min.Z) * k, new Color(0.12f, 0.12f, 0.13f, 0.8f));
+            }
             StormState st = m.Storm;
             if (m.Phase == MatchPhase.Playing && st.Active)
             {
@@ -225,6 +242,57 @@ namespace Sculpt.Game.UI
         }
 
         private static List<Aabb> _buildings;
+        private static Texture2D _mapTex;
+        private static bool _mapTried;
+
+        /// <summary>
+        /// The minimap's picture, made once: the ground shaded by height and slope from the north-west (rock faces grey,
+        /// low ground like the river bed sandier), buildings dark. 512 pixels, about 2.5 m each.
+        /// </summary>
+        private static Texture2D MapTexture()
+        {
+            if (_mapTried) return _mapTex;
+            _mapTried = true;
+            const int n = 512;
+            HeightField f = BrMap.Field;
+            var px = new Color32[n * n];
+            double k = BrMap.Size / n;
+            for (int j = 0; j < n; j++)
+                for (int i = 0; i < n; i++)
+                {
+                    double x = (i + 0.5) * k, z = (j + 0.5) * k;
+                    Color c;
+                    if (!f.Covers(x, z)) c = new Color(0.16f, 0.2f, 0.14f);
+                    else
+                    {
+                        double hgt = f.HeightAt(x, z);
+                        Vec3d nn = f.NormalAt(x, z);
+                        float t = Mathf.Clamp01((float)((hgt + 6) / 30));
+                        c = Color.Lerp(new Color(0.24f, 0.36f, 0.2f), new Color(0.5f, 0.56f, 0.32f), t);
+                        if (hgt < -1) c = Color.Lerp(c, new Color(0.55f, 0.5f, 0.38f), Mathf.Clamp01((float)(-hgt - 1) / 2));
+                        if (nn.Y < f.WalkableNormalY) c = new Color(0.45f, 0.45f, 0.45f);
+                        float light = Mathf.Clamp((float)(0.75 + 1.6 * (-nn.X * 0.55 + nn.Z * 0.55)), 0.45f, 1.3f);
+                        c *= light;
+                    }
+                    c.a = 0.88f;
+                    px[i + n * j] = c;
+                }
+            foreach (Aabb b in BuildingsOnMap())
+            {
+                int i0 = Mathf.Max(0, (int)(b.Min.X / k)), i1 = Mathf.Min(n - 1, (int)(b.Max.X / k));
+                int j0 = Mathf.Max(0, (int)(b.Min.Z / k)), j1 = Mathf.Min(n - 1, (int)(b.Max.Z / k));
+                for (int j = j0; j <= j1; j++)
+                    for (int i = i0; i <= i1; i++) px[i + n * j] = new Color32(28, 28, 32, 235);
+            }
+            _mapTex = new Texture2D(n, n, TextureFormat.RGBA32, false) { name = "Minimap", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            _mapTex.SetPixels32(px);
+            _mapTex.Apply(false, true);
+            return _mapTex;
+        }
+
+        /// <summary>The map's building footprints from the map the game already built (building the 921 m map again for
+        /// the minimap took seconds on the first frame it was drawn).</summary>
+        public static void SetBuildings(IEnumerable<Aabb> buildings) => _buildings = new List<Aabb>(buildings);
 
         /// <summary>The map's building footprints (built once from the same code the world uses).</summary>
         private static List<Aabb> BuildingsOnMap()

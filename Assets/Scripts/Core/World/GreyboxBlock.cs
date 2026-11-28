@@ -74,6 +74,8 @@ namespace Sculpt.Core
         internal sealed class Building
         {
             public double X0, Z0;
+            /// <summary>Ground floor height: a building on a hill stands on a level footing at this height (map v3).</summary>
+            public double Y0;
             public int Mx, Mz, Storeys = 2;
             /// <summary>Walls along X (thin in Z) on z-line j, segment i: [s, j, i]. Walls along Z on x-line i, segment j: [s, i, j].</summary>
             public WallKind[,,] AlongX, AlongZ;
@@ -98,8 +100,8 @@ namespace Sculpt.Core
 
             public double Cx(int i) => X0 + i * Module;
             public double Cz(int j) => Z0 + j * Module;
-            public double Top => Storeys * StoreyHeight;
-            public Aabb Bounds => new Aabb(new Vec3d(X0, 0, Z0), new Vec3d(Cx(Mx) + Column, Top, Cz(Mz) + Column));
+            public double Top => Y0 + Storeys * StoreyHeight;
+            public Aabb Bounds => new Aabb(new Vec3d(X0, Y0, Z0), new Vec3d(Cx(Mx) + Column, Top, Cz(Mz) + Column));
         }
 
         public static GreyboxInfo Build(BrushWorld w)
@@ -458,7 +460,7 @@ namespace Sculpt.Core
             double laneLo = (alongZ ? b.Cx(lane) : b.Cz(lane)) + Column;
             for (int s = 0; s < b.Storeys; s++)
             {
-                double y0 = s * StoreyHeight, y1 = y0 + StoreyHeight;
+                double y0 = b.Y0 + s * StoreyHeight, y1 = y0 + StoreyHeight;
                 double l0 = laneLo + (flip ? 1 - s : s) * StairWidth, l1 = l0 + StairWidth;
                 double a0 = Math.Min(low, high), a1 = Math.Max(low, high);
                 Vec3d lo = alongZ ? new Vec3d(l0, y0, a0) : new Vec3d(a0, y0, l0);
@@ -486,7 +488,7 @@ namespace Sculpt.Core
             // Walls.
             for (int s = 0; s < b.Storeys; s++)
             {
-                double y = s * StoreyHeight;
+                double y = b.Y0 + s * StoreyHeight;
                 for (int j = 0; j <= b.Mz; j++)
                     for (int i = 0; i < b.Mx; i++)
                         Segment(t, info, b, s, true, j, i, new Vec3d(b.Cx(i) + Column, y, b.Cz(j)));
@@ -497,7 +499,7 @@ namespace Sculpt.Core
             // Floor tiles: 4 x 4 in every cell of every slab that isn't a hole.
             for (int s = 0; s < b.Storeys; s++)
             {
-                double y1 = (s + 1) * StoreyHeight, y0 = y1 - Column;
+                double y1 = b.Y0 + (s + 1) * StoreyHeight, y0 = y1 - Column;
                 for (int i = 0; i < b.Mx; i++)
                     for (int j = 0; j < b.Mz; j++)
                     {
@@ -538,7 +540,7 @@ namespace Sculpt.Core
             var stripZ = new Dictionary<(int, int, int, int), int>(); // (slab, x-line i, segment j, piece)
             for (int s = 0; s < b.Storeys; s++)
             {
-                double y1 = (s + 1) * StoreyHeight, y0 = y1 - Column;
+                double y1 = b.Y0 + (s + 1) * StoreyHeight, y0 = y1 - Column;
                 for (int j = 0; j <= b.Mz; j++)
                     for (int i = 0; i < b.Mx; i++)
                     {
@@ -587,13 +589,13 @@ namespace Sculpt.Core
                             links.Clear();
                             Add(Wall(s, true, j, i - 1, r, 3)); Add(Wall(s, true, j, i, r, 0));
                             Add(Wall(s, false, i, j - 1, r, 3)); Add(Wall(s, false, i, j, r, 0));
-                            var lo = new Vec3d(b.Cx(i), s * StoreyHeight + r * ts, b.Cz(j));
+                            var lo = new Vec3d(b.Cx(i), b.Y0 + s * StoreyHeight + r * ts, b.Cz(j));
                             colPiece[(i, j, s, r)] = Follower(new Aabb(lo, lo + new Vec3d(Column, ts, Column)));
                         }
                 }
             for (int s = 0; s < b.Storeys; s++)
             {
-                double y1 = (s + 1) * StoreyHeight, y0 = y1 - Column;
+                double y1 = b.Y0 + (s + 1) * StoreyHeight, y0 = y1 - Column;
                 for (int i = 0; i <= b.Mx; i++)
                     for (int j = 0; j <= b.Mz; j++)
                     {

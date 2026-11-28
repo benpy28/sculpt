@@ -333,7 +333,7 @@ namespace Sculpt.Core.Replay
         /// <summary>
         /// FNV-1a over every player's exact simulated state (id order as the server keeps them: motor state, scores,
         /// kill credit, sculpt bar), the match (phase, winner, storm), every ground item and every wall tile (with each
-        /// cell's health once it has changed). The same inputs on the same build must give the same hash on every tick.
+        /// cell's health once it has changed; untouched tiles are skipped). The same inputs on the same build must give the same hash on every tick.
         /// </summary>
         public static ulong StateHash(NetServer s)
         {
@@ -365,17 +365,29 @@ namespace Sculpt.Core.Replay
             ulong h = 14695981039346656037UL;
             byte[] b = w.Buffer;
             for (int i = 0; i < w.Length; i++) { h ^= b[i]; h *= 1099511628211UL; }
+            // Wall tiles: only those play has ever changed (the rest are exactly as built, the same in every run of the
+            // same map), each hashed with its index and added up, so the order they first changed in doesn't matter.
+            // The 1,306 m map has about 260 thousand tiles: walking them all 4 times a second cost ~8 ms in Mono.
             TileWalls walls = s.Walls;
             if (walls != null)
-                for (int i = 0; i < walls.Count; i++)
+            {
+                ulong sum = 0;
+                foreach (int i in walls.Touched)
                 {
                     WallTile t = walls[i];
-                    h ^= (ulong)(uint)((int)t.State | (t.Health << 4)); h *= 1099511628211UL;
-                    h ^= t.Open; h *= 1099511628211UL;
-                    h ^= t.Patch ^ (t.Steel << 1); h *= 1099511628211UL;
-                    if (t.Changed && t.State != TileState.Broken && walls.HasCells(i))
-                        for (int c = 0; c < Brush.CellCount; c++) { h ^= (ulong)walls.CellHealth(i, c); h *= 1099511628211UL; }
+                    ulong th = 14695981039346656037UL ^ (ulong)(uint)i;
+                    th *= 1099511628211UL;
+                    th ^= (ulong)(uint)((int)t.State | (t.Health << 4)); th *= 1099511628211UL;
+                    th ^= t.Open; th *= 1099511628211UL;
+                    th ^= t.Patch ^ (t.Steel << 1); th *= 1099511628211UL;
+                    if (t.State != TileState.Broken && walls.HasCells(i))
+                        for (int c = 0; c < Brush.CellCount; c++) { th ^= (ulong)walls.CellHealth(i, c); th *= 1099511628211UL; }
+                    th ^= th >> 29; th *= 0xBF58476D1CE4E5B9UL; th ^= th >> 32;
+                    sum += th;
                 }
+                h ^= sum; h *= 1099511628211UL;
+                h ^= (ulong)walls.Touched.Count; h *= 1099511628211UL;
+            }
             return h;
         }
     }

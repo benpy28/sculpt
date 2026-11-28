@@ -137,6 +137,8 @@ namespace Sculpt.Game.World
             for (int i = 0; i < tiles.Count; i++) if (!tiles.HasCells(i)) plain.Add(i);
             _plainTiles = plain.ToArray();
             _firstScan = true;
+            _blockRenderers.Clear();
+            BindRegions();
             if (_debris == null) _debris = new GameObject("Tile Debris").AddComponent<TileDebris>();
             _debris.transform.SetParent(transform, false);
             BindRims();
@@ -155,11 +157,19 @@ namespace Sculpt.Game.World
             return (int)t.State * 4 + crack;
         }
 
+        private static readonly Unity.Profiling.ProfilerMarker MkLateUpdateProf = new Unity.Profiling.ProfilerMarker("SCULPT.Buildings");
+
         private void LateUpdate()
+        {
+            using (MkLateUpdateProf.Auto()) LateUpdateBody();
+        }
+
+        private void LateUpdateBody()
         {
             if (_tiles == null || _mat == null) return;
             foreach (TileChange c in _tiles.Changes)
             {
+                MarkTouched(c.Tile); // drawn exactly in the far mesh from now on
                 ulong before = _openFx[c.Tile];
                 ulong after = c.To == TileState.Broken ? Brush.AllCells : c.Open;
                 _openFx[c.Tile] = after;
@@ -167,7 +177,8 @@ namespace Sculpt.Game.World
                 if (c.To == TileState.Broken || (after & ~before) != 0 || c.Cause == TileCause.Heal || c.Cause == TileCause.Reinforce)
                     _marks?.ClearTile(c.Tile);
                 // Cells drawn round this tile changed (cracks spread by area, so its neighbours redraw too).
-                if (_tiles.HasCells(c.Tile)) { _dirty.Add(TileBlockOf(_tiles.World[_tiles[c.Tile].Brush])); DirtyNeighbours(c.Tile); }
+                if (_tiles.HasCells(c.Tile)) { Dirty(TileBlockOf(_tiles.World[_tiles[c.Tile].Brush])); DirtyNeighbours(c.Tile); }
+                else LookAgain(c.Tile); // stairs, frame, doors: their look changes only with a change of their own
                 // Sound finds its way through what is open now (a new hole, a healed wall, a door).
                 Audio.SoundRouter.Invalidate(_tiles.BoundsOf(c.Tile));
                 if (c.Cause == TileCause.Server || c.Cause == TileCause.Built) continue;
@@ -198,42 +209,47 @@ namespace Sculpt.Game.World
                     _debris.Burst(b, facing, ct.Kind == TileKind.Wall ? BrickDamaged : ct.Kind == TileKind.Door ? WoodDamaged : ClayDamaged, 5, false);
             }
             _tiles.Changes.Clear();
-            if (_tiles.Revision == _tilesRev && _dirty.Count == 0) return;
             if (_tiles.Revision != _tilesRev)
             {
                 _tilesRev = _tiles.Revision;
-                // Walls and floors redraw from their changes (above); after the first pass only the plain tiles are
-                // scanned for a new look (the map has tens of thousands of walls).
-                int n = _firstScan ? _tiles.Count : _plainTiles.Length;
-                for (int k = 0; k < n; k++)
-                {
-                    int i = _firstScan ? k : _plainTiles[k];
-                    if (_tiles.HasCells(i) && _look[i] != -1) continue;
-                    int look = LookOf(_tiles[i]);
-                    ulong open = _tiles[i].Open;
-                    if (look == _look[i] && open == _openSeen[i]) continue;
-                    _look[i] = look;
-                    _openSeen[i] = open;
-                    _dirty.Add(TileBlockOf(_tiles.World[_tiles[i].Brush]));
-                    DirtyNeighbours(i); // a hole's rim is drawn by the broken tile and depends on the tiles around it
-                }
+                // Everything redraws from its changes (above); only the first pass scans every tile (the village map
+                // has about 200 thousand: scanning the plain ones every frame something changed cost milliseconds).
+                if (_firstScan)
+                    for (int i = 0; i < _tiles.Count; i++) LookAgain(i);
             }
             bool all = _firstScan;
             _firstScan = false;
-            RebuildDirty(all);
+            UpdateLod(all);
         }
 
         /// <summary>
         /// Rebuilds changed tile blocks, nearest the camera first: everything within <see cref="RebuildAlwaysMetres"/>
         /// at once, the rest while this frame's budget lasts (all of it on the first build).
         /// </summary>
+        /// <summary>Works out a tile's look again; if it changed, its block (and the blocks round it) redraw.</summary>
+        private void LookAgain(int i)
+        {
+            if (_tiles.HasCells(i) && _look[i] != -1) return;
+            int look = LookOf(_tiles[i]);
+            ulong open = _tiles[i].Open;
+            if (look == _look[i] && open == _openSeen[i]) return;
+            _look[i] = look;
+            _openSeen[i] = open;
+            Dirty(TileBlockOf(_tiles.World[_tiles[i].Brush]));
+            DirtyNeighbours(i); // a hole's rim is drawn by the broken tile and depends on the tiles around it
+        }
+
         private void RebuildDirty(bool all)
         {
             if (_dirty.Count == 0) return;
-            Camera cam = Camera.main;
-            _camAt = cam != null ? cam.transform.position : Vector3.zero;
             _order.Clear();
-            foreach (Vector2Int key in _dirty) _order.Add(key);
+            foreach (Vector2Int key in _dirty) if (BlockBuilt(key)) _order.Add(key);
+            if (_order.Count < _dirty.Count)
+            {
+                // Blocks of regions with no near meshes: built whole when their region comes near.
+                _dirty.Clear();
+                foreach (Vector2Int key in _order) _dirty.Add(key);
+            }
             if (!all)
             {
                 _nearest ??= (a, b) => BlockDistance(a).CompareTo(BlockDistance(b));
@@ -263,7 +279,9 @@ namespace Sculpt.Game.World
                 r.sharedMaterial = _mat;
                 r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; // scenery casts sun shadows when that setting is on (players never do)
                 r.receiveShadows = true;
+                r.enabled = _regions.TryGetValue(RegionOfBlock(key), out Region reg) && reg.Near;
                 _tileMeshes[key] = mesh;
+                _blockRenderers[key] = r;
                 _blocks.Add(go);
             }
             MeshBits m = _scratch;
@@ -408,6 +426,8 @@ namespace Sculpt.Game.World
             foreach (GameObject g in _blocks) Destroy(g);
             _blocks.Clear();
             _tileMeshes.Clear();
+            _blockRenderers.Clear();
+            foreach (Region r in _regionList) { r.Built = false; r.FarDirty = true; }
             _tilesRev = -1;
             if (_look != null) for (int i = 0; i < _look.Length; i++) _look[i] = -1;
             Shader shader = Shader.Find("SCULPT/Greybox");

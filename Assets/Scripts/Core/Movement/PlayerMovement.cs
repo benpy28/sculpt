@@ -657,7 +657,14 @@ namespace Sculpt.Core
                     s.Velocity = new Vec3d(s.Velocity.X, s.Velocity.Y, 0);
                 }
                 MoveAxis(g, c, ref s.Position, 1, d.Y, h, out bool by);
-                if (by) s.Velocity = new Vec3d(s.Velocity.X, 0, s.Velocity.Z);
+                if (by && d.Y < 0 && g is ISteepGround sg && sg.SteepUnder(Box(s.Position, c.HalfWidth, h), c.GroundProbe, out Vec3d face))
+                {
+                    // Landed on a rock face too steep to stand on (smooth ground only): keep only the part of the velocity
+                    // along it, so gravity slides you down and off it instead of holding you there.
+                    double into = s.Velocity.Dot(face);
+                    if (into < 0) s.Velocity = s.Velocity - face * into;
+                }
+                else if (by) s.Velocity = new Vec3d(s.Velocity.X, 0, s.Velocity.Z);
             }
         }
 
@@ -742,6 +749,11 @@ namespace Sculpt.Core
             if (keepsGoing)
             {
                 MoveAxis(g, c, ref alt, 1, -(alt.Y - start.Y), h, out _);
+                // Never step up onto a rock face too steep to stand on (smooth ground only): it is a wall.
+                if (g is ISteepGround sg && sg.SteepUnder(Box(alt, c.HalfWidth, h), c.GroundProbe, out _)) keepsGoing = false;
+            }
+            if (keepsGoing)
+            {
                 s.Position = alt;
                 blocked = altBlocked;
             }

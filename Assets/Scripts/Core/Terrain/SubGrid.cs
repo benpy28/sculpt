@@ -59,6 +59,8 @@ namespace Sculpt.Core
         // allocated on the first differing write, so big maps only pay for chunks with surface detail.
         private readonly ushort[][] _chunks;
         private readonly ushort[] _uniform;
+        // Chunk arrays another copy may also read (see ShareCopy): copied before this grid first writes into one.
+        private bool[] _sharedChunk;
         private readonly HashSet<int> _dirtyChunks = new HashSet<int>();
         private readonly List<Int3> _changes = new List<Int3>();
 
@@ -159,6 +161,15 @@ namespace Sculpt.Core
                 arr = new ushort[ChunkVolume];
                 if (_uniform[ci] != 0) for (int k = 0; k < ChunkVolume; k++) arr[k] = _uniform[ci];
                 _chunks[ci] = arr;
+            }
+            else if (_sharedChunk != null && _sharedChunk[ci])
+            {
+                ushort[] a0 = arr;
+                int k0 = (((ly & 15) << 4) + (z & 15) << 4) + (x & 15);
+                if (a0[k0] == id) return;
+                arr = (ushort[])a0.Clone();
+                _chunks[ci] = arr;
+                _sharedChunk[ci] = false;
             }
             ref ushort slot = ref arr[(((ly & 15) << 4) + (z & 15) << 4) + (x & 15)];
             if (slot == id) return;
@@ -284,6 +295,26 @@ namespace Sculpt.Core
 
         public void ClearChanges() => _changes.Clear();
 
+        /// <summary>
+        /// A copy that shares every chunk array with this grid until either writes into it (map v3 groundwork: the server
+        /// and the client each need the ground, and almost none of it changes in a match). Call before other threads use either.
+        /// </summary>
+        public SubGrid ShareCopy()
+        {
+            var g = new SubGrid(ChunksX, ChunksY, ChunksZ, MinY);
+            _sharedChunk ??= new bool[_chunks.Length];
+            g._sharedChunk = new bool[_chunks.Length];
+            for (int i = 0; i < _chunks.Length; i++)
+            {
+                g._uniform[i] = _uniform[i];
+                g._chunks[i] = _chunks[i];
+                bool shared = _chunks[i] != null;
+                g._sharedChunk[i] = shared;
+                if (shared) _sharedChunk[i] = true;
+            }
+            return g;
+        }
+
         /// <summary>Copies every sub-cell (used by tests and for late-join snapshots).</summary>
         public SubGrid Clone()
         {
@@ -304,6 +335,7 @@ namespace Sculpt.Core
             {
                 ushort[] a = _chunks[i], b = o._chunks[i];
                 if (a == null && b == null) { if (_uniform[i] != o._uniform[i]) return false; continue; }
+                if (a == b) continue; // one array shared by two copies (ShareCopy)
                 for (int k = 0; k < ChunkVolume; k++)
                     if ((a != null ? a[k] : _uniform[i]) != (b != null ? b[k] : o._uniform[i])) return false;
             }
@@ -325,10 +357,48 @@ namespace Sculpt.Core
 
         // ---- ITerrain ----
 
-        public bool BoxOverlapsSolid(Aabb box) => TerrainGeometry.BoxOverlapsSolid(this, box);
+        // A grid that is mostly air (the battle royale's since map v3: only the props, on height-map ground) answers in a
+        // few chunk lookups wherever there is nothing near: the shape round a sub-cell reaches half a sub-cell past it, so
+        // a query whose box, grown by a whole sub-cell, touches only all-air chunks can't meet anything. Same answers.
 
-        public bool GroundContact(Aabb box, double probe, out Vec3d normal) => TerrainGeometry.GroundContact(this, box, probe, out normal);
+        public bool BoxOverlapsSolid(Aabb box) => !AirAround(box) && TerrainGeometry.BoxOverlapsSolid(this, box);
 
-        public TerrainHit Raycast(Vec3d origin, Vec3d direction, double maxDistance) => TerrainGeometry.Raycast(this, origin, direction, maxDistance);
+        public bool GroundContact(Aabb box, double probe, out Vec3d normal)
+        {
+            if (AirAround(new Aabb(box.Min - new Vec3d(0, probe, 0), box.Max))) { normal = new Vec3d(0, 1, 0); return false; }
+            return TerrainGeometry.GroundContact(this, box, probe, out normal);
+        }
+
+        public TerrainHit Raycast(Vec3d origin, Vec3d direction, double maxDistance)
+        {
+            Vec3d d = direction.Normalized;
+            if (d.LengthSquared > 0 && maxDistance > 0 && maxDistance < 1e6)
+            {
+                Vec3d end = origin + d * maxDistance;
+                var span = new Aabb(new Vec3d(Math.Min(origin.X, end.X), Math.Min(origin.Y, end.Y), Math.Min(origin.Z, end.Z)),
+                                    new Vec3d(Math.Max(origin.X, end.X), Math.Max(origin.Y, end.Y), Math.Max(origin.Z, end.Z)));
+                if (AirAround(span, 64)) return new TerrainHit();
+            }
+            return TerrainGeometry.Raycast(this, origin, direction, maxDistance);
+        }
+
+        /// <summary>
+        /// True if every chunk the box (grown by a sub-cell) touches is known to be all air, checking at most
+        /// <paramref name="maxChunks"/> of them (false if more: the caller just does the full test).
+        /// </summary>
+        private bool AirAround(Aabb box, int maxChunks = 27)
+        {
+            int x0 = (int)Math.Floor(box.Min.X / SubSize) - 1, x1 = (int)Math.Floor(box.Max.X / SubSize) + 1;
+            int y0 = (int)Math.Floor(box.Min.Y / SubSize) - 1, y1 = (int)Math.Floor(box.Max.Y / SubSize) + 1;
+            int z0 = (int)Math.Floor(box.Min.Z / SubSize) - 1, z1 = (int)Math.Floor(box.Max.Z / SubSize) + 1;
+            int cx0 = x0 >> 4, cx1 = x1 >> 4, cz0 = z0 >> 4, cz1 = z1 >> 4;
+            int cy0 = (y0 - MinY) >> 4, cy1 = (y1 - MinY) >> 4;
+            if ((long)(cx1 - cx0 + 1) * (cy1 - cy0 + 1) * (cz1 - cz0 + 1) > maxChunks) return false;
+            for (int cy = cy0; cy <= cy1; cy++)
+                for (int cz = cz0; cz <= cz1; cz++)
+                    for (int cx = cx0; cx <= cx1; cx++)
+                        if (ChunkSolidity(cx, cy, cz) != 0) return false;
+            return true;
+        }
     }
 }

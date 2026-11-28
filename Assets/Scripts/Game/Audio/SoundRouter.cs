@@ -38,14 +38,61 @@ namespace Sculpt.Game.Audio
         public static void Bind(ITerrain world, Transform listener)
         {
             _listener = listener;
-            if (world == null) { _paths = null; return; }
+            _paths = null;
+            _pending.Clear();
+            int bind = ++_bind;
+            if (world == null) return;
+            // Built on a worker (seconds on the battle royale's village map, which used to hold up the load); sounds are
+            // heard straight until it is ready, and shape changes in the meantime are applied when it is.
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                var sw = Stopwatch.StartNew();
+                var paths = new SoundPaths(world, Config);
+                double ms = sw.Elapsed.TotalMilliseconds;
+                lock (_pending)
+                {
+                    if (bind != _bind) return; // bound again since: this world is gone
+                    foreach (Aabb r in _pending) paths.Invalidate(r);
+                    _pending.Clear();
+                    _ready = paths;
+                    LastBuildMs = ms;
+                }
+            });
+        }
+
+        private static readonly System.Collections.Generic.List<Aabb> _pending = new System.Collections.Generic.List<Aabb>();
+        private static volatile SoundPaths _ready;
+        private static int _bind;
+
+        /// <summary>Waits (up to <paramref name="timeoutMs"/>) for the air grid the last <see cref="Bind"/> started, and
+        /// takes it (the loading screen does this).</summary>
+        public static void WaitReady(int timeoutMs)
+        {
             var sw = Stopwatch.StartNew();
-            _paths = new SoundPaths(world, Config);
-            LastBuildMs = sw.Elapsed.TotalMilliseconds;
+            while (_paths == null && _listener != null && sw.ElapsedMilliseconds < timeoutMs)
+            {
+                Adopt();
+                if (_paths == null) System.Threading.Thread.Sleep(5);
+            }
+        }
+
+        /// <summary>Takes the air grid once the worker has built it (main thread).</summary>
+        private static void Adopt()
+        {
+            if (_ready == null) return;
+            lock (_pending) { _paths = _ready; _ready = null; }
         }
 
         /// <summary>Something in <paramref name="region"/> changed shape (a tile broke, healed or lost cells; a door moved).</summary>
-        public static void Invalidate(Aabb region) { using (MkInvalidate.Auto()) _paths?.Invalidate(region); }
+        public static void Invalidate(Aabb region)
+        {
+            using (MkInvalidate.Auto())
+            {
+                Adopt();
+                if (_paths != null) { _paths.Invalidate(region); return; }
+                lock (_pending) { if (_ready != null) _ready.Invalidate(region); else _pending.Add(region); }
+            }
+        }
 
         // Named sections for -benchmarkmarkers and the Unity profiler (the busy-fight cost of routing).
         private static readonly Unity.Profiling.ProfilerMarker MkPlace = new Unity.Profiling.ProfilerMarker("SCULPT.SoundRoute"),
@@ -63,6 +110,7 @@ namespace Sculpt.Game.Audio
             gain = 1f;
             cutoff = (float)Config.OpenCutoffHz;
             muffled = false;
+            Adopt();
             if (!Active) return true;
             using var mk = MkPlace.Auto();
             if (_frame != Time.frameCount) { _frame = Time.frameCount; _searches = 0; }

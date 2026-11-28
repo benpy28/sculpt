@@ -36,7 +36,8 @@ namespace Sculpt.Core.Settings
         public int Shadows;
         /// <summary>Directional sun light with sky and bounce colour on the world: 0 flat (baked shading only), 1 rich.</summary>
         public int Lighting;
-        /// <summary>0 off, 1 light haze (the classic look), 2 atmospheric (height fog that glows toward the sun).</summary>
+        /// <summary>1 light haze (the distance haze everyone has), 2 atmospheric (adds height fog on the scenery that
+        /// glows toward the sun). 0 was "off" until map v3: the haze is the same on every setting now, so it reads as 1.</summary>
         public int Fog;
         /// <summary>Light shafts round the sun when you look toward it.</summary>
         public bool Shafts;
@@ -55,7 +56,9 @@ namespace Sculpt.Core.Settings
         public static readonly string[] GradingNames = { "Off", "Natural", "Vivid" };
         public static readonly string[] LowHighNames = { "Off", "Low", "High" };
         public static readonly string[] LightingNames = { "Flat", "Rich" };
-        public static readonly string[] FogNames = { "Off", "Light haze", "Atmospheric" };
+        public static readonly string[] FogNames = { "Light haze", "Light haze", "Atmospheric" };
+        /// <summary>The fog choices the settings offer (value 1 and 2).</summary>
+        public static readonly string[] FogChoices = { "Light haze", "Atmospheric" };
         public static readonly string[] DofNames = { "Off", "Far background" };
 
         /// <summary>Puts every value in its legal range (bad saved values or a pasted code can't break the renderer).</summary>
@@ -69,7 +72,7 @@ namespace Sculpt.Core.Settings
             v.Ao = Clamp(v.Ao, 0, 2);
             v.Shadows = Clamp(v.Shadows, 0, 2);
             v.Lighting = Clamp(v.Lighting, 0, 1);
-            v.Fog = Clamp(v.Fog, 0, 2);
+            v.Fog = Clamp(v.Fog, 1, 2); // the haze can't be turned off (the same view for everyone)
             v.Dof = Clamp(v.Dof, 0, 1);
             v.MotionBlur = Clamp(v.MotionBlur, 0, 2);
             v.Vignette = Unit(v.Vignette);

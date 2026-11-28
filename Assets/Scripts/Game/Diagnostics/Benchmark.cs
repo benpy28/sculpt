@@ -172,6 +172,8 @@ namespace Sculpt.Game.Diagnostics
                 _perf.Latency.Clear();
                 _allocStart = _perf.AllocatedTotal;
                 _gcStart = _gcLast = GC.CollectionCount(0);
+                _othersCpuStart = OthersCpuSeconds();
+                _othersClock = System.Diagnostics.Stopwatch.StartNew();
                 _localSeen = _doneSeen = 0;
                 if (_wantScan)
                 {
@@ -237,9 +239,27 @@ namespace Sculpt.Game.Diagnostics
             if (h.Ms > _hitches[least].Ms) _hitches[least] = h;
         }
 
+        private double _othersCpuStart, _othersCores = -1;
+        private System.Diagnostics.Stopwatch _othersClock;
+
+        /// <summary>Processor time used so far by every other process we can read (other games, tests, builds on this PC
+        /// make a run's 1% lows meaningless: the report says how busy the machine was).</summary>
+        private static double OthersCpuSeconds()
+        {
+            double sum = 0;
+            int me = System.Diagnostics.Process.GetCurrentProcess().Id;
+            foreach (var p in System.Diagnostics.Process.GetProcesses())
+            {
+                try { if (p.Id != me) sum += p.TotalProcessorTime.TotalSeconds; } catch { }
+                p.Dispose();
+            }
+            return sum;
+        }
+
         private void Finish()
         {
             _done = true;
+            _othersCores = _othersClock != null ? (OthersCpuSeconds() - _othersCpuStart) / Math.Max(0.001, _othersClock.Elapsed.TotalSeconds) : -1;
             string report = Report((_perf.AllocatedTotal - _allocStart) / (double)Math.Max(1, _allocFrames));
             Debug.Log("[SCULPT] " + report);
             try
@@ -278,6 +298,7 @@ namespace Sculpt.Game.Diagnostics
             sb.Append("  ").Append(Screen.width).Append('x').Append(Screen.height).Append(", ").Append(SystemInfo.graphicsDeviceName).Append(", ")
               .Append(SystemInfo.graphicsDeviceType).Append(", ").Append(SystemInfo.processorType).Append(", tick ").Append(SimTime.TicksPerSecond).Append(" Hz").AppendLine();
             sb.Append("  ").Append(_perf.Profile != null ? _perf.Profile.Summary : "").AppendLine();
+            sb.Append(string.Format(ci, "  other processes used {0:0.00} cores on average during the run ({1} logical cores)", _othersCores, Environment.ProcessorCount)).AppendLine();
             sb.Append(string.Format(ci, "  first drawn frame {0:0.0} s after launch ({1} undrawn frames before it)", _firstDrawnAt, _waitedFrames)).AppendLine();
             sb.Append(string.Format(ci, "  frames {0} in {1:0.0} s: avg {2:0.0} fps ({3:0.000} ms), 1% low {4:0.0}, 0.1% low {5:0.0}", f.Count, _seconds, f.AverageFps, f.AverageMs, f.LowFps(0.01), f.LowFps(0.001))).AppendLine();
             sb.Append(string.Format(ci, "  frame ms: median {0:0.000}, p95 {1:0.000}, p99 {2:0.000}, p99.9 {3:0.000}, worst {4:0.000}, over 2x avg: {5}",
@@ -289,8 +310,29 @@ namespace Sculpt.Game.Diagnostics
             sb.Append(string.Format(ci, "  drawn per frame: {0:0} draw calls in {1:0} batches, {2:0} shader passes, {3:0} thousand triangles (most {4:0} thousand)",
                 _drawCalls / nf, _batches / nf, _setPass / nf, _triangles / nf / 1000.0, _trianglesMax / 1000.0)).AppendLine();
             int renderers = 0, enabled = 0;
-            foreach (Renderer r in FindObjectsByType<Renderer>(FindObjectsSortMode.None)) { renderers++; if (r.enabled && r.gameObject.activeInHierarchy) enabled++; }
+            var byOwner = new System.Collections.Generic.Dictionary<string, int[]>();
+            foreach (Renderer r in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
+            {
+                renderers++;
+                bool on = r.enabled && r.gameObject.activeInHierarchy;
+                if (on) enabled++;
+                // Grouped by the object under the root that owns it, numbers and spaces after the first word dropped.
+                Transform t = r.transform;
+                while (t.parent != null && t.parent.parent != null) t = t.parent;
+                string key = t.name;
+                int cut = key.IndexOfAny(new[] { ' ', '(' });
+                if (cut > 0) key = key.Substring(0, cut);
+                if (t.parent != null) key = t.parent.name + "/" + key;
+                if (!byOwner.TryGetValue(key, out int[] n)) byOwner[key] = n = new int[2];
+                n[0]++;
+                if (on) n[1]++;
+            }
             sb.Append(string.Format(ci, "  renderers in the scene at the end: {0} ({1} on)", renderers, enabled)).AppendLine();
+            var owners = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, int[]>>(byOwner);
+            owners.Sort((a, b) => b.Value[0].CompareTo(a.Value[0]));
+            sb.Append("   by owner:");
+            for (int i = 0; i < owners.Count && i < 12; i++) sb.Append(string.Format(ci, "  {0} {1} ({2} on)", owners[i].Key, owners[i].Value[0], owners[i].Value[1]));
+            sb.AppendLine();
             sb.Append(string.Format(ci, "  latency, {0} stand-in clicks ({1} lost), median / average ms: tick wait {2:0.0} / {3:0.0}, read to frame sent {4:0.0} / {5:0.0}, server hold {6:0.0} / {7:0.0}, read to server result on a frame {8:0.0} / {9:0.0} (worst {10:0.0})",
                 _total.Count, p.TimedOut, _tickWait.PercentileMs(0.5), _tickWait.AverageMs, _clickToFrame.PercentileMs(0.5), _clickToFrame.AverageMs,
                 _server.PercentileMs(0.5), _server.AverageMs, _total.PercentileMs(0.5), _total.AverageMs, _total.MaxMs)).AppendLine();

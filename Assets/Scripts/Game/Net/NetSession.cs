@@ -545,6 +545,7 @@ namespace Sculpt.Game.Net
             server.Clock = () => clock.Elapsed.TotalMilliseconds; // server side only (hold = snapshot out minus command in)
             while (_toServer.TryDequeue(out _)) { }
             _serverRun = true;
+            _devBuild = Debug.isDebugBuild;
             _serverThread = new Thread(() => ServerLoop(server, clock)) { IsBackground = true, Name = "SCULPT server", Priority = System.Threading.ThreadPriority.AboveNormal };
             _serverThread.Start();
             Debug.Log("[SCULPT] The local server runs on its own thread.");
@@ -563,13 +564,19 @@ namespace Sculpt.Game.Net
         [System.Runtime.InteropServices.DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
         [System.Runtime.InteropServices.DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint ms);
 
+        private int _slowTickLogs, _gcSeen;
+        private bool _devBuild; // Debug.isDebugBuild, read on the main thread (Unity refuses it on the server thread)
+
         private void ServerLoop(NetServer server, System.Diagnostics.Stopwatch clock)
         {
             bool fine = false;
             UnityEngine.Profiling.Profiler.BeginThreadProfiling("SCULPT", "Server"); // shows in the profiler (development builds)
             try { fine = timeBeginPeriod(1) == 0; } catch { } // 1 ms sleeps (Windows; elsewhere the spin covers it)
             double tickMs = 1000.0 / SimTime.TicksPerSecond;
-            lock (ServerLock) server.PrepareSight(); // seconds on the big map: before the first tick, not in the middle of the run
+            // Seconds on the big map: before the first tick, not in the middle of the run (the battle royale builds it on
+            // the loading screen; this is a no-op then). Not under the lock, so the main thread (which takes it to read
+            // the server) never waits on it; nothing else touches the server's world until it starts ticking.
+            server.PrepareSight();
             double next = clock.Elapsed.TotalMilliseconds;
             double sum = 0, worst = 0, windowStart = next;
             int count = 0;
@@ -596,6 +603,14 @@ namespace Sculpt.Game.Net
                         server.Step(); // also steps the sculpt system and sends world deltas
                     }
                     double cost = clock.Elapsed.TotalMilliseconds - t0;
+                    int gcNow = GC.CollectionCount(0);
+                    if (cost > 8 && _slowTickLogs < 40 && _devBuild)
+                    {
+                        // Dev builds: what a slow tick coincided with (a collection, or the tick's own work).
+                        _slowTickLogs++;
+                        Debug.Log($"[SCULPT] Slow server tick: {cost:0.0} ms at {t0 / 1000.0:0.00} s{(gcNow != _gcSeen ? ", a garbage collection ran" : "")}.");
+                    }
+                    _gcSeen = gcNow;
                     sum += cost;
                     count++;
                     if (cost > worst) worst = cost;

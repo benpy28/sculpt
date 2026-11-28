@@ -18,6 +18,20 @@ namespace Sculpt.Core
         TerrainHit Raycast(Vec3d origin, Vec3d direction, double maxDistance);
     }
 
+    /// <summary>
+    /// Terrain with slopes too steep to stand on (the smooth height-map ground's rock faces). Movement asks it so a
+    /// step never climbs a rock face and a body resting on one slides down it. Terrains without such slopes don't
+    /// implement it, so movement on them is unchanged.
+    /// </summary>
+    public interface ISteepGround
+    {
+        /// <summary>
+        /// True when the box rests (within <paramref name="probe"/> below it) on rock faces only, with no walkable ground
+        /// anywhere under it; <paramref name="normal"/> is the face it rests on.
+        /// </summary>
+        bool SteepUnder(Aabb box, double probe, out Vec3d normal);
+    }
+
     /// <summary>Result of a ray cast against the terrain surface.</summary>
     public struct TerrainHit
     {
@@ -34,5 +48,7 @@ namespace Sculpt.Core
         public ushort Id;
         /// <summary>Brush index + 1 when a <see cref="BrushWorld"/> brush was hit, 0 for sub-cell terrain.</summary>
         public int Brush;
+        /// <summary>True when the smooth height-map ground (<see cref="HeightField"/>) was hit (solid all the way down).</summary>
+        public bool Ground;
     }
 }

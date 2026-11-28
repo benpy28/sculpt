@@ -34,7 +34,7 @@ namespace Sculpt.Core.Tests
         {
             Assert.That(_br.Regions.Count, Is.EqualTo(8));
             Assert.That(_br.Pois.Count, Is.EqualTo(4));
-            Assert.That(_w.Tiles.Count, Is.LessThan(ushort.MaxValue), "tile ids ride the wire in 16 bits");
+            Assert.That(_w.Tiles.Count, Is.LessThan(ByteWriter.MaxU24), "tile ids ride the wire in 24 bits");
             foreach (int t in B.Tiles) Assert.That(_w.Tiles[t].State, Is.EqualTo(TileState.Intact));
             Assert.That(_w.Tiles.Changes, Is.Empty);
             foreach (Aabb b in B.Buildings)
@@ -87,7 +87,8 @@ namespace Sculpt.Core.Tests
         [Test]
         public void EveryStairHasHeadroom_AndCanBeRunUp()
         {
-            Assert.That(B.Climbs.Count, Is.EqualTo(8 * 10), "two flights in each of five stairwells per eighth (region, halls, town, outpost, farmhouse)");
+            Assert.That(B.Climbs.Count % 16, Is.EqualTo(0), "two flights per stairwell, eight twins of each");
+            Assert.That(B.Climbs.Count, Is.GreaterThanOrEqualTo(8 * 10), "the landmarks' five stairwells per eighth and the village houses'");
             foreach (Brush s in B.Climbs)
             {
                 double len = Math.Max(s.Bounds.Max.X - s.Bounds.Min.X, s.Bounds.Max.Z - s.Bounds.Min.Z);
@@ -150,7 +151,7 @@ namespace Sculpt.Core.Tests
             Assert.That(all.Count, Is.EqualTo(32));
             TestContext.WriteLine($"pad to POI {_br.PadToPoi:0.0} m, pad to loot {_br.PadToLoot:0.0} m");
             Assert.That(_br.PadToLoot, Is.InRange(8.0, 20.0), "a short walk");
-            Assert.That(_br.PadToPoi, Is.InRange(120.0, 180.0)); // the 921 m map (90..160 on the 614 m one, 35..90 on the 307 m one)
+            Assert.That(_br.PadToPoi, Is.InRange(180.0, 260.0)); // the 1,306 m map (120..180 on the 921 m one, 90..160 on the 614 m one)
         }
 
         [Test]
@@ -177,7 +178,8 @@ namespace Sculpt.Core.Tests
         [Test]
         public void ChestsAndItemsRestOnFloors_InTheClear()
         {
-            Assert.That(_br.Chests.Count, Is.EqualTo(8 * (4 + 4 + 2 + 1 + 3 + 2 + 1 + 1 + 2 + 2 + 1))); // pads, halls, town (2 + 1), outpost, barn, two hills, farmhouse, lodge, cottage
+            Assert.That(_br.Chests.Count % 8, Is.EqualTo(0));
+            Assert.That(_br.Chests.Count, Is.GreaterThan(8 * 60), "plenty of loot, much of it behind walls");
             foreach (BrChestSpot ch in _br.Chests)
             {
                 Vec3d p = ItemRules.Settle(_t, ch.Position + new Vec3d(0, 0.5, 0));

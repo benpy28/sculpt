@@ -123,8 +123,10 @@ namespace Sculpt.Core
         public const double CellSize = 3.0;
         private const double Eps = Aabb.Epsilon;
 
-        private readonly List<Brush> _brushes = new List<Brush>();
-        private readonly Dictionary<long, List<int>> _cells = new Dictionary<long, List<int>>();
+        private CowList<Brush> _brushes = new CowList<Brush>();
+        // The spatial hash while the map is built; frozen into flat arrays (shared by every copy) once it is copied.
+        private Dictionary<long, List<int>> _cells = new Dictionary<long, List<int>>();
+        private FrozenHash _frozen;
         [ThreadStatic] private static List<int> _scratch;
         [ThreadStatic] private static HashSet<int> _seen;
 
@@ -136,6 +138,56 @@ namespace Sculpt.Core
             Tiles = new TileWalls(this, breach ?? new BreachConfig());
         }
 
+        private BrushWorld(BrushWorld from)
+        {
+            from.Freeze();
+            _frozen = from._frozen;
+            _cells = null;
+            _brushes = from._brushes.ShareCopy();
+            Tiles = new TileWalls(this, from.Tiles);
+        }
+
+        /// <summary>
+        /// A copy of this world in its current state that shares everything fixed (shapes, the spatial hash, tile links)
+        /// and copies a page of tile state only when that copy first changes it (Ben's map v3 plan: one shared copy of the
+        /// map's shape instead of three). Copies are independent: damage in one never shows in another. Both this world
+        /// and the copy can no longer gain brushes. Call it before the copies go to other threads.
+        /// </summary>
+        public BrushWorld ShareCopy() => new BrushWorld(this);
+
+        /// <summary>Turns the spatial hash into flat shared arrays (no more brushes can be added after this).</summary>
+        public void Freeze()
+        {
+            if (_frozen != null) return;
+            _frozen = new FrozenHash(_cells);
+            _cells = null;
+        }
+
+        /// <summary>The pages of brush state this copy holds alone (for memory checks).</summary>
+        public int OwnBrushPages => _brushes.OwnPages;
+
+        /// <summary>A spatial hash that never changes: key -> a run of brush ids in one flat array.</summary>
+        private sealed class FrozenHash
+        {
+            public readonly Dictionary<long, int> Start;
+            public readonly int[] Ids; // at Start[k]: the count, then that many ids
+
+            public FrozenHash(Dictionary<long, List<int>> cells)
+            {
+                Start = new Dictionary<long, int>(cells.Count);
+                int n = 0;
+                foreach (var kv in cells) n += kv.Value.Count + 1;
+                Ids = new int[n];
+                int at = 0;
+                foreach (var kv in cells)
+                {
+                    Start[kv.Key] = at;
+                    Ids[at++] = kv.Value.Count;
+                    for (int i = 0; i < kv.Value.Count; i++) Ids[at++] = kv.Value[i];
+                }
+            }
+        }
+
         public int Count => _brushes.Count;
         public Brush this[int i] => _brushes[i];
         public IReadOnlyList<Brush> Brushes => _brushes;
@@ -145,6 +197,7 @@ namespace Sculpt.Core
         {
             if (!(b.Bounds.Max.X > b.Bounds.Min.X && b.Bounds.Max.Y > b.Bounds.Min.Y && b.Bounds.Max.Z > b.Bounds.Min.Z))
                 throw new ArgumentException("A brush needs a positive size on every axis.");
+            if (_cells == null) throw new InvalidOperationException("This world has been copied (or frozen): it can't gain brushes any more.");
             int id = _brushes.Count;
             _brushes.Add(b);
             CellRange(b.Bounds, out int x0, out int x1, out int y0, out int y1, out int z0, out int z1);
@@ -422,9 +475,7 @@ namespace Sculpt.Core
             for (int x = x0; x <= x1; x++)
                 for (int y = y0; y <= y1; y++)
                     for (int z = z0; z <= z1; z++)
-                        if (_cells.TryGetValue(Key(x, y, z), out var ids))
-                            for (int i = 0; i < ids.Count; i++)
-                                if (seen.Add(ids[i])) list.Add(ids[i]);
+                        Gather(Key(x, y, z), list, seen);
             return list;
         }
 
@@ -443,11 +494,25 @@ namespace Sculpt.Core
                 for (int x = cx - 1; x <= cx + 1; x++)
                     for (int y = cy - 1; y <= cy + 1; y++)
                         for (int z = cz - 1; z <= cz + 1; z++)
-                            if (_cells.TryGetValue(Key(x, y, z), out var ids))
-                                for (int i = 0; i < ids.Count; i++)
-                                    if (seen.Add(ids[i])) list.Add(ids[i]);
+                            Gather(Key(x, y, z), list, seen);
             }
             return list;
+        }
+
+        private void Gather(long key, List<int> list, HashSet<int> seen)
+        {
+            if (_frozen != null)
+            {
+                if (!_frozen.Start.TryGetValue(key, out int at)) return;
+                int[] a = _frozen.Ids;
+                int n = a[at];
+                for (int i = 1; i <= n; i++)
+                    if (seen.Add(a[at + i])) list.Add(a[at + i]);
+                return;
+            }
+            if (_cells.TryGetValue(key, out var ids))
+                for (int i = 0; i < ids.Count; i++)
+                    if (seen.Add(ids[i])) list.Add(ids[i]);
         }
 
         private static int Cell(double v) => (int)Math.Floor(v / CellSize);

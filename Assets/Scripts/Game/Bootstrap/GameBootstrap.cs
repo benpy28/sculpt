@@ -36,7 +36,7 @@ namespace Sculpt.Game.Bootstrap
 
         // ---- What the next scene load starts (the main menu picks it, then reloads the scene) ----
         public enum Launch { Menu, Offline, Host, Join, VsBot, Replay, Spectate }
-        public enum MapChoice { Duel, Breach, BattleRoyale }
+        public enum MapChoice { Duel, Breach, BattleRoyale, Hills }
         public static Launch NextLaunch = Launch.Menu;
         public static MapChoice NextMap = MapChoice.Duel;
         public static string NextAddress = "";
@@ -88,7 +88,7 @@ namespace Sculpt.Game.Bootstrap
         /// <summary>What the loading card says for a launch.</summary>
         public static void LoadingTitle(Launch launch, MapChoice map, string address, out string title, out string detail)
         {
-            string mapName = map == MapChoice.BattleRoyale ? "Royale map" : map == MapChoice.Breach ? "Breach test map" : "1v1 map";
+            string mapName = map == MapChoice.BattleRoyale ? "Royale map" : map == MapChoice.Breach ? "Breach test map" : map == MapChoice.Hills ? "Hills test map" : "1v1 map";
             string where = string.IsNullOrEmpty(address) ? "" : "  ·  " + address;
             switch (launch)
             {
@@ -115,7 +115,7 @@ namespace Sculpt.Game.Bootstrap
         public static MapChoice CurrentMap { get; private set; }
 
         /// <summary>The map a replay header names.</summary>
-        public static MapChoice MapOf(string mapName) => mapName == "Breach" ? MapChoice.Breach : mapName == "BattleRoyale" ? MapChoice.BattleRoyale : MapChoice.Duel;
+        public static MapChoice MapOf(string mapName) => mapName == "Breach" ? MapChoice.Breach : mapName == "BattleRoyale" ? MapChoice.BattleRoyale : mapName == "Hills" ? MapChoice.Hills : MapChoice.Duel;
 
         /// <summary>Each Play press starts at the menu, even with domain reload off.</summary>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -184,13 +184,29 @@ namespace Sculpt.Game.Bootstrap
             if (NextMap == MapChoice.BattleRoyale)
             {
                 // The battle royale (Ben 2026-11-26): 32 players, bots fill the lobby.
-                build = BrMap.BuildGround;
-                _grid = BrMap.BuildGround();
+                // One build of the map; the server's and the client's copies share everything that never changes with
+                // it and copy a page of tile state only when it is first damaged (map v3 groundwork: three full copies
+                // of the 921 m map were about 3 x 115 MB).
+                var groundTask = System.Threading.Tasks.Task.Run(BrMap.BuildGround); // side by side with the buildings
                 brushes = BrMap.BuildBrushes(out breachInfo, out brInfo, breach);
-                terrain = g => BrMap.Terrain(g, BrMap.BuildBrushes(out _, out _, breach));
+                SubGrid ground = groundTask.Result;
+                _grid = ground;
+                build = ground.ShareCopy;
+                brushes.Tiles.Prepare(); // which tile lies across each cell edge: worked out once, shared
+                brushes.Freeze();        // before the bots' walking grid reads it on a worker
+                BrushWorld template = brushes;
+                terrain = g => BrMap.Terrain(g, template.ShareCopy());
                 spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
                 yaw = new double[] { brInfo.Regions[0].PadYaw[0], brInfo.Regions[0].PadYaw[0] };
-                _brNav ??= System.Threading.Tasks.Task.Run(() => BrMap.BuildNav(1.0));
+                // The bots' walking grid from a shared copy of its own (it opens every door), made here before the worker starts.
+                BreachMapInfo navInfo = breachInfo;
+                if (_brNav == null)
+                {
+                    BrushWorld navCopy = brushes.ShareCopy();
+                    SubGrid navGround = ground.ShareCopy();
+                    _brNav = System.Threading.Tasks.Task.Run(() => BrMap.BuildNav(navCopy, navInfo, 1.0, navGround));
+                }
+                Sculpt.Game.UI.BrHud.SetBuildings(breachInfo.Block.Buildings); // the minimap
             }
             else if (NextMap == MapChoice.Duel)
             {
@@ -199,6 +215,16 @@ namespace Sculpt.Game.Bootstrap
                 _grid = DuelMap.BuildGround();
                 brushes = DuelMap.BuildBrushes(out breachInfo, breach);
                 terrain = g => DuelMap.Terrain(g, DuelMap.BuildBrushes(out _, breach));
+                spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
+                yaw = breachInfo.SpawnYaw;
+            }
+            else if (NextMap == MapChoice.Hills)
+            {
+                // Map v3 step 3: a small map to feel the smooth height-map ground (hills, a bowl, a rock-faced mesa).
+                build = HillsMap.BuildGround;
+                _grid = HillsMap.BuildGround();
+                brushes = HillsMap.BuildBrushes(out breachInfo, breach);
+                terrain = g => HillsMap.Terrain(g, HillsMap.BuildBrushes(out _, breach));
                 spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
                 yaw = breachInfo.SpawnYaw;
             }
@@ -276,12 +302,16 @@ namespace Sculpt.Game.Bootstrap
                     if (withDummy) server.AddDummy(new PracticeDummy(bi.RoomCentre, Math.PI, bi.Room, dummy), team: 2);
                 };
             }
-            string mapName = NextMap == MapChoice.BattleRoyale ? "BattleRoyale" : NextMap == MapChoice.Duel ? "Duel" : breachMap ? "Breach" : map.ToString();
+            string mapName = NextMap == MapChoice.BattleRoyale ? "BattleRoyale" : NextMap == MapChoice.Duel ? "Duel" : NextMap == MapChoice.Hills ? "Hills" : breachMap ? "Breach" : map.ToString();
             string modeLabel = brInfo != null ? "Battle royale " + NextBrMode + (NextLaunch == Launch.Host ? " hosted" : "")
                 : vsBot ? "Vs bot " + NextBotLevel : NextLaunch == Launch.Host ? "1v1 hosted" : "Practice";
             NetSession.LocalLocker = LockerPick.Load();
             NetSession.LocalSlotPrefs = SlotPrefsStore.Load();
             _session = new NetSession(build, _grid, movement, netConfig, sculptConfig, spawns, yaw, terrain, setup, mapName, modeLabel);
+            // The server's sight grid (seconds on the village map) builds alongside the rest of the load: the server
+            // doesn't tick until the first frame.
+            NetServer sightServer = _session.Server;
+            System.Threading.Tasks.Task sightTask = brInfo != null && sightServer != null ? System.Threading.Tasks.Task.Run(() => sightServer.PrepareSight()) : null;
             _session.MatchWhenHosting = CurrentMap == MapChoice.Duel;
             if (vsBot) { _session.MatchOffline = true; _session.Server.MatchConfig.Enabled = true; }
 
@@ -307,10 +337,21 @@ namespace Sculpt.Game.Bootstrap
             }
             Mark("cover");
             _world.Init(_grid, sculptConfig, mapInfo, cover, brInfo != null ? BrNature.KindAt : (Func<Int3, byte>)null); // the battle royale plains
+            _world.DrawsNothing = brInfo != null; // map v3: the height map is the ground, the props draw themselves
             Mark("world init");
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             if (brInfo != null) new GameObject("Plains").AddComponent<Sculpt.Game.World.PropsView>().Build(_world.TerrainMaterial); // trees, boulders, bushes
+            if (CurrentMap == MapChoice.Hills) new GameObject("Smooth Ground").AddComponent<Sculpt.Game.World.HeightFieldView>().Build(HillsMap.Field, _world.TerrainMaterial);
+            if (brInfo != null)
+            {
+                // Stone round each building's foot (its footing's level ground within 2 m of its walls): the rest of a
+                // footing is grass like the fields.
+                var plinths = new Sculpt.Game.World.Plinths(breachInfo.Block.Buildings, 2.0);
+                HeightField field = BrMap.Field;
+                new GameObject("Smooth Ground").AddComponent<Sculpt.Game.World.HeightFieldView>().Build(field, _world.TerrainMaterial,
+                    (x, z) => plinths.On(x, z, field.HeightAt(x, z)));
+            }
             Mark("ground");
             if (brushes != null)
             {
@@ -323,7 +364,8 @@ namespace Sculpt.Game.Bootstrap
             Mark("buildings");
             // Sky, haze, fixed sun and the distant hills around the arena.
             float half = (float)(_grid.SizeX * SubGrid.SubSize * 0.5);
-            Scenery.Build(half, (float)(_grid.SizeZ * SubGrid.SubSize * 0.5));
+            if (brInfo != null) Scenery.Build(half, half, (float)BrGround.CliffTop, (float)(BrMap.Size / 2 - BrMap.HalfCells * BrMap.Cell)); // level with the rim's top
+            else Scenery.Build(half, (float)(_grid.SizeZ * SubGrid.SubSize * 0.5));
 
             Mark("scenery");
             _input = new GameInput();
@@ -399,6 +441,7 @@ namespace Sculpt.Game.Bootstrap
             gameObject.AddComponent<InventoryHud>().Init(_player, _input);
             gameObject.AddComponent<MatchHud>().Init(_player, _session);
             gameObject.AddComponent<BrHud>().Init(_player, _session);
+            StormView.GroundAt = brInfo != null ? (x, z) => BrMap.Field.HeightAt(x, z) : (Func<double, double, double>)null;
             if (brInfo != null) new GameObject("Storm").AddComponent<StormView>().Init(_session);
             gameObject.AddComponent<PingHud>().Init(_session, _rig.Camera);
             gameObject.AddComponent<SpectatorHud>().Init(_player, _session, _spectatorCam, _input);
@@ -407,6 +450,23 @@ namespace Sculpt.Game.Bootstrap
             menu.Init(_player, _session);
 
             Mark("huds");
+            // The map was built several times over (the village map is about 90 MB a copy): clear the leftovers now, on
+            // the loading screen, not in the first seconds of play (a collection then stalled the game for seconds).
+            if (brInfo != null)
+            {
+                // Every big one-off build finishes here, on the loading screen: the bots' walking grid, the server's sight
+                // grid and this client's sound grid ran on workers while the rest loaded. Finishing them in play cost
+                // seconds of hitches (all cores busy, and garbage collections over a heap full of map copies).
+                try { _brNav?.Wait(); } catch (System.Exception e) { Debug.LogException(e); }
+                Mark("walking grid (" + BotNav.LastBuildTimes + ")");
+                sightTask?.Wait();
+                Mark("sight grid");
+                SoundRouter.WaitReady(20000);
+                Mark("builds done");
+                System.GC.Collect();
+                System.GC.WaitForPendingFinalizers();
+                Mark("collect");
+            }
             Debug.Log("[SCULPT] Load: " + loadSteps + (_relaunchClock != null ? $" (menu press to here {_relaunchClock.ElapsedMilliseconds - loadClock.ElapsedMilliseconds} ms before this load)" : ""));
             _relaunchClock = null;
             switch (NextLaunch)
@@ -576,6 +636,7 @@ namespace Sculpt.Game.Bootstrap
                 else if (a == "-bot") NextLaunch = Launch.VsBot;
                 else if (a == "-mlbot" && i + 1 < args.Length) { NextLaunch = Launch.VsBot; NextMlBotModel = args[i + 1]; }
                 else if (a == "-breach") NextMap = MapChoice.Breach;
+                else if (a == "-hills") { NextMap = MapChoice.Hills; if (NextLaunch == Launch.Menu) NextLaunch = Launch.Offline; }
                 else if (a == "-br") { NextMap = MapChoice.BattleRoyale; if (NextLaunch == Launch.Menu) NextLaunch = Launch.Offline; }
                 else if (a == "-duos") NextBrMode = BrMode.Duos;
                 else if (a == "-squads") NextBrMode = BrMode.Squads;

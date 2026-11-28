@@ -23,7 +23,7 @@ namespace Sculpt.Core.Net
     /// </summary>
     public static class ItemsProtocol
     {
-        public const int MaxItems = 2048;
+        public const int MaxItems = 4096;
 
         public static void Write(ByteWriter w, in ItemsMsg m)
         {

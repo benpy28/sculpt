@@ -308,6 +308,17 @@ namespace Sculpt.Core.Tests.Settings
         }
 
         [Test]
+        public void TheDistanceHaze_CantBeTurnedOff()
+        {
+            // Map v3 (Ben's plan): view distance and haze are the same on every setting, so nobody sees further.
+            Assert.That(new LookValues { Fog = 0 }.Clamped().Fog, Is.EqualTo(1), "an old saved 'off' reads as the haze");
+            Assert.That(new LookValues { Fog = -3 }.Clamped().Fog, Is.EqualTo(1));
+            Assert.That(DisplayPresets.Of(VideoPreset.Competitive).Look.Fog, Is.EqualTo(1));
+            Assert.That(DisplayPresets.Of(VideoPreset.Quality).Look.Fog, Is.EqualTo(2));
+            Assert.That(LookValues.FogChoices, Does.Not.Contain("Off"));
+        }
+
+        [Test]
         public void Needs_FollowTheEffects()
         {
             Assert.That(new LookValues { Vignette = 0.2f }.NeedsPost, Is.True);

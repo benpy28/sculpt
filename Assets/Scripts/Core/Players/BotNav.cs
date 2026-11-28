@@ -28,7 +28,10 @@ namespace Sculpt.Core
         public readonly double Cell, MinX, MinZ;
         public readonly int NX, NZ;
         private readonly List<Node> _nodes = new List<Node>();
-        private readonly List<int>[] _columns;
+        /// <summary>The spots of column c are nodes _colStart[c] .. _colStart[c + 1] - 1 (nodes are made column by column).
+        /// Flat arrays, not a list per column: on the 921 m map that was nearly a million small objects for every garbage
+        /// collection to walk, and a collection stalled the game for seconds.</summary>
+        private readonly int[] _colStart;
         private readonly List<int> _to = new List<int>();
         private readonly List<float> _cost = new List<float>();
         private readonly List<Link> _kind = new List<Link>();
@@ -48,7 +51,7 @@ namespace Sculpt.Core
         private BotNav(double cell, double minX, double minZ, int nx, int nz)
         {
             Cell = cell; MinX = minX; MinZ = minZ; NX = nx; NZ = nz;
-            _columns = new List<int>[nx * nz];
+            _colStart = new int[nx * nz + 1];
         }
 
         /// <summary>
@@ -58,10 +61,11 @@ namespace Sculpt.Core
         /// much faster). The probing runs on all cores; the result is the same as one core would build, in the same order.
         /// </summary>
         public static BotNav Build(ITerrain t, double minX, double minZ, double sizeX, double sizeZ, double cell = 0.75, double topY = 20, double floorY = -3,
-                                   double? groundTop = null)
+                                   double? groundTop = null, Func<double, double, double> columnTop = null)
         {
             int nx = (int)Math.Floor(sizeX / cell), nz = (int)Math.Floor(sizeZ / cell);
             var n = new BotNav(cell, minX, minZ, nx, nz);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             var rows = new List<(int cx, double y)>[nz];
             System.Threading.Tasks.Parallel.For(0, nz, cz =>
             {
@@ -70,21 +74,69 @@ namespace Sculpt.Core
                 for (int cx = 0; cx < nx; cx++)
                 {
                     double x = minX + (cx + 0.5) * cell, z = minZ + (cz + 0.5) * cell;
-                    FindFloors(t, x, z, topY, floorY, floors, groundTop);
+                    // A map that knows a column's highest solid starts there (the open hills of the battle royale: one short
+                    // probe instead of one from the top of the tallest building).
+                    double top = columnTop != null ? Math.Min(topY, columnTop(x, z)) : topY;
+                    FindFloors(t, x, z, top, floorY, floors, groundTop);
                     foreach (double y in floors)
                         if (!t.BoxOverlapsSolid(StandBox(x, z, y))) found.Add((cx, y));
                 }
                 rows[cz] = found;
             });
+            int col = 0;
             for (int cz = 0; cz < nz; cz++)
                 foreach ((int cx, double y) in rows[cz])
                 {
-                    var list = n._columns[cz * nx + cx] ??= new List<int>(2);
-                    list.Add(n._nodes.Count);
+                    int c = cz * nx + cx;
+                    while (col <= c) n._colStart[col++] = n._nodes.Count; // columns up to this one start here
                     n._nodes.Add(new Node { Cx = cx, Cz = cz, Y = y });
                 }
+            while (col <= nx * nz) n._colStart[col++] = n._nodes.Count;
+            long floorsMs = clock.ElapsedMilliseconds;
             n.Connect(t);
+            long connectMs = clock.ElapsedMilliseconds - floorsMs;
+            n.FindAreas();
+            LastBuildTimes = $"floors {floorsMs} ms, edges {connectMs} ms, areas {clock.ElapsedMilliseconds - floorsMs - connectMs} ms";
             return n;
+        }
+
+        private int[] _area;
+
+        /// <summary>How the last build's time split (diagnostics).</summary>
+        public static string LastBuildTimes = "";
+
+        /// <summary>
+        /// Which connected area a spot is in (spots joined by any edge, either way, share one). A sealed room on the
+        /// battle royale map is its own area: only a hole gets you in, which the walking grid (built from the intact map)
+        /// never has. Paths between areas are never searched for (a search that can't succeed used to run to its cap
+        /// every time: most of a bot's cost on the village map).
+        /// </summary>
+        public int AreaOf(int node) => node < 0 || _area == null ? -1 : _area[node];
+
+        /// <summary>True when a path from one spot to the other can exist.</summary>
+        public bool SameArea(int a, int b) => a >= 0 && b >= 0 && (_area == null || _area[a] == _area[b]);
+
+        private void FindAreas()
+        {
+            int n = _nodes.Count;
+            var parent = new int[n];
+            for (int i = 0; i < n; i++) parent[i] = i;
+            int Find(int x)
+            {
+                while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+                return x;
+            }
+            for (int i = 0; i < n; i++)
+            {
+                Node a = _nodes[i];
+                for (int e = a.First; e < a.First + a.Count; e++)
+                {
+                    int ra = Find(i), rb = Find(_to[e]);
+                    if (ra != rb) parent[ra < rb ? rb : ra] = ra < rb ? ra : rb;
+                }
+            }
+            _area = new int[n];
+            for (int i = 0; i < n; i++) _area[i] = Find(i);
         }
 
         private static Aabb StandBox(double x, double z, double y) =>
@@ -100,6 +152,7 @@ namespace Sculpt.Core
                 TerrainHit h = t.Raycast(new Vec3d(x, y, z), new Vec3d(0, -1, 0), y - bottom);
                 if (!h.Hit) return;
                 if (h.Normal.Y >= MinFloorNormalY) into.Add(h.Point.Y);
+                if (h.Ground) return; // the smooth ground: solid all the way down
                 if (groundTop.HasValue && h.Point.Y <= groundTop.Value + 1e-6) return; // the ground: solid all the way down
                 // Step down through the solid to the air under it (if any).
                 double s = h.Point.Y - 0.05;
@@ -169,17 +222,17 @@ namespace Sculpt.Core
                 {
                     int bx = a.Cx + Dx[d], bz = a.Cz + Dz[d];
                     if (bx < 0 || bz < 0 || bx >= NX || bz >= NZ) continue;
-                    var col = _columns[bz * NX + bx];
-                    if (col == null) continue;
+                    int c0 = _colStart[bz * NX + bx], c1 = _colStart[bz * NX + bx + 1];
+                    if (c0 == c1) continue;
                     bool diag = d >= 4;
                     double run = diag ? Cell * Math.Sqrt(2) : Cell;
                     double bxw = MinX + (bx + 0.5) * Cell, bzw = MinZ + (bz + 0.5) * Cell;
-                    foreach (int j in col)
+                    for (int j = c0; j < c1; j++)
                     {
                         Node b = _nodes[j];
                         double dy = b.Y - a.Y;
                         Link kind;
-                        if (Math.Abs(dy) <= MaxWalkStep) kind = Link.Walk;
+                        if (Math.Abs(dy) <= MaxWalkStep || SlopeWalk(t, ax, az, bxw, bzw, a.Y, b.Y, run)) kind = Link.Walk;
                         else if (diag) continue; // jumps and drops only straight across
                         else if (dy > 0 && dy <= MaxJumpUp) kind = Link.Jump;
                         else if (dy < 0 && -dy <= MaxDrop) kind = Link.Drop;
@@ -207,6 +260,19 @@ namespace Sculpt.Core
             }
         }
 
+        /// <summary>
+        /// Two spots on one walkable hillside of the smooth ground, too far apart in height for a plain step (a slope over
+        /// about 27 degrees at 1 m spots): the ground between them is the same slope, so it's a walk. Never on buildings.
+        /// </summary>
+        private static bool SlopeWalk(ITerrain t, double ax, double az, double bx, double bz, double ay, double by, double run)
+        {
+            if (Math.Abs(by - ay) > run * 0.9) return false;
+            double mx = (ax + bx) * 0.5, mz = (az + bz) * 0.5, top = Math.Max(ay, by) + 1.0;
+            TerrainHit h = t.Raycast(new Vec3d(mx, top, mz), new Vec3d(0, -1, 0), top - Math.Min(ay, by) + 0.5);
+            if (!h.Hit || !h.Ground || h.Normal.Y < MinFloorNormalY) return false;
+            return h.Point.Y >= Math.Min(ay, by) - 0.05 && h.Point.Y <= Math.Max(ay, by) + 0.05;
+        }
+
         public Vec3d Feet(int node) => _nodes[node].Feet(this);
 
         /// <summary>The link kind from node a to its neighbour b (Walk if they aren't joined).</summary>
@@ -230,9 +296,8 @@ namespace Sculpt.Core
                     {
                         if (Math.Max(Math.Abs(x - cx), Math.Abs(z - cz)) != r) continue;
                         if (x < 0 || z < 0 || x >= NX || z >= NZ) continue;
-                        var col = _columns[z * NX + x];
-                        if (col == null) continue;
-                        foreach (int i in col)
+                        int c0 = _colStart[z * NX + x], c1 = _colStart[z * NX + x + 1];
+                        for (int i = c0; i < c1; i++)
                         {
                             Node n = _nodes[i];
                             double dy = feet.Y - n.Y;
@@ -260,6 +325,7 @@ namespace Sculpt.Core
         {
             path.Clear();
             if (start < 0 || goal < 0) return false;
+            if (!SameArea(start, goal)) return false;
             int n = _nodes.Count;
             if (_g == null || _g.Length != n) { _g = new float[n]; _from = new int[n]; _seen = new int[n]; }
             _stamp++;

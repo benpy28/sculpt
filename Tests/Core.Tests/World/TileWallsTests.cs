@@ -322,7 +322,7 @@ namespace Sculpt.Core.Tests
             Assert.That(into.Count, Is.EqualTo(2));
             Assert.That((into[1].Tile, into[1].To, into[1].Health, into[1].Cause, into[1].By), Is.EqualTo((900, TileState.Broken, 0, TileCause.Grenade, 7)));
 
-            data[1 + 4 + 1 + 2 + 2] = 9; // first change's state byte
+            data[1 + 4 + 1 + 3 + 3] = 9; // first change's state byte (count and tile id are 24-bit)
             Assert.Throws<NetFormatException>(() =>
             {
                 var bad = new ByteReader(data, 0, data.Length);

@@ -154,6 +154,8 @@ namespace Sculpt.Game.World
             t._uv1 = new List<Vector2>(16384);
             t._normals = new List<Vector3>(16384);
             t._tris = new List<int>(24576);
+            t._flatOpen = new List<FlatRect>();
+            t._flatNext = new List<FlatRect>();
             return t;
         }
 
@@ -319,6 +321,8 @@ namespace Sculpt.Game.World
             float lx0 = (float)(MinOf(top, 0) * h), lx1 = (float)(MaxOf(top, 0) * h), lz0 = (float)(MinOf(top, 2) * h), lz1 = (float)(MaxOf(top, 2) * h);
             if (MaxOf(top, 1) - MinOf(top, 1) > 1e-9 || top.Verts.Length != 4) return false; // not a flat square
             Vector3 up = top.Normal.ToUnity();
+            _flatOpen.Clear();
+            _flatNext.Clear();
             for (int z = 0; z < n; z++)
             {
                 int runStart = 0;
@@ -367,33 +371,67 @@ namespace Sculpt.Game.World
                         uv1 = new Vector2(kind, 0f);
                         if (inRun && c == runColor && uv1 == runUv1 && sculpt == runSculpt) continue;
                     }
-                    if (inRun)
-                    {
-                        // The run's squares: x from runStart to x - 1, each 2h wide round its lattice vertex.
-                        float x0 = runStart * sz - h + lx0, x1 = (x - 1) * sz - h + lx1, z0 = z * sz - h + lz0, z1 = z * sz - h + lz1;
-                        int start = _verts.Count;
-                        _verts.Add(_offset + new Vector3(x0, faceY, z0));
-                        _verts.Add(_offset + new Vector3(x0, faceY, z1));
-                        _verts.Add(_offset + new Vector3(x1, faceY, z1));
-                        _verts.Add(_offset + new Vector3(x1, faceY, z0));
-                        for (int k = 0; k < 4; k++)
-                        {
-                            _normals.Add(up);
-                            _colors.Add(runColor);
-                            _uvs.Add(new Vector3(0f, runSculpt, 0f));
-                            _uv1.Add(runUv1);
-                        }
-                        _tris.Add(start); _tris.Add(start + 1); _tris.Add(start + 2);
-                        _tris.Add(start); _tris.Add(start + 2); _tris.Add(start + 3);
-                    }
+                    if (inRun) AddFlatRun(runStart, x - 1, z, runColor, runUv1, runSculpt); // merged with the rows below where it matches
                     runStart = x;
                     inRun = !hole && x < n;
                     runColor = c;
                     runUv1 = uv1;
                     runSculpt = sculpt;
                 }
+                // Rects of the row below that this row didn't carry on are finished.
+                foreach (FlatRect r in _flatOpen) EmitFlat(r, faceY, lx0, lx1, lz0, lz1, up);
+                _flatOpen.Clear();
+                (_flatOpen, _flatNext) = (_flatNext, _flatOpen);
             }
+            foreach (FlatRect r in _flatOpen) EmitFlat(r, faceY, lx0, lx1, lz0, lz1, up);
+            _flatOpen.Clear();
             return true;
+        }
+
+        private struct FlatRect
+        {
+            public int X0, X1, Z0, Z1;
+            public Color Colour;
+            public Vector2 Uv1;
+            public float Sculpt;
+        }
+
+        // Flat ground runs, merged across rows into rectangles (a plain chunk of meadow is one quad, was sixteen).
+        private List<FlatRect> _flatOpen = new List<FlatRect>(), _flatNext = new List<FlatRect>();
+
+        private void AddFlatRun(int x0, int x1, int z, Color c, Vector2 uv1, float sculpt)
+        {
+            for (int i = 0; i < _flatOpen.Count; i++)
+            {
+                FlatRect r = _flatOpen[i];
+                if (r.X0 != x0 || r.X1 != x1 || r.Colour != c || r.Uv1 != uv1 || r.Sculpt != sculpt || r.Z1 != z - 1) continue;
+                r.Z1 = z;
+                _flatOpen.RemoveAt(i);
+                _flatNext.Add(r);
+                return;
+            }
+            _flatNext.Add(new FlatRect { X0 = x0, X1 = x1, Z0 = z, Z1 = z, Colour = c, Uv1 = uv1, Sculpt = sculpt });
+        }
+
+        private void EmitFlat(in FlatRect r, float faceY, float lx0, float lx1, float lz0, float lz1, Vector3 up)
+        {
+            const float h = (float)TerrainShape.H, sz = (float)SubGrid.SubSize;
+            // The squares: x from X0 to X1 and z from Z0 to Z1, each 2h wide round its lattice vertex.
+            float x0 = r.X0 * sz - h + lx0, x1 = r.X1 * sz - h + lx1, z0 = r.Z0 * sz - h + lz0, z1 = r.Z1 * sz - h + lz1;
+            int start = _verts.Count;
+            _verts.Add(_offset + new Vector3(x0, faceY, z0));
+            _verts.Add(_offset + new Vector3(x0, faceY, z1));
+            _verts.Add(_offset + new Vector3(x1, faceY, z1));
+            _verts.Add(_offset + new Vector3(x1, faceY, z0));
+            for (int k = 0; k < 4; k++)
+            {
+                _normals.Add(up);
+                _colors.Add(r.Colour);
+                _uvs.Add(new Vector3(0f, r.Sculpt, 0f));
+                _uv1.Add(r.Uv1);
+            }
+            _tris.Add(start); _tris.Add(start + 1); _tris.Add(start + 2);
+            _tris.Add(start); _tris.Add(start + 2); _tris.Add(start + 3);
         }
 
         /// <summary>Set false to build every chunk with the kernel (the -meshcheck comparison).</summary>
@@ -614,7 +652,7 @@ namespace Sculpt.Game.World
         }
 
         /// <summary>Fixed-sun shade from the face normal: blends top, sides and bottom so chamfers sit in between.</summary>
-        private static float Shade(Vec3d n)
+        internal static float Shade(Vec3d n)
         {
             double ax = System.Math.Abs(n.X), az = System.Math.Abs(n.Z);
             double side = ax + az > 1e-9 ? (ax * ShadeEastWest + az * ShadeNorthSouth) / (ax + az) : ShadeTop;

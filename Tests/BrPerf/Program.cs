@@ -35,7 +35,7 @@ internal static class Program
         Console.WriteLine($"map {br.Size:0} m: {w.Tiles.Count} tiles, {w.Count} brushes, {br.Chests.Count} chests; built in {load.ElapsedMilliseconds} ms");
         load.Restart();
         BotNav nav = BrMap.BuildNav(1.0);
-        Console.WriteLine($"nav {nav.Nodes.Count} spots in {load.ElapsedMilliseconds} ms");
+        Console.WriteLine($"nav {nav.Nodes.Count} spots in {load.ElapsedMilliseconds} ms ({BotNav.LastBuildTimes})");
         var cfg = new BrConfig { Mode = mode, Seed = seed, FillWithoutHumans = true };
         cfg.MakeBot = i => new DuelBot(nav, DuelBotConfig.For((BotLevel)(i % 3)), cfg.Seed + 31 * i);
         // One watching client (a human standing at its pad): its Receive is timed as the ClientReceive section.

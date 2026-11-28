@@ -13,8 +13,20 @@ namespace Sculpt.Game.World
         public static readonly Color Horizon = new Color(0.80f, 0.87f, 0.92f);
         public static readonly Color Zenith = new Color(0.36f, 0.57f, 0.86f);
 
-        /// <summary>Builds sky, fog and backdrop around an arena centred at (centreX, centreZ). Returns the sun.</summary>
-        public static Light Build(float centreX, float centreZ)
+        /// <summary>
+        /// How far anyone sees (Ben's map v3 plan: about 800 m, so towers and hills read across the map). The haze is the
+        /// same on every setting and always on (Video > Picture > Fog only adds the atmospheric look on top), so nobody
+        /// sees further than anyone else: soft from <see cref="HazeFrom"/>, everything gone by the view distance, where
+        /// the camera stops drawing.
+        /// </summary>
+        public const float ViewDistance = 800f, HazeFrom = 100f;
+
+        /// <summary>
+        /// Builds sky, fog and backdrop around an arena centred at (centreX, centreZ). Returns the sun. The land outside
+        /// lies at <paramref name="groundY"/> (the battle royale: level with the rim's top) and starts
+        /// <paramref name="inset"/> metres inside the map's edge (where the map's own ground stops short of it).
+        /// </summary>
+        public static Light Build(float centreX, float centreZ, float groundY = 0f, float inset = 0f)
         {
             var sun = new GameObject("Sun").AddComponent<Light>();
             sun.type = LightType.Directional;
@@ -37,18 +49,18 @@ namespace Sculpt.Game.World
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
             RenderSettings.fogColor = Horizon;
-            RenderSettings.fogStartDistance = 60f;
-            RenderSettings.fogEndDistance = 330f;
+            RenderSettings.fogStartDistance = HazeFrom;
+            RenderSettings.fogEndDistance = ViewDistance;
 
-            BuildBackdrop(centreX, centreZ);
+            BuildBackdrop(centreX, centreZ, groundY, inset);
             return sun;
         }
 
-        private static void BuildBackdrop(float cx, float cz)
+        private static void BuildBackdrop(float cx, float cz, float groundY, float inset)
         {
             Shader shader = Shader.Find("SCULPT/Voxel");
             if (shader == null) return;
-            BuildSkirt(cx, cz, shader);
+            BuildSkirt(cx, cz, shader, groundY, inset);
             bool linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
             var v = new List<Vector3>();
             var col = new List<Color>();
@@ -66,6 +78,7 @@ namespace Sculpt.Game.World
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
             var go = new GameObject("Backdrop");
+            go.transform.position = new Vector3(0, groundY, 0);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var r = go.AddComponent<MeshRenderer>();
             r.sharedMaterial = new Material(shader) { name = "Backdrop (runtime)" };
@@ -80,7 +93,7 @@ namespace Sculpt.Game.World
         /// area doesn't end in a floating slab with sky under it. A square frame around the map at y 0, drawn with the
         /// terrain's own ground look; the map's own ground fills the hole exactly.
         /// </summary>
-        private static void BuildSkirt(float cx, float cz, Shader shader)
+        private static void BuildSkirt(float cx, float cz, Shader shader, float groundY, float inset)
         {
             float sx = cx * 2, sz = cz * 2, far = Mathf.Max(420f, Mathf.Sqrt(cx * cx + cz * cz) + 220f - Mathf.Min(cx, cz)); // past the backdrop
             var v = new List<Vector3>();
@@ -93,7 +106,7 @@ namespace Sculpt.Game.World
             }
             // The frame reaches 0.3 m under the map's own ground: the terrain mesh stops a few centimetres short of the
             // grid's far edges, and the overlap is the same meadow colour at the same height, so nothing shows.
-            const float lap = 0.3f;
+            float lap = 0.3f + inset;
             Rect(-far, -far, sx + far, lap);              // south
             Rect(-far, sz - lap, sx + far, sz + far);     // north
             Rect(-far, lap, lap, sz - lap);               // west
@@ -110,6 +123,7 @@ namespace Sculpt.Game.World
             mesh.SetUVs(1, k);
             mesh.RecalculateBounds();
             var go = new GameObject("Ground skirt");
+            go.transform.position = new Vector3(0, groundY, 0);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var r = go.AddComponent<MeshRenderer>();
             r.sharedMaterial = new Material(shader) { name = "Ground skirt (runtime)" };
