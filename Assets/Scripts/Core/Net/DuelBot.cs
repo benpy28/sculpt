@@ -163,6 +163,14 @@ namespace Sculpt.Core.Net
         public int LastPingTick => _pingTick;
         public IReadOnlyList<int> Path => _path;
 
+        /// <summary>For measuring (Tests/BrPerf): what it was walking toward this tick and how its route stood.</summary>
+        public enum GoalKind : byte { None, Fight, Cover, CoverHeal, Storm, Rotate, Ping, LastSeen, ThirdParty, Heard, Loot, Roam, Hold, Countdown }
+        public GoalKind Goal { get; private set; }
+        /// <summary>Why the last route ask got nothing: 0 none, 1 waited for the shared budget, 2 search failed, 3 no spot near the goal.</summary>
+        public int PathNote { get; private set; }
+        public double WishLength { get; private set; }
+        public int PathFails, PathAsks;
+
         public DuelBot(BotNav nav, DuelBotConfig config = null, int seed = 1)
         {
             Nav = nav ?? throw new ArgumentNullException(nameof(nav));
@@ -328,9 +336,10 @@ namespace Sculpt.Core.Net
             if (brPlay && Doing == Tactic.Cover)
             {
                 // Into cover (still shooting back while it can see them), then crouch there and heal.
-                if (_coverHealing && !_engaged) { wish = Vec3d.Zero; crouch = true; }
+                if (_coverHealing && !_engaged) { wish = Vec3d.Zero; crouch = true; Goal = GoalKind.CoverHeal; }
                 else
                 {
+                    Goal = GoalKind.Cover;
                     wish = FollowPath(s, _coverSpot, tick, ref jump, out Vec3d lookAt, out _);
                     if (!aimEnemy && wish.LengthSquared > 0.01)
                     {
@@ -344,24 +353,28 @@ namespace Sculpt.Core.Net
                 Unstick(s, tick, wish, ref jump);
             }
             else if (_engaged || (recentlySeen && tick - _lastSeenTick < 36 * SimTime.Per60))
-                wish = FightMove(server, s, tick, dist, ref jump);
+            { wish = FightMove(server, s, tick, dist, ref jump); Goal = GoalKind.Fight; }
             else
             {
                 Vec3d goal;
                 bool br = server.Match.IsBr;
                 // Battle royale: get out of the circle first, whatever else is going on; then into the next one in time.
-                if (br && StormGoal(server, s, tick, out Vec3d safe)) goal = safe;
-                else if (rotate) { goal = rotGoal; Doing = Tactic.Rotate; }
+                if (br && StormGoal(server, s, tick, out Vec3d safe)) { goal = safe; Goal = GoalKind.Storm; }
+                else if (rotate) { goal = rotGoal; Doing = Tactic.Rotate; Goal = GoalKind.Rotate; }
                 // A ping newer than its last sighting: go where it was shown (it still has to find and see them to fight).
-                else if (!recentlySeen && _pingTick > _lastSeenTick && tick - _pingTick < 600 * SimTime.Per60) goal = _pingPos;
-                else if (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60) goal = _lastSeenPos;
+                else if (!recentlySeen && _pingTick > _lastSeenTick && tick - _pingTick < 600 * SimTime.Per60) { goal = _pingPos; Goal = GoalKind.Ping; }
+                else if (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60) { goal = _lastSeenPos; Goal = GoalKind.LastSeen; }
                 // Battle royale: a fight it heard and chose to join (third-partying).
-                else if (brPlay && ThirdPartyGoal(server, s, tick, out Vec3d fight)) goal = fight;
-                else if (tick - _lastHeardTick < 600 * SimTime.Per60) goal = _lastHeardPos;
+                else if (brPlay && ThirdPartyGoal(server, s, tick, out Vec3d fight)) { goal = fight; Goal = GoalKind.ThirdParty; }
+                else if (tick - _lastHeardTick < 600 * SimTime.Per60) { goal = _lastHeardPos; Goal = GoalKind.Heard; }
                 // Battle royale: loot what is near (chests, a gun it lacks, a better rarity, a utility), else roam inside the circle.
-                else if (br && LootGoal(server, me, s, tick, out Vec3d loot)) goal = loot;
-                else goal = br ? RoamInCircle(server, s.Position, tick) : RoamGoal(s.Position);
-                if (br && server.Match.Phase == MatchPhase.Countdown) goal = s.Position; // waits on its pad
+                else if (br && LootGoal(server, me, s, tick, out Vec3d loot)) { goal = loot; Goal = GoalKind.Loot; }
+                else
+                {
+                    goal = br ? RoamInCircle(server, s.Position, tick) : RoamGoal(s.Position);
+                    Goal = goal.Equals(s.Position) ? GoalKind.Hold : GoalKind.Roam;
+                }
+                if (br && server.Match.Phase == MatchPhase.Countdown) { goal = s.Position; Goal = GoalKind.Countdown; } // waits on its pad
                 if (Doing == Tactic.Rotate && !(rotate && goal.Equals(rotGoal))) Doing = Tactic.None;
                 wish = FollowPath(s, goal, tick, ref jump, out Vec3d lookAt, out bool arrived);
                 if (arrived)
@@ -408,6 +421,7 @@ namespace Sculpt.Core.Net
                 Unstick(s, tick, wish, ref jump);
             }
             if (tick < _jumpUntil) jump = true;
+            WishLength = wish.Length;
 
             // The aim gains are tuned as "share of the error closed per sixtieth of a second": same pull at any tick rate.
             gain = 1 - Math.Pow(1 - Clamp(gain, 0, 1), 1.0 / SimTime.Per60);
@@ -780,8 +794,11 @@ namespace Sculpt.Core.Net
                 if ((next - feet).HorizontalLength > 4 || feet.Y < next.Y - 2.2) replan = true; // fell off or got pushed
             }
             double far = (goal - feet).HorizontalLength;
+            if (replan && !(tick - _pathTick >= 15 * SimTime.Per60 && (_server == null || _server.BotPathsThisTick < _server.BotPathsPerTick))) PathNote = 1;
             if (replan && tick - _pathTick >= 15 * SimTime.Per60 && (_server == null || _server.BotPathsThisTick < _server.BotPathsPerTick))
             {
+                PathAsks++;
+                PathNote = 0;
                 if (_server != null) _server.BotPathsThisTick++;
                 _pathTick = tick;
                 _pathGoal = goal;
@@ -803,6 +820,8 @@ namespace Sculpt.Core.Net
                 if (b < 0) b = Nav.Nearest(goal, 6);
                 if (!Nav.FindPath(a, b, _path))
                 {
+                    PathFails++;
+                    PathNote = a < 0 || b < 0 ? 3 : 2;
                     _path.Clear();
                     _partial = false;
                     if (far <= LegMetres)

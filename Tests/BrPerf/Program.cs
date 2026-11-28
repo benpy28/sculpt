@@ -115,6 +115,8 @@ internal static class Program
                     }
                     if ((ticks - playStartTick) % (10 * SimTime.TicksPerSecond) == 0) LastPos[p.Id] = p.State.Position;
                 }
+            if (playStartTick >= 0 && s.Match.Phase == MatchPhase.Playing && (ticks - playStartTick) % SimTime.TicksPerSecond == 0)
+                SampleIdle(s, (ticks - playStartTick) / SimTime.TicksPerSecond);
             if (playStartTick >= 0 && s.Match.Phase == MatchPhase.Playing && (ticks - playStartTick) % (30 * SimTime.TicksPerSecond) == 0)
             {
                 int inMatch = 0, live = 0;
@@ -155,6 +157,15 @@ internal static class Program
         int covers = 0, rotations = 0, thirds = 0;
         foreach (var kv in s.Bots) if (kv.Value is DuelBot b) { covers += b.CoverCount; rotations += b.RotateCount; thirds += b.ThirdPartyCount; }
         Console.WriteLine($"bot tactics: cover {covers}, rotations {rotations}, third-party {thirds}");
+        int asks = 0, fails = 0;
+        foreach (var kv in s.Bots) if (kv.Value is DuelBot b) { asks += b.PathAsks; fails += b.PathFails; }
+        Console.WriteLine($"path searches {asks}, failed {fails}");
+        Console.WriteLine($"idle (alive, moved under {IdleMetres} m in {IdleWindow} s, not fighting or healing): {IdleSecs} of {AliveSecs} bot-seconds ({100.0 * IdleSecs / Math.Max(1, AliveSecs):0.0}%), longest stretch {LongestIdle} s");
+        var keys = new List<string>(IdleWhy.Keys);
+        keys.Sort((x, y) => IdleWhy[y].CompareTo(IdleWhy[x]));
+        foreach (string k in keys) Console.WriteLine($"  {IdleWhy[k],6} s  {k}");
+        Console.WriteLine("idle examples (stretches of 15 s or more):");
+        foreach (string e in IdleEx.GetRange(0, Math.Min(25, IdleEx.Count))) Console.WriteLine("  " + e);
         Console.WriteLine("alive every 30 s:");
         foreach (string a in Alive) Console.WriteLine("  " + a);
         Console.WriteLine("timeline (half seconds: phase, server ms avg/worst per tick, interest/simulate/bots avg):");
@@ -165,6 +176,42 @@ internal static class Program
             Console.WriteLine($"  {i * 0.5,5:0.0}s {(MatchPhase)(int)t[0],-10} {t[1] / per,6:0.00} / {t[2],6:0.00}   {t[3] / per,5:0.00} {t[4] / per,5:0.00} {t[5] / per,5:0.00}");
         }
         return 0;
+    }
+
+    // ---- Idle bots: alive and playing but standing in one spot with nothing to do.
+    private const double IdleMetres = 1.0;
+    private const int IdleWindow = 5;
+    private static int IdleSecs, AliveSecs, LongestIdle;
+    private static readonly Dictionary<int, List<Vec3d>> Track = new Dictionary<int, List<Vec3d>>();
+    private static readonly Dictionary<int, int> IdleRun = new Dictionary<int, int>();
+    private static readonly Dictionary<string, int> IdleWhy = new Dictionary<string, int>();
+    private static readonly List<string> IdleEx = new List<string>();
+
+    private static void SampleIdle(NetServer s, int sec)
+    {
+        foreach (ServerPlayer p in s.Players)
+        {
+            if (!s.InBrMatch(p.Id) || !(s.Bots.TryGetValue(p.ConnectionId, out var brain) && brain is DuelBot b)) continue;
+            if (!Track.TryGetValue(p.Id, out List<Vec3d> tr)) Track[p.Id] = tr = new List<Vec3d>();
+            if (p.State.Dead) { tr.Clear(); IdleRun[p.Id] = 0; continue; }
+            AliveSecs++;
+            tr.Add(p.State.Position);
+            IdleRun.TryGetValue(p.Id, out int run);
+            bool idle = tr.Count > IdleWindow && (tr[tr.Count - 1] - tr[tr.Count - 1 - IdleWindow]).HorizontalLength < IdleMetres
+                && !b.Engaged && b.Goal != DuelBot.GoalKind.Fight && b.Goal != DuelBot.GoalKind.CoverHeal && b.Goal != DuelBot.GoalKind.Countdown;
+            if (idle)
+            {
+                IdleSecs++;
+                string why = $"{b.Goal,-10} {(b.WishLength > 0.01 ? "pushing" : "still  ")} path {(b.Path.Count > 0 ? "yes" : "no ")} note {b.PathNote}";
+                IdleWhy.TryGetValue(why, out int c);
+                IdleWhy[why] = c + 1;
+                run++;
+                if (run == 15) IdleEx.Add($"{sec,4}s player {p.Id} at {p.State.Position} {why} grounded {p.State.Grounded}");
+                LongestIdle = Math.Max(LongestIdle, run);
+            }
+            else run = 0;
+            IdleRun[p.Id] = run;
+        }
     }
 
     private static readonly List<double[]> Timeline = new List<double[]>();
