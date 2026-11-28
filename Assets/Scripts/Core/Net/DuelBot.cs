@@ -42,6 +42,8 @@ namespace Sculpt.Core.Net
         public double BrCalmCloseMetres = 3;
         /// <summary>Battle royale after the opening: the farthest enemy it starts a fight with (unless hurt).</summary>
         public double BrEngageMetres = 35;
+        /// <summary>The farthest it can make anyone out.</summary>
+        public double SightMetres = 160;
         /// <summary>Battle royale: how long it holds a spot it roamed to before moving on (seconds, random in between).</summary>
         public double BrHoldMin = 6, BrHoldMax = 20;
 
@@ -438,7 +440,9 @@ namespace Sculpt.Core.Net
             double flat = to.HorizontalLength;
             double off = Math.Abs(Wrap(Math.Atan2(to.X, to.Z) - _yaw)) * 180 / Math.PI;
             bool inCone = off <= Config.ViewConeDeg * 0.5 || flat < 2.5;
-            if (inCone && CanSee(server.Grid, eye, e.Position, h))
+            // Past SightMetres nobody is made out (the haze closes in by about 330 m): no sight lines tested that far,
+            // which across the dense battle royale villages were most of a bot's cost.
+            if (inCone && flat <= Config.SightMetres && MaySee(server, eye, e.Position, h) && CanSee(server.Grid, eye, e.Position, h))
             {
                 o.Seen = true;
                 o.Pos = e.Position;
@@ -466,6 +470,12 @@ namespace Sculpt.Core.Net
             o.HeardPos = at + new Vec3d((_rng.NextDouble() * 2 - 1) * noise, 0, (_rng.NextDouble() * 2 - 1) * noise);
             return o;
         }
+
+        /// <summary>Whether any of the three lines <see cref="CanSee"/> tests could be clear, from the server's sight grid
+        /// (far cheaper than ray casts; in the battle royale's villages most lines are blocked by a building).</summary>
+        private static bool MaySee(NetServer server, Vec3d eye, Vec3d feet, double height) =>
+            server.SightMayBeClear(eye, feet + new Vec3d(0, height - 0.15, 0)) || server.SightMayBeClear(eye, feet + new Vec3d(0, height * 0.6, 0))
+            || server.SightMayBeClear(eye, feet + new Vec3d(0, 0.35, 0));
 
         /// <summary>A clear line from the eye to the target's head, chest or knees (terrain only, like bullets).</summary>
         public static bool CanSee(ITerrain t, Vec3d eye, Vec3d feet, double height)
@@ -701,8 +711,11 @@ namespace Sculpt.Core.Net
                 if (far > LegMetres)
                 {
                     Vec3d dir = (goal - feet).WithY(0) / far;
-                    for (double leg = LegMetres; leg >= 20 && b < 0; leg -= 20)
+                    for (double leg = LegMetres; leg >= 20 && b < 0; leg -= 10)
+                    {
                         b = Nav.Nearest(new Vec3d(feet.X + dir.X * leg, 0, feet.Z + dir.Z * leg), 8);
+                        if (!Nav.SameArea(a, b)) b = -1; // inside a sealed room: try nearer
+                    }
                     _partial = b >= 0;
                 }
                 if (b < 0) b = Nav.Nearest(goal, 6);
@@ -859,6 +872,8 @@ namespace Sculpt.Core.Net
                     if (d2 >= bestD) continue;
                     if (server.InStorm(g.Position)) continue;
                     if (Contested(server, me, g, tick, calm)) continue;
+                    // Out of reach without breaking a wall (a sealed room): bots don't breach, so they leave it.
+                    if (!Nav.SameArea(Nav.Nearest(s.Position), Nav.Nearest(g.Position, 3))) { _lootGaveUp.Add(g.Id); continue; }
                     bestD = d2;
                     best = g.Id;
                     bestPos = g.Position;

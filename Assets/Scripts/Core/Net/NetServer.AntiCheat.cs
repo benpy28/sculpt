@@ -605,6 +605,10 @@ namespace Sculpt.Core.Net
             foreach (TileChange c in Walls.Changes) _sight.Rebuild(Walls.BoundsOf(c.Tile));
         }
 
+        /// <summary>False only when no straight line from a to b can get through (the sight grid, generous: it never says
+        /// no to a line a ray would pass). A cheap first test before ray casts (the bots' eyes).</summary>
+        public bool SightMayBeClear(Vec3d a, Vec3d b) => _sight == null || _sight.LineOpen(a, b);
+
         private bool Clear(Vec3d from, Vec3d to)
         {
             if (_sight != null) return _sight.LineOpen(from, to);

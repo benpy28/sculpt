@@ -84,7 +84,44 @@ namespace Sculpt.Core
                     n._nodes.Add(new Node { Cx = cx, Cz = cz, Y = y });
                 }
             n.Connect(t);
+            n.FindAreas();
             return n;
+        }
+
+        private int[] _area;
+
+        /// <summary>
+        /// Which connected area a spot is in (spots joined by any edge, either way, share one). A sealed room on the
+        /// battle royale map is its own area: only a hole gets you in, which the walking grid (built from the intact map)
+        /// never has. Paths between areas are never searched for (a search that can't succeed used to run to its cap
+        /// every time: most of a bot's cost on the village map).
+        /// </summary>
+        public int AreaOf(int node) => node < 0 || _area == null ? -1 : _area[node];
+
+        /// <summary>True when a path from one spot to the other can exist.</summary>
+        public bool SameArea(int a, int b) => a >= 0 && b >= 0 && (_area == null || _area[a] == _area[b]);
+
+        private void FindAreas()
+        {
+            int n = _nodes.Count;
+            var parent = new int[n];
+            for (int i = 0; i < n; i++) parent[i] = i;
+            int Find(int x)
+            {
+                while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+                return x;
+            }
+            for (int i = 0; i < n; i++)
+            {
+                Node a = _nodes[i];
+                for (int e = a.First; e < a.First + a.Count; e++)
+                {
+                    int ra = Find(i), rb = Find(_to[e]);
+                    if (ra != rb) parent[ra < rb ? rb : ra] = ra < rb ? ra : rb;
+                }
+            }
+            _area = new int[n];
+            for (int i = 0; i < n; i++) _area[i] = Find(i);
         }
 
         private static Aabb StandBox(double x, double z, double y) =>
@@ -260,6 +297,7 @@ namespace Sculpt.Core
         {
             path.Clear();
             if (start < 0 || goal < 0) return false;
+            if (!SameArea(start, goal)) return false;
             int n = _nodes.Count;
             if (_g == null || _g.Length != n) { _g = new float[n]; _from = new int[n]; _seen = new int[n]; }
             _stamp++;
