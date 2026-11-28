@@ -142,6 +142,7 @@ namespace Sculpt.Core
                 TerrainHit h = t.Raycast(new Vec3d(x, y, z), new Vec3d(0, -1, 0), y - bottom);
                 if (!h.Hit) return;
                 if (h.Normal.Y >= MinFloorNormalY) into.Add(h.Point.Y);
+                if (h.Ground) return; // the smooth ground: solid all the way down
                 if (groundTop.HasValue && h.Point.Y <= groundTop.Value + 1e-6) return; // the ground: solid all the way down
                 // Step down through the solid to the air under it (if any).
                 double s = h.Point.Y - 0.05;
@@ -221,7 +222,7 @@ namespace Sculpt.Core
                         Node b = _nodes[j];
                         double dy = b.Y - a.Y;
                         Link kind;
-                        if (Math.Abs(dy) <= MaxWalkStep) kind = Link.Walk;
+                        if (Math.Abs(dy) <= MaxWalkStep || SlopeWalk(t, ax, az, bxw, bzw, a.Y, b.Y, run)) kind = Link.Walk;
                         else if (diag) continue; // jumps and drops only straight across
                         else if (dy > 0 && dy <= MaxJumpUp) kind = Link.Jump;
                         else if (dy < 0 && -dy <= MaxDrop) kind = Link.Drop;
@@ -247,6 +248,19 @@ namespace Sculpt.Core
                 into.Count.Add(tmpTo.Count - before);
                 into.Open.Add(open);
             }
+        }
+
+        /// <summary>
+        /// Two spots on one walkable hillside of the smooth ground, too far apart in height for a plain step (a slope over
+        /// about 27 degrees at 1 m spots): the ground between them is the same slope, so it's a walk. Never on buildings.
+        /// </summary>
+        private static bool SlopeWalk(ITerrain t, double ax, double az, double bx, double bz, double ay, double by, double run)
+        {
+            if (Math.Abs(by - ay) > run * 0.9) return false;
+            double mx = (ax + bx) * 0.5, mz = (az + bz) * 0.5, top = Math.Max(ay, by) + 1.0;
+            TerrainHit h = t.Raycast(new Vec3d(mx, top, mz), new Vec3d(0, -1, 0), top - Math.Min(ay, by) + 0.5);
+            if (!h.Hit || !h.Ground || h.Normal.Y < MinFloorNormalY) return false;
+            return h.Point.Y >= Math.Min(ay, by) - 0.05 && h.Point.Y <= Math.Max(ay, by) + 0.05;
         }
 
         public Vec3d Feet(int node) => _nodes[node].Feet(this);

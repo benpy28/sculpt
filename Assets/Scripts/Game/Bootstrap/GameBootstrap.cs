@@ -36,7 +36,7 @@ namespace Sculpt.Game.Bootstrap
 
         // ---- What the next scene load starts (the main menu picks it, then reloads the scene) ----
         public enum Launch { Menu, Offline, Host, Join, VsBot, Replay, Spectate }
-        public enum MapChoice { Duel, Breach, BattleRoyale }
+        public enum MapChoice { Duel, Breach, BattleRoyale, Hills }
         public static Launch NextLaunch = Launch.Menu;
         public static MapChoice NextMap = MapChoice.Duel;
         public static string NextAddress = "";
@@ -86,7 +86,7 @@ namespace Sculpt.Game.Bootstrap
         /// <summary>What the loading card says for a launch.</summary>
         public static void LoadingTitle(Launch launch, MapChoice map, string address, out string title, out string detail)
         {
-            string mapName = map == MapChoice.BattleRoyale ? "Royale map" : map == MapChoice.Breach ? "Breach test map" : "1v1 map";
+            string mapName = map == MapChoice.BattleRoyale ? "Royale map" : map == MapChoice.Breach ? "Breach test map" : map == MapChoice.Hills ? "Hills test map" : "1v1 map";
             string where = string.IsNullOrEmpty(address) ? "" : "  ·  " + address;
             switch (launch)
             {
@@ -113,7 +113,7 @@ namespace Sculpt.Game.Bootstrap
         public static MapChoice CurrentMap { get; private set; }
 
         /// <summary>The map a replay header names.</summary>
-        public static MapChoice MapOf(string mapName) => mapName == "Breach" ? MapChoice.Breach : mapName == "BattleRoyale" ? MapChoice.BattleRoyale : MapChoice.Duel;
+        public static MapChoice MapOf(string mapName) => mapName == "Breach" ? MapChoice.Breach : mapName == "BattleRoyale" ? MapChoice.BattleRoyale : mapName == "Hills" ? MapChoice.Hills : MapChoice.Duel;
 
         /// <summary>Each Play press starts at the menu, even with domain reload off.</summary>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -216,6 +216,16 @@ namespace Sculpt.Game.Bootstrap
                 spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
                 yaw = breachInfo.SpawnYaw;
             }
+            else if (NextMap == MapChoice.Hills)
+            {
+                // Map v3 step 3: a small map to feel the smooth height-map ground (hills, a bowl, a rock-faced mesa).
+                build = HillsMap.BuildGround;
+                _grid = HillsMap.BuildGround();
+                brushes = HillsMap.BuildBrushes(out breachInfo, breach);
+                terrain = g => HillsMap.Terrain(g, HillsMap.BuildBrushes(out _, breach));
+                spawns = new[] { breachInfo.TeamSpawns[0].ToArray(), breachInfo.TeamSpawns[1].ToArray() };
+                yaw = breachInfo.SpawnYaw;
+            }
             else if (breachMap)
             {
                 build = BreachMap.BuildGround;
@@ -289,7 +299,7 @@ namespace Sculpt.Game.Bootstrap
                     if (withDummy) server.AddDummy(new PracticeDummy(bi.RoomCentre, Math.PI, bi.Room, dummy), team: 2);
                 };
             }
-            string mapName = NextMap == MapChoice.BattleRoyale ? "BattleRoyale" : NextMap == MapChoice.Duel ? "Duel" : breachMap ? "Breach" : map.ToString();
+            string mapName = NextMap == MapChoice.BattleRoyale ? "BattleRoyale" : NextMap == MapChoice.Duel ? "Duel" : NextMap == MapChoice.Hills ? "Hills" : breachMap ? "Breach" : map.ToString();
             string modeLabel = brInfo != null ? "Battle royale " + NextBrMode + (NextLaunch == Launch.Host ? " hosted" : "")
                 : vsBot ? "Vs bot " + NextBotLevel : NextLaunch == Launch.Host ? "1v1 hosted" : "Practice";
             NetSession.LocalLocker = LockerPick.Load();
@@ -328,6 +338,7 @@ namespace Sculpt.Game.Bootstrap
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             if (brInfo != null) new GameObject("Plains").AddComponent<Sculpt.Game.World.PropsView>().Build(_world.TerrainMaterial); // trees, boulders, bushes
+            if (CurrentMap == MapChoice.Hills) new GameObject("Smooth Ground").AddComponent<Sculpt.Game.World.HeightFieldView>().Build(HillsMap.Field, _world.TerrainMaterial);
             Mark("ground");
             if (brushes != null)
             {
@@ -588,6 +599,7 @@ namespace Sculpt.Game.Bootstrap
                 else if (a == "-offline") NextLaunch = Launch.Offline;
                 else if (a == "-bot") NextLaunch = Launch.VsBot;
                 else if (a == "-breach") NextMap = MapChoice.Breach;
+                else if (a == "-hills") { NextMap = MapChoice.Hills; if (NextLaunch == Launch.Menu) NextLaunch = Launch.Offline; }
                 else if (a == "-br") { NextMap = MapChoice.BattleRoyale; if (NextLaunch == Launch.Menu) NextLaunch = Launch.Offline; }
                 else if (a == "-duos") NextBrMode = BrMode.Duos;
                 else if (a == "-squads") NextBrMode = BrMode.Squads;

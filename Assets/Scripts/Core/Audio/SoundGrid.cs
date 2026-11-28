@@ -37,6 +37,9 @@ namespace Sculpt.Core.Audio
         private int _flatTopSub;
         private readonly List<BrushWorld> _brushes = new List<BrushWorld>();
         private readonly List<SubGrid> _subs = new List<SubGrid>();
+        /// <summary>Smooth height-map ground: never stored, worked out from the heights whenever a cell is asked about
+        /// (a 1,306 m map's ground would be millions of cells).</summary>
+        private readonly List<HeightField> _fields = new List<HeightField>();
         private readonly Dictionary<long, ushort[]> _chunks = new Dictionary<long, ushort[]>();
         private readonly List<int> _near = new List<int>();
         private long _lastKey = long.MinValue;
@@ -54,9 +57,11 @@ namespace Sculpt.Core.Audio
         public SoundGrid(ITerrain world, double cellSize = 0.5, double floorY = -3.0, bool flatGroundAsFloor = true)
         {
             CellSize = cellSize;
+            Supported = Collect(world);
+            // Smooth ground can dip under the usual floor: the floor goes under its lowest point.
+            foreach (HeightField f in _fields) floorY = Math.Min(floorY, Math.Floor(f.MinHeight - 1));
             FloorY = floorY;
             _floorCell = (int)Math.Floor(floorY / cellSize);
-            Supported = Collect(world);
             if (Supported && flatGroundAsFloor) FindFlatGround();
         }
 
@@ -67,6 +72,7 @@ namespace Sculpt.Core.Audio
                 case CompositeTerrain c: return Collect(c.A) & Collect(c.B);
                 case BrushWorld b: _brushes.Add(b); return true;
                 case SubGrid g: _subs.Add(g); return true;
+                case HeightField f: _fields.Add(f); return true;
                 default: return false;
             }
         }
@@ -85,7 +91,39 @@ namespace Sculpt.Core.Audio
                 _lastKey = k;
                 _last = c;
             }
-            return c == null ? (ushort)0 : c[Index(x, y, z)];
+            ushort b = c == null ? (ushort)0 : c[Index(x, y, z)];
+            for (int i = 0; i < _fields.Count && b != AllBlocked; i++) b |= FieldBlocked(_fields[i], x, y, z);
+            return b;
+        }
+
+        /// <summary>
+        /// The lines of cell (x, y, z) the smooth ground touches (touching counts, as for every other shape). A line along
+        /// X or Z is blocked where the ground anywhere along it reaches its height; a line up Y where the ground under
+        /// it reaches its bottom end.
+        /// </summary>
+        private ushort FieldBlocked(HeightField f, int x, int y, int z)
+        {
+            double cs = CellSize, q = cs * 0.25;
+            double lowest = y * cs + q;
+            if (lowest > f.MaxHeight + Eps) return 0;
+            double fx0 = x * cs + q, fx1 = (x + 1.5) * cs, fz0 = z * cs + q, fz1 = (z + 1.5) * cs;
+            if (f.MaxBoundOver(fx0, fz0, fx1, fz1) < lowest - Eps) return 0;
+            if (f.MinBoundOver(fx0, fz0, fx1, fz1) >= y * cs + 3 * q && f.Covers(fx0, fz0) && f.Covers(fx1, fz1)) return AllBlocked;
+            int bits = 0;
+            for (int k = 0; k < 4; k++)
+            {
+                double ou = (k & 1) == 0 ? q : 3 * q, ov = (k & 2) == 0 ? q : 3 * q;
+                // Axis X: across it lie y (u) and z (v).
+                double ly = y * cs + ou, lz = z * cs + ov;
+                if (f.MaxOver((x + 0.5) * cs, lz, (x + 1.5) * cs, lz) >= ly - Eps) bits |= 1 << k;
+                // Axis Y: x (u) and z (v); the line rises from (y + 0.5) cells.
+                double vx = x * cs + ou, vz = z * cs + ov;
+                if (f.HeightAt(vx, vz) >= (y + 0.5) * cs - Eps) bits |= 1 << (4 + k);
+                // Axis Z: x (u) and y (v).
+                double zx = x * cs + ou, zy = y * cs + ov;
+                if (f.MaxOver(zx, (z + 0.5) * cs, zx, (z + 1.5) * cs) >= zy - Eps) bits |= 1 << (8 + k);
+            }
+            return (ushort)bits;
         }
 
         /// <summary>Can sound pass between cell (x,y,z) and its neighbour one step along +axis?</summary>

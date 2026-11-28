@@ -65,7 +65,7 @@ namespace Sculpt.Game.UI
         private List<ReplayLibrary.Entry> _replays;
         private int _replayAt;
         private enum DuelPick { Host, Join }
-        private enum PracticePick { FreeRoam, Breach }
+        private enum PracticePick { FreeRoam, Breach, Hills }
 
         private Mode _mode = Mode.Duel;
         private DuelPick _duel = DuelPick.Host;
@@ -336,6 +336,9 @@ namespace Sculpt.Game.UI
                         Close();
                     }
                     else Launch(GameBootstrap.Launch.Offline, GameBootstrap.MapChoice.Duel);
+                    break;
+                case Mode.Practice when _practice == PracticePick.Hills:
+                    Launch(GameBootstrap.Launch.Offline, GameBootstrap.MapChoice.Hills);
                     break;
                 default:
                     Launch(GameBootstrap.Launch.Offline, GameBootstrap.MapChoice.Breach);
@@ -659,8 +662,9 @@ namespace Sculpt.Game.UI
                     if (Segment(ix, sy, iw, 2, 1, "Watch live", _watch == WatchPick.Live)) { _watch = WatchPick.Live; _focusJoin = true; }
                     break;
                 default:
-                    if (Segment(ix, sy, iw, 2, 0, "Free roam", _practice == PracticePick.FreeRoam)) _practice = PracticePick.FreeRoam;
-                    if (Segment(ix, sy, iw, 2, 1, "Breach test map", _practice == PracticePick.Breach)) _practice = PracticePick.Breach;
+                    if (Segment(ix, sy, iw, 3, 0, "Free roam", _practice == PracticePick.FreeRoam)) _practice = PracticePick.FreeRoam;
+                    if (Segment(ix, sy, iw, 3, 1, "Breach test map", _practice == PracticePick.Breach)) _practice = PracticePick.Breach;
+                    if (Segment(ix, sy, iw, 3, 2, "Hills test map", _practice == PracticePick.Hills)) _practice = PracticePick.Hills;
                     break;
             }
 
@@ -703,7 +707,7 @@ namespace Sculpt.Game.UI
         };
 
         private string MapName => _mode == Mode.Br ? "Royale map" : _mode == Mode.Replays ? (_watch == WatchPick.Live ? "Host's map" : SelectedReplay?.Map == "Breach" ? "Breach test map" : SelectedReplay?.Map == "BattleRoyale" ? "Royale map" : "1v1 map")
-            : _mode == Mode.Practice && _practice == PracticePick.Breach ? "Breach test map" : "1v1 map";
+            : _mode == Mode.Practice && _practice == PracticePick.Breach ? "Breach test map" : _mode == Mode.Practice && _practice == PracticePick.Hills ? "Hills test map" : "1v1 map";
 
         private string PlayLabel => _finder != null ? "SEARCHING" : _mode == Mode.Br ? (_brNet == BrNet.Host ? "HOST" : _brNet == BrNet.Join ? "JOIN" : "PLAY") : _mode == Mode.Duel ? (_duel == DuelPick.Host ? "HOST" : "JOIN") : _mode == Mode.Replays ? "WATCH" : "PLAY";
 
@@ -738,6 +742,7 @@ namespace Sculpt.Game.UI
                 ? (SelectedReplay == null ? "No replays yet: every match you play or host is saved (newest 20, star one to keep it)." : "Your last 20 matches are kept; star one to keep it for good.")
                 : "Type the room code (or address) of a match on your network: you watch a little behind.",
             _ => _practice == PracticePick.FreeRoam ? "Offline on the 1v1 map with nobody else: try walls, guns and movement."
+                : _practice == PracticePick.Hills ? "Smooth hills, a bowl and a rock-faced mesa: feel slides, slopes and cliffs before the big map gets them."
                 : "Practice dummy, test walls and the movement course (F6 races the TAS in dev builds).",
         };
 
@@ -868,6 +873,11 @@ namespace Sculpt.Game.UI
                     Card(x, y, w, h, "Map", "1v1 map");
                     Card(x2, y, w, h, "Opponent", "None");
                     Card(x3, y, w, h, "Settings", "Esc in game");
+                    break;
+                case Mode.Practice when _practice == PracticePick.Hills:
+                    Card(x, y, w, h, "Map", "Hills test");
+                    Card(x2, y, w, h, "Ground", "Smooth slopes");
+                    Card(x3, y, w, h, "Try", "Slide downhill");
                     break;
                 default:
                     Card(x, y, w, h, "Dummy", "Heals walls");
