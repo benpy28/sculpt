@@ -11,7 +11,8 @@ namespace Sculpt.Game.World
     /// <summary>
     /// Draws the items on the ground from the local client's copy (the server's list). Guns lie on their side, grenade
     /// stacks show one grenade per count. The one under your crosshair lifts a little and turns slowly so you can see
-    /// what interact will grab. One GameObject per item (there are at most a few dozen).
+    /// what interact will grab. One GameObject per loose item; chests (most of the battle royale's 1,700 ground items,
+    /// and they never move) are merged into one mesh per 64 m square, redrawn only when one in it opens.
     /// </summary>
     public sealed class ItemsView : MonoBehaviour
     {
@@ -24,6 +25,19 @@ namespace Sculpt.Game.World
         private Sculpt.Core.Settings.ColourMode _colours = Sculpt.Game.UI.RarityColours.Mode;
         private readonly HashSet<int> _alive = new HashSet<int>();
         private readonly List<int> _gone = new List<int>();
+
+        private const float ChestCluster = 64f;
+        private sealed class Cluster
+        {
+            public readonly Dictionary<int, Matrix4x4> Chests = new Dictionary<int, Matrix4x4>();
+            public Mesh Mesh;
+            public GameObject Go;
+            public bool Dirty;
+        }
+        private readonly Dictionary<long, Cluster> _clusters = new Dictionary<long, Cluster>();
+        private readonly Dictionary<int, long> _chestCluster = new Dictionary<int, long>();
+        private Mesh _chestMesh;
+        private readonly List<CombineInstance> _combine = new List<CombineInstance>();
 
         public void Init(NetSession session, LocalPlayer player)
         {
@@ -95,6 +109,7 @@ namespace Sculpt.Game.World
             {
                 GroundItem g = items[i];
                 _alive.Add(g.Id);
+                if (g.Kind == Item.Chest) { AddChest(g); continue; }
                 if (_shown.TryGetValue(g.Id, out Transform old))
                 {
                     if (old.childCount == Visuals(g)) { Pose(old, g, g.Id == _hotId); continue; }
@@ -112,6 +127,53 @@ namespace Sculpt.Game.World
                 Destroy(_shown[id].gameObject);
                 _shown.Remove(id);
             }
+            _gone.Clear();
+            foreach (var kv in _chestCluster) if (!_alive.Contains(kv.Key)) _gone.Add(kv.Key);
+            foreach (int id in _gone)
+            {
+                Cluster c = _clusters[_chestCluster[id]];
+                c.Chests.Remove(id);
+                c.Dirty = true;
+                _chestCluster.Remove(id);
+            }
+            foreach (var kv in _clusters) if (kv.Value.Dirty) Redraw(kv.Key, kv.Value);
+        }
+
+        private void AddChest(in GroundItem g)
+        {
+            if (_chestCluster.ContainsKey(g.Id)) return;
+            long key = ((long)Mathf.FloorToInt((float)g.Position.X / ChestCluster) << 32) ^ (uint)Mathf.FloorToInt((float)g.Position.Z / ChestCluster);
+            if (!_clusters.TryGetValue(key, out Cluster c)) _clusters[key] = c = new Cluster();
+            float yaw = (float)(NetServer.ChestYaw(g) * Mathf.Rad2Deg); // chests sit square and face their way
+            c.Chests[g.Id] = Matrix4x4.TRS(g.Position.ToUnity(), Quaternion.Euler(0, yaw, 0), Vector3.one);
+            c.Dirty = true;
+            _chestCluster[g.Id] = key;
+        }
+
+        private void Redraw(long key, Cluster c)
+        {
+            c.Dirty = false;
+            if (_chestMesh == null)
+            {
+                GameObject proto = GunModels.BuildChest(_mat);
+                _chestMesh = proto.GetComponentInChildren<MeshFilter>().sharedMesh;
+                Destroy(proto);
+            }
+            if (c.Go == null)
+            {
+                c.Go = new GameObject($"Chests {key >> 32},{(int)key}");
+                c.Go.transform.SetParent(transform, false);
+                c.Mesh = new Mesh { name = c.Go.name, indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+                c.Go.AddComponent<MeshFilter>().sharedMesh = c.Mesh;
+                var r = c.Go.AddComponent<MeshRenderer>();
+                r.sharedMaterial = _mat;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+            _combine.Clear();
+            foreach (var kv in c.Chests) _combine.Add(new CombineInstance { mesh = _chestMesh, transform = kv.Value });
+            c.Mesh.Clear();
+            if (_combine.Count > 0) c.Mesh.CombineMeshes(_combine.ToArray(), true, true);
+            c.Go.SetActive(_combine.Count > 0);
         }
 
         private static int Visuals(in GroundItem g) => (g.Kind == Item.Grenade || g.Kind == Item.C4 || Items.IsHeal(g.Kind) ? Mathf.Clamp(g.Count, 1, 4) : 1) + (g.Rarity != Rarity.None ? 1 : 0);

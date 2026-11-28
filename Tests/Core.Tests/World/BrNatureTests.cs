@@ -44,16 +44,16 @@ namespace Sculpt.Core.Tests
                     Assert.That(_g.Get(x, c.Y, z), Is.EqualTo(SubId.Anchor), $"({c.X},{c.Y},{c.Z}) has no twin at ({x},{c.Y},{z})");
                     Assert.That(BrNature.KindAt(new Int3(x, c.Y, z)), Is.EqualTo(c.Kind));
                 }
-            // And nothing else stands above the ground.
+            // And nothing else is in the grid (the height map is the ground).
             int above = 0, expected = 0;
             var seen = new HashSet<long>();
             foreach (BrNature.Cell c in BrNature.GetPlan().Cells)
                 foreach (int[] m in BrMap.Sym)
                 {
                     BrNature.Tr(c.X, c.Z, m, n, out int x, out int z);
-                    if (seen.Add(((long)x << 32) | ((long)c.Y << 16) | (uint)z)) expected++;
+                    if (seen.Add(((long)x << 32) | ((long)(c.Y + 1024) << 16) | (uint)z)) expected++;
                 }
-            for (int cy = 1; cy < _g.ChunksY; cy++)
+            for (int cy = 0; cy < _g.ChunksY; cy++)
                 for (int cz = 0; cz < _g.ChunksZ; cz++)
                     for (int cx = 0; cx < _g.ChunksX; cx++)
                     {
@@ -116,20 +116,31 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
-        public void CanopiesStartAboveJumpReach()
+        public void CanopiesStartAboveJumpReach_OnTheHillsToo()
         {
-            // Leaves under the canopy height belong to bushes only (low and solid); every tree's leaves start 3.3 m up.
+            // Every tree's leaves start 3.3 m over the highest ground under them (a jump reaches 3.1 m); bushes stay low
+            // enough to vault and boulders low enough to climb, over the lowest ground under them.
             BrNature.Plan plan = BrNature.GetPlan();
-            var trunks = new HashSet<(int, int)>();
-            foreach (BrNature.Cell c in plan.Cells) if (c.Kind == BrNature.KindWood) trunks.Add((c.X, c.Z));
-            foreach (BrNature.Cell c in plan.Cells)
+            HeightField f = BrMap.Field;
+            double s = SubGrid.SubSize;
+            foreach (BrNature.Prop p in plan.Props)
             {
-                if (c.Kind != BrNature.KindLeaves || c.Y >= BrNature.CanopyClearSubs) continue;
-                Assert.That(c.Y, Is.LessThan(6), $"low leaves at ({c.X},{c.Y},{c.Z}) are not a bush (a bush is at most 1.8 m tall)");
+                double lowest = double.PositiveInfinity;
+                for (int i = p.CellStart; i < p.CellStart + p.CellCount; i++)
+                {
+                    BrNature.Cell c = plan.Cells[i];
+                    lowest = Math.Min(lowest, f.MaxOver(c.X * s, c.Z * s, (c.X + 1) * s, (c.Z + 1) * s));
+                }
+                for (int i = p.CellStart; i < p.CellStart + p.CellCount; i++)
+                {
+                    BrNature.Cell c = plan.Cells[i];
+                    double under = f.MaxOver(c.X * s, c.Z * s, (c.X + 1) * s, (c.Z + 1) * s);
+                    if (p.Kind == "tree" && c.Kind == BrNature.KindLeaves)
+                        Assert.That(c.Y * s - under, Is.GreaterThanOrEqualTo(3.3 - 1e-6), $"tree at {p.X:0.0},{p.Z:0.0}: leaves within jump reach");
+                    if (p.Kind == "bush") Assert.That((c.Y + 1) * s - lowest, Is.LessThanOrEqualTo(1.8 + BrNature.MaxRise + 1e-6), $"bush at {p.X:0.0},{p.Z:0.0} too tall");
+                    if (p.Kind == "rocks") Assert.That((c.Y + 1) * s - lowest, Is.LessThanOrEqualTo(3.0 + BrNature.MaxRise + 1e-6), $"boulder at {p.X:0.0},{p.Z:0.0} too tall");
+                }
             }
-            // Bushes stay low enough to vault, rocks low enough to climb.
-            foreach (BrNature.Cell c in plan.Cells)
-                if (c.Kind == BrNature.KindStone) Assert.That(c.Y, Is.LessThan(10), "a boulder is at most 3 m tall (a ledge climb)");
         }
     }
 }

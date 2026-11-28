@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Sculpt.Core;
 using UnityEngine;
@@ -49,22 +50,22 @@ namespace Sculpt.Game.World
             for (int k = 0; k < plan.Props.Count; k++)
             {
                 BrNature.Prop p = plan.Props[k];
-                int x0 = int.MaxValue, z0 = int.MaxValue, x1 = int.MinValue, z1 = int.MinValue, y1 = 0;
+                int x0 = int.MaxValue, z0 = int.MaxValue, x1 = int.MinValue, z1 = int.MinValue, y0 = int.MaxValue, y1 = int.MinValue;
                 bool stone = false;
                 for (int i = p.CellStart; i < p.CellStart + p.CellCount; i++)
                 {
                     BrNature.Cell q = plan.Cells[i];
                     x0 = Mathf.Min(x0, q.X); x1 = Mathf.Max(x1, q.X);
                     z0 = Mathf.Min(z0, q.Z); z1 = Mathf.Max(z1, q.Z);
-                    y1 = Mathf.Max(y1, q.Y);
+                    y0 = Mathf.Min(y0, q.Y); y1 = Mathf.Max(y1, q.Y);
                     if (q.Kind == (byte)ChunkMesher.KindStone) stone = true;
                 }
-                // A scratch grid round the prop with the ground under it (so the faces where it meets the ground come out
-                // as they would on the map), one sub-cell of air round it.
+                // A scratch grid round the prop, one sub-cell of air round it. The prop stands on the smooth ground (map
+                // v3): its lowest layers are under the ground, so the faces down there are never seen.
                 int ox = x0 - 2, oz = z0 - 2;
-                int cx = (x1 - ox + 3 + cs - 1) / cs, cz = (z1 - oz + 3 + cs - 1) / cs, cy = 1 + (y1 + 2 + cs - 1) / cs;
-                var g = new SubGrid(cx, cy, cz, -cs);
-                g.FillBaseGround();
+                int oy = (int)Math.Floor((y0 - 2) / (double)cs) * cs;
+                int cx = (x1 - ox + 3 + cs - 1) / cs, cz = (z1 - oz + 3 + cs - 1) / cs, cy = (y1 + 2 - oy + cs) / cs;
+                var g = new SubGrid(cx, cy, cz, oy);
                 for (int i = p.CellStart; i < p.CellStart + p.CellCount; i++)
                 {
                     BrNature.Cell q = plan.Cells[i];
@@ -236,7 +237,6 @@ namespace Sculpt.Game.World
                                 if (!cells.TryGetValue((at[0], at[1], at[2]), out byte kind)) continue;
                                 at[axis] += side;
                                 if (cells.ContainsKey((at[0], at[1], at[2]))) continue;
-                                if (axis == 1 && at[1] < 0) continue; // standing on the ground
                                 mask[u + nu * v] = (byte)(kind + 1);
                             }
                         for (int v = 0; v < nv; v++)

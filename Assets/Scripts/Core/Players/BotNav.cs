@@ -61,10 +61,11 @@ namespace Sculpt.Core
         /// much faster). The probing runs on all cores; the result is the same as one core would build, in the same order.
         /// </summary>
         public static BotNav Build(ITerrain t, double minX, double minZ, double sizeX, double sizeZ, double cell = 0.75, double topY = 20, double floorY = -3,
-                                   double? groundTop = null)
+                                   double? groundTop = null, Func<double, double, double> columnTop = null)
         {
             int nx = (int)Math.Floor(sizeX / cell), nz = (int)Math.Floor(sizeZ / cell);
             var n = new BotNav(cell, minX, minZ, nx, nz);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             var rows = new List<(int cx, double y)>[nz];
             System.Threading.Tasks.Parallel.For(0, nz, cz =>
             {
@@ -73,7 +74,10 @@ namespace Sculpt.Core
                 for (int cx = 0; cx < nx; cx++)
                 {
                     double x = minX + (cx + 0.5) * cell, z = minZ + (cz + 0.5) * cell;
-                    FindFloors(t, x, z, topY, floorY, floors, groundTop);
+                    // A map that knows a column's highest solid starts there (the open hills of the battle royale: one short
+                    // probe instead of one from the top of the tallest building).
+                    double top = columnTop != null ? Math.Min(topY, columnTop(x, z)) : topY;
+                    FindFloors(t, x, z, top, floorY, floors, groundTop);
                     foreach (double y in floors)
                         if (!t.BoxOverlapsSolid(StandBox(x, z, y))) found.Add((cx, y));
                 }
@@ -88,12 +92,18 @@ namespace Sculpt.Core
                     n._nodes.Add(new Node { Cx = cx, Cz = cz, Y = y });
                 }
             while (col <= nx * nz) n._colStart[col++] = n._nodes.Count;
+            long floorsMs = clock.ElapsedMilliseconds;
             n.Connect(t);
+            long connectMs = clock.ElapsedMilliseconds - floorsMs;
             n.FindAreas();
+            LastBuildTimes = $"floors {floorsMs} ms, edges {connectMs} ms, areas {clock.ElapsedMilliseconds - floorsMs - connectMs} ms";
             return n;
         }
 
         private int[] _area;
+
+        /// <summary>How the last build's time split (diagnostics).</summary>
+        public static string LastBuildTimes = "";
 
         /// <summary>
         /// Which connected area a spot is in (spots joined by any edge, either way, share one). A sealed room on the

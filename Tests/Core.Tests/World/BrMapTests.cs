@@ -151,7 +151,7 @@ namespace Sculpt.Core.Tests
             Assert.That(all.Count, Is.EqualTo(32));
             TestContext.WriteLine($"pad to POI {_br.PadToPoi:0.0} m, pad to loot {_br.PadToLoot:0.0} m");
             Assert.That(_br.PadToLoot, Is.InRange(8.0, 20.0), "a short walk");
-            Assert.That(_br.PadToPoi, Is.InRange(120.0, 180.0)); // the 921 m map (90..160 on the 614 m one, 35..90 on the 307 m one)
+            Assert.That(_br.PadToPoi, Is.InRange(180.0, 260.0)); // the 1,306 m map (120..180 on the 921 m one, 90..160 on the 614 m one)
         }
 
         [Test]

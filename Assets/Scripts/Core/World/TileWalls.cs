@@ -324,6 +324,23 @@ namespace Sculpt.Core
             CopyOnly = from.CopyOnly;
             foreach (var kv in from._chargedAt) _chargedAt[kv.Key] = kv.Value;
             foreach (var kv in from._shutAs) _shutAs[kv.Key] = kv.Value;
+            _touched.AddRange(from._touched);
+        }
+
+        private readonly List<int> _touched = new List<int>();
+
+        /// <summary>
+        /// Every tile play has ever changed (in the order they first changed): the rest are exactly as built. Lets the
+        /// replay state hash skip the untouched hundreds of thousands (map v3: it walked all of them, ~8 ms in Mono).
+        /// </summary>
+        public IReadOnlyList<int> Touched => _touched;
+
+        /// <summary>Notes a tile's first change by play (every write that isn't the build goes through here).</summary>
+        internal void Touch(int tile, ref WallTile t)
+        {
+            if (t.Changed) return;
+            t.Changed = true;
+            _touched.Add(tile);
         }
 
         public int Count => _tiles.Count;
@@ -500,7 +517,7 @@ namespace Sculpt.Core
             t.State = state;
             t.Health = health;
             t.Open = o;
-            if (cause != TileCause.Built) t.Changed = true;
+            if (cause != TileCause.Built && !t.Changed) { t.Changed = true; _touched.Add(tile); }
             _tiles[tile] = t;
             if (state == TileState.DoorOpen && !Gone(from)) _shutAs[tile] = from; // what it is again when it shuts
             else if (state != TileState.DoorOpen) _shutAs.Remove(tile);

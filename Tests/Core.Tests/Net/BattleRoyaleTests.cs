@@ -385,7 +385,7 @@ namespace Sculpt.Core.Tests.Net
                 }
             }
             Assert.That(s.Match.Phase, Is.EqualTo(MatchPhase.Ended), "the last circle closes to nothing: someone wins (or the last go down together)");
-            Assert.That(phases, Is.GreaterThanOrEqualTo(3), "players standing still on their pads are caught by the third circle");
+            Assert.That(phases, Is.GreaterThanOrEqualTo(2), "players standing still on their pads are caught by the second circle (the pads are outside the first shrink on the 1,306 m map)");
             // Places: every team has one, the winner first, nobody respawned.
             var places = new List<int>();
             foreach (MatchScore sc in s.Match.Scores) { places.Add(sc.Place); Assert.That(sc.Place, Is.InRange(1, 32)); }

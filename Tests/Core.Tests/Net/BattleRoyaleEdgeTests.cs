@@ -65,8 +65,8 @@ namespace Sculpt.Core.Tests.Net
                 // Open ground in the middle of the plaza, 4 m apart, facing each other.
                 Vec3d at = br.Centre + new Vec3d(0, 0, -2);
                 Vec3d bt = br.Centre + new Vec3d(0, 0, 2);
-                at = ItemRules.Settle(s.Grid, at + new Vec3d(0, 5, 0));
-                bt = ItemRules.Settle(s.Grid, bt + new Vec3d(0, 5, 0));
+                at = ItemRules.Settle(s.Grid, at + new Vec3d(0, 30, 0)); // the plaza is on the plateau (map v3)
+                bt = ItemRules.Settle(s.Grid, bt + new Vec3d(0, 30, 0));
                 Assert.That(bt.Y, Is.EqualTo(at.Y).Within(1e-6), "flat");
                 Assert.That(s.Grid.Raycast(at + new Vec3d(0, 1.6, 0), new Vec3d(0, 0, 1), 4).Hit, Is.False, "a clear line on the plaza");
                 Place(a, at);

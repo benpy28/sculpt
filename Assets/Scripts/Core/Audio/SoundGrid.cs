@@ -228,7 +228,10 @@ namespace Sculpt.Core.Audio
             if (top == int.MinValue) top = g.MaxYExclusive;
             double topY = top * SubGrid.SubSize;
             double cells = topY / CellSize;
-            if (Math.Abs(cells - Math.Round(cells)) > 1e-9 || topY < FloorY) return;
+            // A grid that is all air but its props (the battle royale since map v3: the height map is the ground) needs
+            // no floor of its own: only its prop columns are marked, from its bottom up.
+            bool allAir = top == g.MinY;
+            if (!allAir && (Math.Abs(cells - Math.Round(cells)) > 1e-9 || topY < FloorY)) return;
             // Mixed chunks below the top must be solid all through (the floor stands for them); above it they are props.
             var cols = new HashSet<(int, int)>();
             foreach (var (cx, cy, cz) in mixed)
@@ -240,7 +243,7 @@ namespace Sculpt.Core.Audio
                         for (int x = cx * n; x < cx * n + n; x++)
                             if (!g.IsSolid(x, y, z)) return;
             }
-            _floorCell = (int)Math.Round(cells);
+            if (!allAir) _floorCell = (int)Math.Round(cells);
             _flatTopSub = top;
             _propColumns.AddRange(cols);
             _propColumns.Sort();

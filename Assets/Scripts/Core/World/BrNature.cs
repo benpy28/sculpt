@@ -22,8 +22,10 @@ namespace Sculpt.Core
 
         /// <summary>Lowest canopy sub-cell above the ground: 3.3 m, so nobody walks or jumps into it.</summary>
         public const int CanopyClearSubs = 11;
-        /// <summary>The grid's top (sub-cells above the ground): canopies stay under it.</summary>
+        /// <summary>A prop's top (sub-cells above its base).</summary>
         public const int TopSubs = 32;
+        /// <summary>The ground under a prop's footprint varies at most this much (map v3: props stand on the hills).</summary>
+        public const double MaxRise = 0.9;
 
         public struct Cell
         {
@@ -142,8 +144,11 @@ namespace Sculpt.Core
                 foreach (Aabb b in part.Buildings)
                     if (x + r > b.Min.X - 5 && x - r < b.Max.X + 5 && z + r > b.Min.Z - 5 && z - r < b.Max.Z + 5) return false;
                 if (x + r > region.Min.X - 20 && x - r < region.Max.X + 6 && z + r > region.Min.Z - 6 && z - r < region.Max.Z + 6) return false;
-                var box = new Aabb(new Vec3d(x - r - 2.5, -0.5, z - r - 2.5), new Vec3d(x + r + 2.5, 12, z + r + 2.5));
+                var box = new Aabb(new Vec3d(x - r - 2.5, -40, z - r - 2.5), new Vec3d(x + r + 2.5, 80, z + r + 2.5));
                 if (src.BoxOverlapsSolid(box)) return false;
+                // On ground gentle enough under it (map v3: the plains sit on the hills).
+                Rise(x, z, r + 1, out double lo, out double hi);
+                if (hi - lo > MaxRise) return false;
                 foreach (Vec3d k in keepClear)
                     if (Sq(k.X - x) + Sq(k.Z - z) < Sq(r + 4)) return false;
                 foreach (Prop p in placed)
@@ -256,7 +261,25 @@ namespace Sculpt.Core
         private static double TreeRadius(int seed) => (Big(seed) ? 13 : 10) * SubGrid.SubSize + 0.6;
         private static bool Big(int seed) => Hash(seed, 0, 9) % 100 < 35;
 
-        // ================================================================ Shapes (sub-cells, ground top at y 0)
+        // ================================================================ Shapes (sub-cells, on the height-map ground)
+
+        /// <summary>Lowest and highest ground (<see cref="BrMap.Field"/>) over a disc: its centre and 16 points round it at two radii.</summary>
+        private static void Rise(double x, double z, double r, out double lo, out double hi)
+        {
+            HeightField f = BrMap.Field;
+            lo = hi = f.HeightAt(x, z);
+            for (int k = 0; k < 16; k++)
+                for (int ring = 1; ring <= 2; ring++)
+                {
+                    double a = k * Math.PI / 8, d = r * ring / 2;
+                    double h = f.HeightAt(x + Math.Cos(a) * d, z + Math.Sin(a) * d);
+                    if (h < lo) lo = h;
+                    if (h > hi) hi = h;
+                }
+        }
+
+        /// <summary>The sub-cell a prop's shape counts from (its "ground top at y 0").</summary>
+        private static int BaseSub(double groundY) => (int)Math.Floor(groundY / SubGrid.SubSize + 1e-9);
 
         /// <summary>A tree: trunk sunk into the ground with a few root knuckles, a lumpy canopy of overlapping blobs.</summary>
         private static void Tree(Plan plan, double x, double z, int seed)
@@ -265,17 +288,21 @@ namespace Sculpt.Core
             bool big = Big(seed);
             int w = big ? 3 : 2;
             int tx = (int)Math.Floor(x / s) - w / 2, tz = (int)Math.Floor(z / s) - w / 2;
+            // Counted from the highest ground under the canopy, so the canopy clears jump reach everywhere under it; the
+            // trunk reaches down into the lowest.
+            Rise(x, z, TreeRadius(seed), out double lo, out double hi);
+            int b = (int)Math.Ceiling(hi / SubGrid.SubSize - 1e-9), down = b - BaseSub(lo);
             int trunkTop = (big ? 15 : 12) + (int)(Hash(seed, 1, 1) % 3);
-            for (int y = -4; y <= trunkTop; y++)
+            for (int y = -4 - down; y <= trunkTop; y++)
                 for (int dz = 0; dz < w; dz++)
                     for (int dx = 0; dx < w; dx++)
-                        Put(plan, tx + dx, y, tz + dz, KindWood);
+                        Put(plan, tx + dx, y, tz + dz, KindWood, b, -4 - down);
             for (int dz = -1; dz <= w; dz++)
                 for (int dx = -1; dx <= w; dx++)
                 {
                     bool ring = dx == -1 || dz == -1 || dx == w || dz == w;
                     bool corner = (dx == -1 || dx == w) && (dz == -1 || dz == w);
-                    if (ring && !corner && Hash(seed, dx + 7, dz + 7) % 100 < 45) Put(plan, tx + dx, 0, tz + dz, KindWood);
+                    if (ring && !corner && Hash(seed, dx + 7, dz + 7) % 100 < 45) Put(plan, tx + dx, -down, tz + dz, KindWood, b, -4 - down);
                 }
             double cx = tx + w * 0.5, cz = tz + w * 0.5;
             int lobes = 3 + (int)(Hash(seed, 2, 2) % 3);
@@ -299,7 +326,7 @@ namespace Sculpt.Core
                         foreach (var l in lobe)
                         {
                             double dx = (px - l.x) / l.r, dy = (py - l.y) / (l.r * 0.78), dz = (pz - l.z) / l.r;
-                            if (dx * dx + dy * dy + dz * dz <= 0.86 + wobble) { Put(plan, qx, y, qz, KindLeaves); break; }
+                            if (dx * dx + dy * dy + dz * dz <= 0.86 + wobble) { Put(plan, qx, y, qz, KindLeaves, b, 0); break; }
                         }
                     }
         }
@@ -312,6 +339,8 @@ namespace Sculpt.Core
             double cx = x / s, cz = z / s, cy = -1;
             double tilt = (seed / 75 % 100) / 100.0 * 0.4 - 0.2;
             int ext = (int)Math.Ceiling(Math.Max(rx, rz) * 1.2) + 1;
+            Rise(x, z, ext * s, out double lo, out _);
+            int b = BaseSub(lo);
             for (int y = -3; y < (int)(cy + ry * 1.2) + 1; y++)
                 for (int qz = (int)cz - ext; qz <= (int)cz + ext; qz++)
                     for (int qx = (int)cx - ext; qx <= (int)cx + ext; qx++)
@@ -319,7 +348,7 @@ namespace Sculpt.Core
                         double px = qx + 0.5 - cx, py = y + 0.5 - cy - tilt * (qx + 0.5 - cx), pz = qz + 0.5 - cz;
                         double lump = (Hash((int)seed, qx * 7 + (y & 3), qz * 3 + (y >> 2)) % 100) / 100.0 * 0.22;
                         double d = Sq(px / rx) + Sq(py / ry) + Sq(pz / rz);
-                        if (d <= 0.9 + lump) Put(plan, qx, y, qz, KindStone);
+                        if (d <= 0.9 + lump) Put(plan, qx, y, qz, KindStone, b, -3);
                     }
         }
 
@@ -330,20 +359,30 @@ namespace Sculpt.Core
             double r = 3.5 + (Hash(seed, 1, 1) % 3) * 0.7, h = 3.4 + (Hash(seed, 2, 2) % 2);
             double cx = x / s, cz = z / s;
             int ext = (int)Math.Ceiling(r * 1.2) + 1;
+            Rise(x, z, ext * s, out double lo, out _);
+            int b = BaseSub(lo);
             for (int y = -1; y < (int)h + 1; y++)
                 for (int qz = (int)cz - ext; qz <= (int)cz + ext; qz++)
                     for (int qx = (int)cx - ext; qx <= (int)cx + ext; qx++)
                     {
                         double px = qx + 0.5 - cx, py = y + 0.5, pz = qz + 0.5 - cz;
                         double lump = (Hash(seed, qx * 5 + y, qz) % 100) / 100.0 * 0.25;
-                        if (Sq(px / r) + Sq(py / h) + Sq(pz / r) <= 0.85 + lump) Put(plan, qx, y, qz, KindLeaves);
+                        if (Sq(px / r) + Sq(py / h) + Sq(pz / r) <= 0.85 + lump) Put(plan, qx, y, qz, KindLeaves, b, -1);
                     }
         }
 
-        private static void Put(Plan plan, int x, int y, int z, byte kind)
+        /// <summary>
+        /// A prop sub-cell <paramref name="y"/> sub-cells over its base <paramref name="b"/>. Cells under the ground there
+        /// (and under the prop's own lowest layer <paramref name="floor"/>) are left out: the ground is solid anyway.
+        /// </summary>
+        private static void Put(Plan plan, int x, int y, int z, byte kind, int b, int floor)
         {
-            if (y >= TopSubs || y < 0) return; // below the ground top it is solid ground anyway
-            plan.Cells.Add(new Cell { X = x, Y = y, Z = z, Kind = kind });
+            if (y >= TopSubs || y < floor) return;
+            int ay = b + y;
+            if (ay >= BrMap.GroundMinY + BrMap.GroundLayers * SubGrid.ChunkSize) return;
+            double ground = BrMap.Field.HeightAt((x + 0.5) * SubGrid.SubSize, (z + 0.5) * SubGrid.SubSize);
+            if ((ay + 1) * SubGrid.SubSize <= ground - 0.3) return; // deep in the ground
+            plan.Cells.Add(new Cell { X = x, Y = ay, Z = z, Kind = kind });
         }
 
         private static double Sq(double v) => v * v;

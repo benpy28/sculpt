@@ -18,6 +18,11 @@ namespace Sculpt.Game.World
         private Material _wallMat, _nextMat;
         private const int Segments = 160;
         private const float Height = 140f, Below = 20f;
+        /// <summary>The ground's height at a map position (the battle royale's hills, map v3): the next circle's ring is
+        /// laid on it. Null: flat ground at 0.</summary>
+        public static System.Func<double, double, double> GroundAt;
+        private Mesh _ringMesh;
+        private double _ringX = double.NaN, _ringZ, _ringR;
 
         public void Init(NetSession session)
         {
@@ -31,7 +36,8 @@ namespace Sculpt.Game.World
             _nextMat.SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Off);
             _nextMat.renderQueue = 3040;
             _wall = Make("Storm Wall", WallMesh(), _wallMat);
-            _next = Make("Next Circle", RingMesh(), _nextMat);
+            _ringMesh = new Mesh { name = "Next circle", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+            _next = Make("Next Circle", _ringMesh, _nextMat);
         }
 
         private Transform Make(string name, Mesh mesh, Material mat)
@@ -81,9 +87,11 @@ namespace Sculpt.Game.World
             _next.gameObject.SetActive(showNext);
             if (showNext)
             {
-                _next.position = new Vector3((float)st.ToX, 0.06f, (float)st.ToZ);
-                float nr = (float)st.ToRadius;
-                _next.localScale = new Vector3(nr, 1, nr);
+                if (st.ToX != _ringX || st.ToZ != _ringZ || st.ToRadius != _ringR)
+                {
+                    _ringX = st.ToX; _ringZ = st.ToZ; _ringR = st.ToRadius;
+                    LayRing(_ringMesh, (float)_ringX, (float)_ringZ, (float)_ringR);
+                }
                 _nextMat.SetColor("_Color", new Color(1f, 1f, 1f, 0.55f));
             }
         }
@@ -124,31 +132,41 @@ namespace Sculpt.Game.World
             return m;
         }
 
-        /// <summary>A thin flat ring on the ground at unit radius (0.6 m wide at any size is close enough: scaled with it).</summary>
-        private static Mesh RingMesh()
+        /// <summary>
+        /// A 0.6 m wide ring laid on the ground (a vertex every 3 m or so, 15 cm up), in world space: rebuilt only when the
+        /// next circle changes, once a phase.
+        /// </summary>
+        private static void LayRing(Mesh m, float cx, float cz, float r)
         {
-            var v = new Vector3[(Segments + 1) * 2];
+            int segs = Mathf.Clamp(Mathf.CeilToInt(2 * Mathf.PI * r / 3f), Segments, 4096);
+            var v = new Vector3[(segs + 1) * 2];
             var c = new Color[v.Length];
-            var t = new int[Segments * 6];
-            for (int i = 0; i <= Segments; i++)
+            var t = new int[segs * 6];
+            for (int i = 0; i <= segs; i++)
             {
-                float a = i * Mathf.PI * 2 / Segments;
-                v[i * 2] = new Vector3(Mathf.Cos(a) * 0.985f, 0, Mathf.Sin(a) * 0.985f);
-                v[i * 2 + 1] = new Vector3(Mathf.Cos(a), 0, Mathf.Sin(a));
-                c[i * 2] = c[i * 2 + 1] = Color.white;
+                float a = i * Mathf.PI * 2 / segs, ca = Mathf.Cos(a), sa = Mathf.Sin(a);
+                for (int k = 0; k < 2; k++)
+                {
+                    float rr = k == 0 ? Mathf.Max(0, r - 0.6f) : r;
+                    double x = cx + ca * rr, z = cz + sa * rr;
+                    double y = GroundAt != null ? GroundAt(x, z) : 0;
+                    if (double.IsInfinity(y) || double.IsNaN(y)) y = 0;
+                    v[i * 2 + k] = new Vector3((float)x, (float)y + 0.15f, (float)z);
+                    c[i * 2 + k] = Color.white;
+                }
             }
             int n = 0;
-            for (int i = 0; i < Segments; i++)
+            for (int i = 0; i < segs; i++)
             {
                 int a = i * 2;
                 t[n++] = a; t[n++] = a + 2; t[n++] = a + 1;
                 t[n++] = a + 1; t[n++] = a + 2; t[n++] = a + 3;
             }
-            var m = new Mesh { name = "Next circle" };
+            m.Clear();
             m.vertices = v;
             m.colors = c;
             m.triangles = t;
-            return m;
+            m.RecalculateBounds();
         }
     }
 }

@@ -28,16 +28,16 @@ namespace Sculpt.Core.Net
         public int Seed = 1;
 
         // ---- The circle. Phase k: wait, then shrink to Radius[k] over Shrink[k]; outside it you take Dps[k] each second.
-        // The 921 m map (2026-11-27, Ben: a game should last 10-15 minutes with 32 players): seven phases, 480 s of
-        // waits and 375 s of shrinking, so the circle closes to nothing 14 min 15 s after the start; 32-bot test matches
-        // end 10-12 minutes in, in the 65 m or 28 m circle. The first circle is big and slow to give everyone time to loot
-        // and get in from anywhere (the far corner of the play area is about 400 m from the first circle's edge at worst:
-        // 40 s at a sprint, with 210 s to do it); the shrinks never move faster than 2.5 m/s, well under a run.
-        public double StartRadius = 600;   // covers the whole play area (its corners are 576 m from the middle)
-        public double[] WaitSeconds = { 120, 100, 80, 60, 50, 40, 30 };
-        public double[] ShrinkSeconds = { 90, 75, 60, 50, 40, 35, 25 };
-        public double[] Radius = { 380, 230, 130, 65, 28, 10, 0 };
-        public int[] Dps = { 1, 2, 3, 5, 7, 9, 10 };
+        // The 1,306 m map (map v3, 2026-11-28; Ben's plan: 8 phases, the first about 850 m, closed at about 15 min, most
+        // games over 11-13 minutes in, in the 60 m or 25 m circle): 490 s of waits and 410 s of shrinking, so the circle
+        // closes to nothing exactly 15 minutes after the start. The first circle covers the whole play area (its corners
+        // are 815 m from the middle) and the first wait is long, so everyone has time to loot and get in from anywhere.
+        // No shrink moves the edge faster than 2.5 m/s (tested), well under a run.
+        public double StartRadius = 850;
+        public double[] WaitSeconds = { 140, 90, 70, 55, 45, 35, 30, 25 };
+        public double[] ShrinkSeconds = { 125, 85, 60, 45, 35, 25, 20, 15 };
+        public double[] Radius = { 540, 340, 210, 125, 60, 25, 8, 0 };
+        public int[] Dps = { 1, 2, 3, 4, 6, 8, 10, 12 };
         public int StormHurtEveryTicks = 60 * SimTime.Per60;
 
         // ---- Loot.
@@ -61,7 +61,7 @@ namespace Sculpt.Core.Net
         /// <summary>Chests spill their loot this far in front of them.</summary>
         public double ChestSpill = 0.9;
         /// <summary>Ground item cap in a battle royale (chests, spills and everything the dead drop).</summary>
-        public int MaxGroundItems = 1500;
+        public int MaxGroundItems = 2600; // the 1,306 m map starts with 1,704 chests
     }
 
     /// <summary>

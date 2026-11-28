@@ -15,7 +15,8 @@ namespace Sculpt.Core.Tests
             for (int i = 0; i < a.Nodes.Count; i++)
             {
                 BotNav.Node x = a.Nodes[i], y = b.Nodes[i];
-                Assert.That((x.Cx, x.Cz, x.Y, x.Open), Is.EqualTo((y.Cx, y.Cz, y.Y, y.Open)), $"spot {i}");
+                Assert.That((x.Cx, x.Cz, x.Open), Is.EqualTo((y.Cx, y.Cz, y.Open)), $"spot {i}");
+                Assert.That(x.Y, Is.EqualTo(y.Y).Within(1e-9), $"spot {i}"); // a ray from another height rounds its last bit differently
             }
             // Edges by what joins what: every neighbour pair has the same link kind both ways round.
             for (int i = 0; i < a.Nodes.Count; i += 97)
@@ -31,16 +32,18 @@ namespace Sculpt.Core.Tests
         }
 
         [Test]
-        public void StoppingAtFlatGround_GivesTheSameGrid()
+        public void StartingColumnsJustOverEmptyGround_GivesTheSameGrid()
         {
-            // A part of the battle royale map (a spawn region, the halls, the hills and fields), with and without the stop.
+            // A part of the battle royale map (a spawn region, the halls, hills, villages, props), with and without the
+            // short start over empty ground.
             BrushWorld w = BrMap.BuildBrushes(out BreachMapInfo info, out BrMapInfo br);
             foreach (int d in info.Block.Doors) w.Tiles.Set(d, TileState.DoorOpen, w.Tiles[d].Health, TileCause.Built);
-            ITerrain t = BrMap.Terrain(BrMap.BuildGround(), w);
-            double x0 = br.Centre.X + 100, z0 = br.Centre.Z + 80;
-            BotNav fast = BotNav.Build(t, x0, z0, 180, 90, 1.0, groundTop: 0);
-            BotNav slow = BotNav.Build(t, x0, z0, 180, 90, 1.0);
-            Assert.That(fast.Nodes.Count, Is.GreaterThan(10000));
+            SubGrid g = BrMap.BuildGround();
+            ITerrain t = BrMap.Terrain(g, w);
+            double x0 = br.Centre.X + 390, z0 = br.Centre.Z + 200;
+            BotNav fast = BotNav.Build(t, x0, z0, 160, 120, 1.0, topY: BrMap.NavTop, floorY: BrGround.QuarryFloor - 2, columnTop: BrMap.NavColumnTop(w, g));
+            BotNav slow = BotNav.Build(t, x0, z0, 160, 120, 1.0, topY: BrMap.NavTop, floorY: BrGround.QuarryFloor - 2);
+            Assert.That(fast.Nodes.Count, Is.GreaterThan(15000));
             AssertSame(fast, slow);
         }
     }

@@ -6,7 +6,7 @@ namespace Sculpt.Game.World
 {
     /// <summary>
     /// Distant buildings (map v3 groundwork, Ben's plan: "distant buildings become merged boxes that still show their
-    /// holes", "meshes are only built for what's near"). The map is cut into 64 m regions. A region within
+    /// holes", "meshes are only built for what's near"). The map is cut into 32 m regions. A region within
     /// <see cref="FarDetailFrom"/> of the camera is drawn by its 8 m tile blocks, as before. Past that it is one mesh:
     /// whole tiles merged into long flat strips along each wall and floor (no hidden sides), and every tile that was
     /// ever hit drawn exactly as up close, so every hole, crack, patch and open door still shows at any distance. Its
@@ -16,8 +16,8 @@ namespace Sculpt.Game.World
     /// </summary>
     public sealed partial class BrushView
     {
-        private const float RegionSize = 64f;
-        private const int BlocksPerRegion = 8; // RegionSize / TileBlockSize
+        private const float RegionSize = 32f; // map v3: a 64 m region's far redraw cost up to 16 ms in Mono once bots were shooting walls everywhere
+        private const int BlocksPerRegion = 4; // RegionSize / TileBlockSize
         /// <summary>Regions nearer than this are drawn in full detail (the picture quality setting will set it: 200-500 m).</summary>
         public static float FarDetailFrom = 200f;
         /// <summary>A near region only turns far again this much further out (no flicker at the line).</summary>

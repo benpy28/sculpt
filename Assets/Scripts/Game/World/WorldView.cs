@@ -121,10 +121,12 @@ namespace Sculpt.Game.World
                 // Ground that never changes in play (the battle royale's) is drawn in big squares of 16 x 16 chunks (77 m): it
                 // is flat merged quads, and 4 x 4 groups were 2,300 renderers on the 921 m map for a plane.
                 _group = _fixedGround ? 16 : grid.AllocatedChunks == 0 ? 4 : 1;
+                if (DrawsNothing) _group = int.MaxValue / 4;
                 _groupsX = (grid.ChunksX + _group - 1) / _group;
                 _groupsZ = (grid.ChunksZ + _group - 1) / _group;
                 int groups = _groupsX * _groupsZ * (_group == 1 ? grid.ChunksY : 1);
                 if (_group == 1) groups = grid.ChunkCount;
+                if (DrawsNothing) groups = 0;
                 _meshes = new Mesh[groups];
                 _chunkObjects = new GameObject[groups];
                 for (int i = 0; i < groups; i++)
@@ -194,10 +196,18 @@ namespace Sculpt.Game.World
             if (cam != null) _grass.Draw(cam.transform.position);
         }
 
+        /// <summary>
+        /// The ground is drawn elsewhere and the grid holds nothing to draw here (the battle royale since map v3: the
+        /// height map is the ground, <see cref="HeightFieldView"/>, and the props are <see cref="PropsView"/>'s). Set
+        /// before <see cref="Bind"/>.
+        /// </summary>
+        public bool DrawsNothing;
+
         /// <summary>Rebuild every chunk the grid changed since the last call.</summary>
         public int RebuildDirty()
         {
             if (_grid == null) return 0;
+            if (DrawsNothing) { _dirty.Clear(); _grid.DrainDirtyChunks(_dirty); return 0; }
             RefreshTints();
             if (!_grid.HasDirtyChunks) return 0;
             _dirty.Clear();

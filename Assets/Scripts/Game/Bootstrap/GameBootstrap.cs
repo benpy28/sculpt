@@ -334,11 +334,21 @@ namespace Sculpt.Game.Bootstrap
             }
             Mark("cover");
             _world.Init(_grid, sculptConfig, mapInfo, cover, brInfo != null ? BrNature.KindAt : (Func<Int3, byte>)null); // the battle royale plains
+            _world.DrawsNothing = brInfo != null; // map v3: the height map is the ground, the props draw themselves
             Mark("world init");
             _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             _session.ClientChanged += () => _world.Bind(_session.ClientGrid, _session.Client.Sculpt);
             if (brInfo != null) new GameObject("Plains").AddComponent<Sculpt.Game.World.PropsView>().Build(_world.TerrainMaterial); // trees, boulders, bushes
             if (CurrentMap == MapChoice.Hills) new GameObject("Smooth Ground").AddComponent<Sculpt.Game.World.HeightFieldView>().Build(HillsMap.Field, _world.TerrainMaterial);
+            if (brInfo != null)
+            {
+                // Stone round each building's foot (its footing's level ground within 2 m of its walls): the rest of a
+                // footing is grass like the fields.
+                var plinths = new Sculpt.Game.World.Plinths(breachInfo.Block.Buildings, 2.0);
+                HeightField field = BrMap.Field;
+                new GameObject("Smooth Ground").AddComponent<Sculpt.Game.World.HeightFieldView>().Build(field, _world.TerrainMaterial,
+                    (x, z) => plinths.On(x, z, field.HeightAt(x, z)));
+            }
             Mark("ground");
             if (brushes != null)
             {
@@ -351,7 +361,8 @@ namespace Sculpt.Game.Bootstrap
             Mark("buildings");
             // Sky, haze, fixed sun and the distant hills around the arena.
             float half = (float)(_grid.SizeX * SubGrid.SubSize * 0.5);
-            Scenery.Build(half, (float)(_grid.SizeZ * SubGrid.SubSize * 0.5));
+            if (brInfo != null) Scenery.Build(half, half, (float)BrGround.CliffTop, (float)(BrMap.Size / 2 - BrMap.HalfCells * BrMap.Cell)); // level with the rim's top
+            else Scenery.Build(half, (float)(_grid.SizeZ * SubGrid.SubSize * 0.5));
 
             Mark("scenery");
             _input = new GameInput();
@@ -427,6 +438,7 @@ namespace Sculpt.Game.Bootstrap
             gameObject.AddComponent<InventoryHud>().Init(_player, _input);
             gameObject.AddComponent<MatchHud>().Init(_player, _session);
             gameObject.AddComponent<BrHud>().Init(_player, _session);
+            StormView.GroundAt = brInfo != null ? (x, z) => BrMap.Field.HeightAt(x, z) : (Func<double, double, double>)null;
             if (brInfo != null) new GameObject("Storm").AddComponent<StormView>().Init(_session);
             gameObject.AddComponent<PingHud>().Init(_session, _rig.Camera);
             gameObject.AddComponent<SpectatorHud>().Init(_player, _session, _spectatorCam, _input);
@@ -443,7 +455,9 @@ namespace Sculpt.Game.Bootstrap
                 // grid and this client's sound grid ran on workers while the rest loaded. Finishing them in play cost
                 // seconds of hitches (all cores busy, and garbage collections over a heap full of map copies).
                 try { _brNav?.Wait(); } catch (System.Exception e) { Debug.LogException(e); }
+                Mark("walking grid (" + BotNav.LastBuildTimes + ")");
                 sightTask?.Wait();
+                Mark("sight grid");
                 SoundRouter.WaitReady(20000);
                 Mark("builds done");
                 System.GC.Collect();

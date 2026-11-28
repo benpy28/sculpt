@@ -127,7 +127,7 @@ namespace Sculpt.Core
             t.Open = broken ? 0ul : open;
             t.Patch = patch;
             t.Steel = steel;
-            if (cause != TileCause.Built) t.Changed = true;
+            if (cause != TileCause.Built) Touch(tile, ref t);
             _tiles[tile] = t;
             if ((from == TileState.Broken) != broken) World.SetSolid(t.Brush, !broken);
             World.SetShape(t.Brush, t.Open, World[t.Brush].Solids); // the exact shape follows in ShapeAround
