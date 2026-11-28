@@ -46,6 +46,20 @@ namespace Sculpt.Core.Net
         public double SightMetres = 160;
         /// <summary>Battle royale: how long it holds a spot it roamed to before moving on (seconds, random in between).</summary>
         public double BrHoldMin = 6, BrHoldMax = 20;
+        /// <summary>Battle royale temperament spread: each bot gets an aggression between these (0 careful, 1 pushy).</summary>
+        public double BrAggroMin = 0.1, BrAggroMax = 0.95;
+        /// <summary>Battle royale: gunfire this far away tells it there is a fight (third-partying, an enemy's health guess).</summary>
+        public double BrHearFightMetres = 100;
+        /// <summary>Battle royale: longest stay in cover (seconds; a heal under way may run up to 6 s past it), then a
+        /// pause before it takes cover again unless hurt. Cover is for healing and breaking a bad fight, never for camping.</summary>
+        public double BrCoverSeconds = 9, BrCoverCooldownSeconds = 5;
+        /// <summary>Battle royale rotation: walking speed it plans with (m/s, paths wind) and its safety margin, careful bots
+        /// leaving up to the max early, pushy ones the min (seconds before the edge reaches it).</summary>
+        public double BrRotateSpeed = 6.5, BrRotateMarginMin = 8, BrRotateMarginMax = 40;
+        /// <summary>Battle royale: chance to go after a fight it hears (careful .. pushy), and how long it keeps at it.</summary>
+        public double BrThirdPartyMin = 0.1, BrThirdPartyMax = 0.65, BrThirdPartySeconds = 30;
+        /// <summary>Battle royale: after the calm opening, the fights it starts grow from half range to full over this long.</summary>
+        public double BrSettleSeconds = 90;
 
         public static DuelBotConfig For(BotLevel level)
         {
@@ -70,12 +84,16 @@ namespace Sculpt.Core.Net
     /// map (stairs, ramps, vaults), roams when it knows nothing, hunts where it last saw or heard you, strafes in fights,
     /// and picks pump, SMG or AR by range.
     /// </summary>
-    public sealed class DuelBot : IBotBrain
+    public sealed partial class DuelBot : IBotBrain
     {
         private struct Obs
         {
             public int Tick;
             public bool Seen, Heard, Pinged;
+            /// <summary>It was hit this tick (Heard holds roughly where from).</summary>
+            public bool Hurt;
+            /// <summary>The enemy observed.</summary>
+            public int Id;
             /// <summary>The enemy observed is another bot (battle royale opening: bots leave each other alone).</summary>
             public bool Bot;
             public Vec3d Pos, Vel, HeardPos, PingPos;
@@ -154,6 +172,8 @@ namespace Sculpt.Core.Net
             _wobPhase2 = _rng.NextDouble() * 6.283;
             _wobPhase3 = _rng.NextDouble() * 6.283;
             _wobPhase4 = _rng.NextDouble() * 6.283;
+            _tac = new Random(unchecked(seed * 7919 + 17));
+            Aggression = Config.BrAggroMin + _tac.NextDouble() * (Config.BrAggroMax - Config.BrAggroMin);
         }
 
         public bool CountsAsPlayer => true;
@@ -185,6 +205,10 @@ namespace Sculpt.Core.Net
                 _hasRoam = false;
                 _lastDamage = s.Damage;
                 _lastSeenTick = _lastHeardTick = _pingTick = int.MinValue / 2;
+                Doing = Tactic.None;
+                _rotPhase = -2;
+                _rotating = false;
+                Array.Clear(_noise, 0, _noise.Length);
                 _stuckFrom = s.Position;
                 _stuckCheck = tick;
             }
@@ -193,6 +217,13 @@ namespace Sculpt.Core.Net
             Vec3d eye = s.Position + new Vec3d(0, PlayerMovement.EyeOf(s, mc), 0);
             ServerPlayer enemy = FindEnemy(server, me);
             Store(tick, Observe(server, me, enemy, eye));
+            bool brPlay = server.Match.IsBr && server.Match.Phase == MatchPhase.Playing;
+            if (brPlay)
+            {
+                HearGunfire(server, me, tick);
+                SettleRange(server, tick);
+                CheckSecondEnemy(server, me, enemy, eye, tick);
+            }
 
             // ---- What it knows now: what it perceived a reaction time ago.
             Obs p = Recall(tick - Config.ReactionTicks);
@@ -204,14 +235,20 @@ namespace Sculpt.Core.Net
                 p.Seen = false;
                 p.Heard = false;
             }
-            else if (server.Match.IsBr && server.Match.Phase == MatchPhase.Playing && tick - _hurtTick > 4 * SimTime.TicksPerSecond
-                     && !(_engaged && tick - _lastSeenTick < 30 * SimTime.Per60))
+            else if (brPlay)
             {
-                // Later in a battle royale: it picks its fights like a person would, not every enemy it can see across a
-                // field: only those within BrEngageMetres (or anyone who hurt it), and it doesn't go after far-off noise.
-                // (2026-11-27: 32-bot matches were down to a third alive two minutes in, long AR fights at 60-80 m.)
-                if (p.Seen && (p.Pos - s.Position).Length > Config.BrEngageMetres) p.Seen = false;
-                if (p.Heard && (p.HeardPos - s.Position).Length > Config.BrEngageMetres) p.Heard = false;
+                // Later in a battle royale it plays for placement: it picks fights it can win (range, its temperament and
+                // guns, both players' health as far as it can tell), answers anyone who hurt it close by, takes cover from
+                // someone hurting it from far off, and doesn't go after far-off noise. (2026-11-27: 32-bot matches were
+                // down to a third alive two minutes in, long AR fights at 60-80 m.)
+                bool hurtLately = tick - _hurtTick <= 4 * SimTime.TicksPerSecond;
+                bool fighting = _engaged && tick - _lastSeenTick < 30 * SimTime.Per60;
+                double seenAt = p.Seen ? (p.Pos - s.Position).Length : 0;
+                if (p.Seen && !fighting && !hurtLately && !TakeFight(server, me, s, seenAt, p.Id, tick)) p.Seen = false;
+                if (p.Seen && hurtLately && !fighting && seenAt > EngageRange(s) + 15) p.Seen = false; // too far to win: cover instead
+                if (p.Heard && (p.HeardPos - s.Position).Length > (hurtLately ? EngageRange(s) : Config.BrEngageMetres)) p.Heard = false;
+                // Hit by someone it can't see or can't reach: get out of their line.
+                if (p.Hurt && !p.Seen && Doing != Tactic.Cover) StartCover(server, s.Position, p.HeardPos, tick);
             }
             if (p.Seen)
             {
@@ -225,6 +262,7 @@ namespace Sculpt.Core.Net
                 _lastSeenPos = p.Pos;
                 _lastSeenVel = p.Vel;
                 _lastSeenTick = p.Tick;
+                _targetId = p.Id;
             }
             else _engaged = false;
             if (p.Heard) { _lastHeardPos = p.HeardPos; _lastHeardTick = p.Tick; }
@@ -232,6 +270,14 @@ namespace Sculpt.Core.Net
 
             bool recentlySeen = tick - _lastSeenTick < 90 * SimTime.Per60;
             double dist = recentlySeen ? (_lastSeenPos - s.Position).Length : 30;
+            if (brPlay)
+            {
+                if (_engaged && Doing != Tactic.Cover && ShouldRetreat(server, me, s, dist, _targetId, tick)) StartCover(server, s.Position, _lastSeenPos, tick);
+                // Cornered in cover (the enemy came close, or keeps hitting it there): fight it out.
+                if (Doing == Tactic.Cover && _engaged && (dist < 9 || tick - _hurtTick < 30 * SimTime.Per60 && (s.Position - _coverSpot).HorizontalLength < 1.5)) EndCover(tick);
+                StepCover(server, s, tick);
+            }
+            else if (Doing != Tactic.None) Doing = Tactic.None;
 
             // ---- Aim.
             double wantYaw = _yaw, wantPitch = 0;
@@ -276,22 +322,47 @@ namespace Sculpt.Core.Net
             Vec3d wish = Vec3d.Zero;
             bool sprint = false, jump = false, crouch = false, punch = false;
             int openDoor = -1;
-            if (_engaged || (recentlySeen && tick - _lastSeenTick < 36 * SimTime.Per60))
+            _push = brPlay && _engaged && EnemyHpGuess(server, me, _targetId, tick) < 0.35 && Hp(s, mc) > 0.4;
+            Vec3d rotGoal = default;
+            bool rotate = brPlay && RotateGoal(server, s, tick, out rotGoal);
+            if (brPlay && Doing == Tactic.Cover)
+            {
+                // Into cover (still shooting back while it can see them), then crouch there and heal.
+                if (_coverHealing && !_engaged) { wish = Vec3d.Zero; crouch = true; }
+                else
+                {
+                    wish = FollowPath(s, _coverSpot, tick, ref jump, out Vec3d lookAt, out _);
+                    if (!aimEnemy && wish.LengthSquared > 0.01)
+                    {
+                        Vec3d d = lookAt - eye;
+                        wantYaw = Math.Atan2(d.X, d.Z);
+                        wantPitch = 0;
+                        gain = 0.15;
+                    }
+                    sprint = !_engaged && wish.LengthSquared > 0.01;
+                }
+                Unstick(s, tick, wish, ref jump);
+            }
+            else if (_engaged || (recentlySeen && tick - _lastSeenTick < 36 * SimTime.Per60))
                 wish = FightMove(server, s, tick, dist, ref jump);
             else
             {
                 Vec3d goal;
                 bool br = server.Match.IsBr;
-                // Battle royale: get out of the circle first, whatever else is going on.
+                // Battle royale: get out of the circle first, whatever else is going on; then into the next one in time.
                 if (br && StormGoal(server, s, tick, out Vec3d safe)) goal = safe;
+                else if (rotate) { goal = rotGoal; Doing = Tactic.Rotate; }
                 // A ping newer than its last sighting: go where it was shown (it still has to find and see them to fight).
                 else if (!recentlySeen && _pingTick > _lastSeenTick && tick - _pingTick < 600 * SimTime.Per60) goal = _pingPos;
                 else if (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60) goal = _lastSeenPos;
+                // Battle royale: a fight it heard and chose to join (third-partying).
+                else if (brPlay && ThirdPartyGoal(server, s, tick, out Vec3d fight)) goal = fight;
                 else if (tick - _lastHeardTick < 600 * SimTime.Per60) goal = _lastHeardPos;
                 // Battle royale: loot what is near (chests, a gun it lacks, a better rarity, a utility), else roam inside the circle.
                 else if (br && LootGoal(server, me, s, tick, out Vec3d loot)) goal = loot;
                 else goal = br ? RoamInCircle(server, s.Position, tick) : RoamGoal(s.Position);
                 if (br && server.Match.Phase == MatchPhase.Countdown) goal = s.Position; // waits on its pad
+                if (Doing == Tactic.Rotate && !(rotate && goal.Equals(rotGoal))) Doing = Tactic.None;
                 wish = FollowPath(s, goal, tick, ref jump, out Vec3d lookAt, out bool arrived);
                 if (arrived)
                 {
@@ -367,7 +438,8 @@ namespace Sculpt.Core.Net
                 fire = err < tol && dTrue < range && !burstPause && s.Weapon.UsedOf(held) < wc.Stats[(int)held].MagSize;
             }
             // ---- Heals: hurt, out of a fight for 2 s and nothing seen, it bandages up like a person would (it keeps walking).
-            int healSlot = !_engaged && tick - _lastSeenTick > 120 * SimTime.Per60 ? HealSlot(s, mc) : -1;
+            // In cover it starts sooner (1 s unseen): that is what it went there for.
+            int healSlot = !_engaged && (tick - _lastSeenTick > 120 * SimTime.Per60 || (_coverHealing && tick - _lastSeenTick > 60 * SimTime.Per60)) ? HealSlot(s, mc) : -1;
             if (healSlot >= 0 && !s.Hand.InSculptMode)
             {
                 Item want = s.Hand.Bag[healSlot];
@@ -429,10 +501,19 @@ namespace Sculpt.Core.Net
             MotorState s = me.State;
             if (s.Damage > _lastDamage) _hurtTick = server.Tick;
             if (s.Damage > _lastDamage && enemy != null)
-                o = Heard(o, enemy.State.Position, 2.0); // hit: it knows roughly where from
+            {
+                // Hit: it knows roughly where from (the damage direction; a person sees the same marker). In a battle
+                // royale that is whoever hit it, not just the nearest enemy.
+                bool br = server.Match.IsBr;
+                ServerPlayer by = br && server.Tick - me.LastHurtTick <= 1 ? server.FindPlayer(me.LastHurtBy) : null;
+                Vec3d from = by != null && !by.State.Dead ? by.State.Position : enemy.State.Position;
+                o = Heard(o, from, br ? 2.0 + (from - s.Position).Length * 0.05 : 2.0);
+                o.Hurt = true;
+            }
             _lastDamage = s.Damage;
             if (enemy == null) return o;
             o.Bot = NetServer.IsBotConnection(enemy.ConnectionId);
+            o.Id = enemy.Id;
             MotorState e = enemy.State;
             double h = PlayerMovement.HeightOf(e, server.Movement);
             o.Height = h;
@@ -458,7 +539,7 @@ namespace Sculpt.Core.Net
             if (!o.Seen)
             {
                 double d = to.Length;
-                if (enemy.Shots.Count > 0 && d < Config.HearShots) o = Heard(o, e.Position, 1.5 + d * 0.04);
+                if (server.Tick - enemy.LastShotTick <= 1 && d < Config.HearShots) o = Heard(o, e.Position, 1.5 + d * 0.04);
                 else if (e.Grounded && e.Velocity.HorizontalLength > 5 && d < Config.HearSteps) o = Heard(o, e.Position, 1.5);
             }
             return o;
@@ -599,6 +680,7 @@ namespace Sculpt.Core.Net
             Vec3d fwd = len > 1e-3 ? to / len : new Vec3d(Math.Sin(_yaw), 0, Math.Cos(_yaw));
             Vec3d side = new Vec3d(fwd.Z, 0, -fwd.X) * _strafe;
             double pref = WantGun == Weapon.Pump ? 4 : WantGun == Weapon.Smg ? 9 : 18;
+            if (_push) pref = Math.Max(3, pref * 0.5); // battle royale: they're nearly down, close in
             Vec3d wish = side;
             if (dist > pref + 5)
             {
@@ -948,6 +1030,7 @@ namespace Sculpt.Core.Net
         }
 
         private int _holdUntil = int.MinValue / 2;
+        private bool _push;
 
         private void Unstick(in MotorState s, int tick, Vec3d wish, ref bool jump)
         {

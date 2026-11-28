@@ -73,6 +73,12 @@ namespace Sculpt.Core.Net
         public SlotPrefs Prefs = SlotPrefs.Default;
         /// <summary>The last enemy who hurt this player, and when (kill credit for falls).</summary>
         public int LastHurtBy, LastHurtTick;
+        /// <summary>The last enemy this player hurt, when, and the health it had left: what the attacker's hit marker and
+        /// damage number tell them (bots use it to judge a fight like a person would).</summary>
+        public int HitVictim, HitTick = int.MinValue / 2, HitVictimHealth;
+        /// <summary>The last tick this player fired (bots hear gunfire from it: the shot lists are cleared once resolved,
+        /// before the bots think).</summary>
+        public int LastShotTick = int.MinValue / 2;
 
         // Delta snapshots: the newest snapshot tick this client acked (from its newest input packet) and what we sent it.
         internal int AckTick = int.MinValue;
