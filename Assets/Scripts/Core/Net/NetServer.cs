@@ -459,6 +459,8 @@ namespace Sculpt.Core.Net
                 p.Punches.Clear();
                 _charge.By = p.Id;
                 Before before = TakeBefore(p);
+                // The match countdown: only looking and slot changes (the client's prediction does the same on the same ticks).
+                if (Match.Phase == MatchPhase.Countdown) CountdownFreeze.Apply(ref cmd, ref p.State);
                 NetSim.Simulate(Grid, Movement, Config, ref p.State, cmd, p.Spawn, events, p.Shots, p.Nades, p.Punches, Walls != null ? _charge : null);
                 CheckIntegrity(p, before);
                 if (p.BrLoadout && !p.State.Dead) { GiveBrLoadout(p); p.BrLoadout = false; }

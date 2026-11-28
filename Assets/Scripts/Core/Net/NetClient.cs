@@ -97,6 +97,11 @@ namespace Sculpt.Core.Net
         public int LastSnapshotTick { get; private set; } = int.MinValue;
         /// <summary>The match as the server last told it (phase, timer, scores).</summary>
         public readonly MatchState Match = new MatchState();
+        /// <summary>The match countdown's ticks (from the Match message): commands on them are frozen like the server's
+        /// (<see cref="CountdownFreeze"/>), so prediction stays exact.</summary>
+        public FreezeWindow Freeze = FreezeWindow.None;
+        /// <summary>True while the newest predicted tick is in the countdown freeze (the HUD and zoom read it).</summary>
+        public bool FrozenNow => Freeze.Covers(Tick);
         /// <summary>Set when the server can't be joined (a different game build); empty otherwise.</summary>
         public string JoinError { get; private set; } = "";
         /// <summary>Smoothed estimate of the server's tick right now (for timers).</summary>
@@ -249,6 +254,7 @@ namespace Sculpt.Core.Net
                     case MsgType.Match:
                         if (!Joined) return;
                         MatchProtocol.Read(ref r, Match);
+                        Freeze.OnMatch(Match);
                         // Battle royale deals teams out at every match start; the scores carry yours.
                         if (Match.IsBr)
                             foreach (MatchScore sc in Match.Scores)
@@ -311,6 +317,7 @@ namespace Sculpt.Core.Net
             ResetSpectator();
             Match.Phase = MatchPhase.Off;
             Match.Scores.Clear();
+            Freeze = FreezeWindow.None;
             PlayerId = m.PlayerId;
             Team = m.Team;
             Spawn = m.Spawn;
@@ -435,7 +442,9 @@ namespace Sculpt.Core.Net
                 if (_histTick[k] != t) break;
                 prev = s;
                 ApplyLanding(ref s, _histMoved[k], _histMoveTo[k], _histKick[k]);
-                NetSim.Simulate(Grid, Movement, Config, ref s, _histCmd[k], Spawn, null, null, null, null, Walls != null ? Charges : null);
+                InputCmd hc = _histCmd[k];
+                if (Freeze.Covers(t)) CountdownFreeze.Apply(ref hc, ref s);
+                NetSim.Simulate(Grid, Movement, Config, ref s, hc, Spawn, null, null, null, null, Walls != null ? Charges : null);
                 if (_histLock[k] != int.MinValue) HandRules.LockGun(ref s.Hand, _histLock[k]);
                 _histState[k] = s;
             }
@@ -520,7 +529,12 @@ namespace Sculpt.Core.Net
             });
 
             WarpNext = false;
-            if (cmd.Hand.Heal && Heals != null) OnHealPressed(cmd);
+            // The match countdown: the server simulates this tick frozen, so predict it frozen too. The raw command is
+            // still what is sent and kept (a replay re-applies the freeze from the window).
+            bool frozen = Freeze.Covers(Tick);
+            InputCmd sim = cmd;
+            if (frozen) CountdownFreeze.Strip(ref sim);
+            if (sim.Hand.Heal && Heals != null) OnHealPressed(sim);
             _prevPred = _pred;
             if (Sculpt != null)
             {
@@ -531,10 +545,11 @@ namespace Sculpt.Core.Net
             Vec3d moveTo = default, kick = Vec3d.Zero;
             Sculpt?.TakeLandingMove(out moved, out moveTo, out kick);
             ApplyLanding(ref _pred, moved, moveTo, kick);
+            if (frozen) CountdownFreeze.Hold(ref _pred);
             if (LocalShots.Count > 1024) LocalShots.Clear(); // nobody is draining (tests)
             if (LocalGrenades.Count > 1024) LocalGrenades.Clear();
             int shotsBefore = LocalShots.Count;
-            NetSim.Simulate(Grid, Movement, Config, ref _pred, cmd, Spawn, events, LocalShots, LocalGrenades, null, Walls != null ? Charges : null);
+            NetSim.Simulate(Grid, Movement, Config, ref _pred, sim, Spawn, events, LocalShots, LocalGrenades, null, Walls != null ? Charges : null);
             for (int k = shotsBefore; k < LocalShots.Count; k++)
             {
                 WeaponShot sh = LocalShots[k];
@@ -545,14 +560,14 @@ namespace Sculpt.Core.Net
             {
                 // Doors: the server applies a press right after that tick's movement, so do the same here.
                 Doors.Expire(Walls, Tick, HealAnswerTimeoutTicks);
-                if (cmd.Hand.Door && !_pred.Dead)
+                if (sim.Hand.Door && !_pred.Dead)
                 {
                     _doorBodies.Clear();
                     _doorBodies.Add(PlayerMovement.Box(_pred.Position, Movement.HalfWidth, PlayerMovement.HeightOf(_pred, Movement)));
-                    Doors.Press(Walls, cmd.Hand.DoorTile, cmd.Hand.DoorOpen, Tick, PlayerId, _doorBodies);
+                    Doors.Press(Walls, sim.Hand.DoorTile, sim.Hand.DoorOpen, Tick, PlayerId, _doorBodies);
                 }
             }
-            int lockUntil = Sculpt != null ? Sculpt.AfterMove(Tick, _pred, cmd) : int.MinValue;
+            int lockUntil = Sculpt != null ? Sculpt.AfterMove(Tick, _pred, sim) : int.MinValue;
             if (lockUntil != int.MinValue) HandRules.LockGun(ref _pred.Hand, lockUntil);
 
             int i = Tick & _histMask;

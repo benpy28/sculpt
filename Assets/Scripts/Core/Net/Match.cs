@@ -138,6 +138,62 @@ namespace Sculpt.Core.Net
         }
     }
 
+    /// <summary>
+    /// The match countdown freeze (Ben 2026-11-28: "you should be fully frozen besides looking around and switching what
+    /// you hold in your inventory"). Applied to a command just before it is simulated, by the server and by the client's
+    /// prediction alike, so prediction stays exact: no walking, sprinting, jumping, crouching, sliding or climbing (and
+    /// no horizontal speed left over), no firing, aiming, reloading, throwing, punching, wall heals, heal items, pickups,
+    /// drops, chests or doors. Looking (yaw, pitch), slot keys and inventory-screen swaps still work. Respawns stay (the
+    /// countdown's own respawn rides in a command).
+    /// </summary>
+    public static class CountdownFreeze
+    {
+        public static void Apply(ref InputCmd cmd, ref MotorState s)
+        {
+            Strip(ref cmd);
+            Hold(ref s);
+        }
+
+        /// <summary>The command part: everything but the view, slot keys and slot swaps goes.</summary>
+        public static void Strip(ref InputCmd cmd)
+        {
+            cmd.Move = new MoveInput { Yaw = cmd.Move.Yaw };
+            HandInput h = cmd.Hand;
+            cmd.Hand = new HandInput { WeaponKey = h.WeaponKey, Swap = h.Swap, SwapA = h.SwapA, SwapB = h.SwapB };
+            cmd.HasSculpt = false;
+            cmd.SculptSeq = 0;
+            cmd.Sculpt = default;
+        }
+
+        /// <summary>The state part: no horizontal speed (gravity still holds you on your pad).</summary>
+        public static void Hold(ref MotorState s)
+        {
+            if (!s.Dead) s.Velocity = new Vec3d(0, s.Velocity.Y, 0);
+        }
+    }
+
+    /// <summary>
+    /// The countdown window as a client knows it from the Match message: [From, To) in server ticks. It is kept after the
+    /// countdown ends (To becomes the start of the phase that followed), so replaying older ticks after a correction
+    /// still freezes exactly the ticks the server froze.
+    /// </summary>
+    public struct FreezeWindow
+    {
+        public int From, To;
+
+        public static FreezeWindow None => new FreezeWindow { From = int.MaxValue, To = int.MinValue };
+
+        public bool Covers(int tick) => tick >= From && tick < To;
+
+        /// <summary>Call on every Match message.</summary>
+        public void OnMatch(MatchState m)
+        {
+            if (m.Phase == MatchPhase.Countdown) { From = m.PhaseStartTick; To = m.PhaseEndTick; return; }
+            // Any other phase: the countdown (if one was running) ended where this phase began.
+            if (m.PhaseStartTick >= From && m.PhaseStartTick < To) To = m.PhaseStartTick;
+        }
+    }
+
     /// <summary>MsgType.Match, reliable: the whole match state (tiny), sent on every change and to joiners.</summary>
     public static class MatchProtocol
     {
