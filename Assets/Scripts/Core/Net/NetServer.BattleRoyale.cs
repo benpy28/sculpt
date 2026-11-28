@@ -512,6 +512,9 @@ namespace Sculpt.Core.Net
         private PickupResult OpenChest(ServerPlayer p, in GroundItem chest, Vec3d eye)
         {
             ItemConfig cfg = Movement.Items;
+            // The same state rules as a pickup: not dead, not disarmed.
+            PickupPlan plan = ItemRules.Plan(p.State, chest, p.Id, Tick, cfg, p.Prefs);
+            if (!plan.Allowed) return plan.Result;
             if ((chest.Centre - eye).Length > cfg.Reach + cfg.ServerReachSlack) return PickupResult.TooFar;
             if (!ItemRules.Visible(Grid, eye, chest.Centre)) return PickupResult.Blocked;
             Items.Remove(chest.Id);

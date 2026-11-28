@@ -157,6 +157,41 @@ namespace Sculpt.Core.Tests.Net
             Assert.That(secs, Is.LessThan(maxSeconds), $"down in {secs:0.0} s");
         }
 
+        /// <summary>Chests follow the pickup rules: no opening one while disarmed.</summary>
+        [Test]
+        public void AChest_DoesNotOpenWhileDisarmed()
+        {
+            var brains = new List<Scripted>();
+            NetServer s = NewServer(Quick(BrMode.Solos, brains), out BrMapInfo br);
+            StepUntil(s, () => s.Match.Phase == MatchPhase.Playing, 20 * SimTime.TicksPerSecond);
+            GroundItem chest = default;
+            for (int i = 0; i < s.Items.Count; i++) if (s.Items[i].Kind == Item.Chest) { chest = s.Items[i]; break; }
+            Assert.That(chest.Kind, Is.EqualTo(Item.Chest));
+            double cy = NetServer.ChestYaw(chest);
+            Vec3d at = ItemRules.Settle(s.Grid, chest.Position + new Vec3d(Math.Sin(cy) * 1.3, 1, Math.Cos(cy) * 1.3));
+            ServerPlayer x = s.Players[0];
+            bool press = false;
+            BrainOf(s, x).Make = (srv, me) =>
+            {
+                Vec3d eye = me.State.Position + new Vec3d(0, PlayerMovement.EyeOf(me.State, srv.Movement), 0);
+                Vec3d d = chest.Centre - eye;
+                var c = new InputCmd { Tick = srv.Tick, ViewTick = srv.Tick, Pitch = (float)(-Math.Asin(d.Y / d.Length) * 180 / Math.PI) };
+                c.Move.Yaw = Math.Atan2(d.X, d.Z);
+                if (press) { c.Hand.Pickup = true; c.Hand.PickId = chest.Id; }
+                return c;
+            };
+            Place(x, at);
+            s.Step();
+            HandRules.Disarm(ref x.State.Hand, s.Tick, 10 * SimTime.TicksPerSecond);
+            press = true;
+            for (int i = 0; i < 10; i++) { Place(x, at); s.Step(); }
+            Assert.That(x.State.Hand.Mode, Is.EqualTo(HandMode.Disarmed));
+            Assert.That(s.Items.TryGet(chest.Id, out _), Is.True, "a disarmed player can't open a chest");
+            x.State.Hand.Mode = HandMode.Weapon;
+            for (int i = 0; i < 10; i++) { Place(x, at); s.Step(); }
+            Assert.That(s.Items.TryGet(chest.Id, out _), Is.False, "opens once armed again");
+        }
+
         private static Scripted BrainOf(NetServer s, ServerPlayer p)
         {
             Assert.That(s.Bots.TryGetValue(p.Id, out IBotBrain brain));
