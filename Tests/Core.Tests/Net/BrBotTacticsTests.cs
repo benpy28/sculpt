@@ -106,8 +106,11 @@ namespace Sculpt.Core.Tests.Net
                 me.HitVictim = 0;
             }
             // Careful players leave sooner.
-            Assert.That(Bot(0).ShouldRetreat(s, me, With(70, true, 3), 15, them.Id, 1000), "careful: leaves at 47%");
-            Assert.That(Bot(1).ShouldRetreat(s, me, With(70, true, 3), 15, them.Id, 1000), Is.False, "pushy: stays at 47%");
+            Assert.That(Bot(0).ShouldRetreat(s, me, With(90, true, 3), 15, them.Id, 1000), "careful: leaves at 60%");
+            Assert.That(Bot(1).ShouldRetreat(s, me, With(90, true, 3), 15, them.Id, 1000), Is.False, "pushy: stays at 60%");
+            // Losing at range with nothing to heal with: it still gets out of their line (2026-11-28); close in it fights on.
+            Assert.That(Bot(0.5).ShouldRetreat(s, me, With(70, true, 0), 15, them.Id, 1000), "no heals, 47% against a healthy enemy at 15 m: breaks off");
+            Assert.That(Bot(0.5).ShouldRetreat(s, me, With(70, true, 0), 7, them.Id, 1000), Is.False, "the same at 7 m: fights it out");
         }
 
         // ------------------------------------------------------------------ cover

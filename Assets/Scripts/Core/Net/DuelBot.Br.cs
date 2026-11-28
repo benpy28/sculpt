@@ -162,7 +162,8 @@ namespace Sculpt.Core.Net
             if (dist > EngageRange(s)) return false;
             if (dist < 6) return true; // right on top of it: fight
             double mine = Hp(s, server.Movement), theirs = EnemyHpGuess(server, me, enemyId, tick);
-            if (mine >= 0.55 || theirs < mine - 0.05) return true;
+            // Starting a fight wants enough health to win it: careful players want more (80% at the most careful).
+            if (mine >= 0.55 + 0.25 * (1 - Aggression) || theirs < mine - 0.05) return true;
             // Hurt: heal first if it can, else only a fight it is likely to win, close.
             return !HasHeals(s.Hand.Bag) && dist < 15 && mine >= 0.3;
         }
@@ -176,7 +177,11 @@ namespace Sculpt.Core.Net
             bool outnumbered = tick - _secondSeenTick < 2 * SimTime.TicksPerSecond;
             if (outnumbered && mine < 0.55 + 0.25 * (1 - Aggression)) return true;
             if (theirs < 0.25 && mine > 0.2) return false; // nearly down: finish it
-            if (HasHeals(s.Hand.Bag)) return mine < 0.3 + 0.25 * (1 - Aggression) && theirs >= mine - 0.1;
+            // Losing the trade at range (it took more than it gave): get out of their line while it still can, as a
+            // sensible player would, instead of trading to the death. Careful players leave sooner. Close in, running
+            // is worse than fighting, so it stays.
+            if (dist > 9 && theirs > mine + 0.15 && mine < 0.5 + 0.3 * (1 - Aggression)) return true;
+            if (HasHeals(s.Hand.Bag))return mine < 0.3 + 0.25 * (1 - Aggression) && theirs >= mine - 0.1;
             return mine < 0.2 && theirs > mine + 0.25;
         }
 
@@ -362,7 +367,8 @@ namespace Sculpt.Core.Net
                 if (Doing == Tactic.ThirdParty) { goal = _tpGoal; return true; }
                 return false;
             }
-            if (Hp(s, server.Movement) < 0.6 || (_rotating && _rotUrgent)) return false;
+            // Only near full health: walking into someone else's fight is the most dangerous thing in the game.
+            if (Hp(s, server.Movement) < 0.8 || (_rotating && _rotUrgent)) return false;
             if (!HeardFight(server, s.Position, tick, out Vec3d mid)) return false;
             int key = (int)Math.Floor(mid.X / 30) * 1000 + (int)Math.Floor(mid.Z / 30);
             if (key != _tpKey || tick - _tpRollTick > 20 * SimTime.TicksPerSecond)

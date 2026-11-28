@@ -57,7 +57,7 @@ namespace Sculpt.Core.Net
         /// leaving up to the max early, pushy ones the min (seconds before the edge reaches it).</summary>
         public double BrRotateSpeed = 6.5, BrRotateMarginMin = 8, BrRotateMarginMax = 40;
         /// <summary>Battle royale: chance to go after a fight it hears (careful .. pushy), and how long it keeps at it.</summary>
-        public double BrThirdPartyMin = 0.1, BrThirdPartyMax = 0.65, BrThirdPartySeconds = 30;
+        public double BrThirdPartyMin = 0.05, BrThirdPartyMax = 0.5, BrThirdPartySeconds = 30;
         /// <summary>Battle royale: after the calm opening, the fights it starts grow from half range to full over this long.</summary>
         public double BrSettleSeconds = 180;
 
@@ -386,7 +386,11 @@ namespace Sculpt.Core.Net
                 else if (rotate) { goal = rotGoal; Doing = Tactic.Rotate; Goal = GoalKind.Rotate; }
                 // A ping newer than its last sighting: go where it was shown (it still has to find and see them to fight).
                 else if (!recentlySeen && _pingTick > _lastSeenTick && tick - _pingTick < 600 * SimTime.Per60) { goal = _pingPos; Goal = GoalKind.Ping; }
-                else if (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60) { goal = _lastSeenPos; Goal = GoalKind.LastSeen; }
+                // Where it last saw them: in a battle royale only pushy players, or anyone after a hurt enemy while
+                // healthy themselves, go after someone who broke off. Running after every enemy that left was how fights
+                // that had ended turned into deaths (and into third parties for everyone near).
+                else if ((!brPlay || Aggression > 0.55 || EnemyHpGuess(server, me, _targetId, tick) < 0.5 && Hp(s, mc) > 0.5)
+                    && (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60)) { goal = _lastSeenPos; Goal = GoalKind.LastSeen; }
                 // Battle royale: a fight it heard and chose to join (third-partying).
                 else if (brPlay && ThirdPartyGoal(server, s, tick, out Vec3d fight)) { goal = fight; Goal = GoalKind.ThirdParty; }
                 else if (tick - _lastHeardTick < 600 * SimTime.Per60) { goal = _lastHeardPos; Goal = GoalKind.Heard; }
@@ -456,6 +460,7 @@ namespace Sculpt.Core.Net
                 Unstick(s, tick, wish, ref jump);
             }
             if (tick < _jumpUntil) jump = true;
+            if (tick < _escapeUntil) wish = _escapeDir; // backing off a wall it kept running into
             WishLength = wish.Length;
 
             // The aim gains are tuned as "share of the error closed per sixtieth of a second": same pull at any tick rate.
@@ -814,6 +819,36 @@ namespace Sculpt.Core.Net
         /// <summary>Far goals are walked to in legs this long (see <see cref="FollowPath"/>).</summary>
         private const double LegMetres = 60;
         private bool _partial;
+
+        /// <summary>
+        /// The walking-grid spot to start a route from: the nearest one, unless a wall stands between the bot and it (a
+        /// bot pressed against a wall could be matched to the spot on its far side, then pushed into the wall for good:
+        /// 2026-11-28, until the circle killed it). Then the nearest spot it can step to directly.
+        /// </summary>
+        private int StartNode(Vec3d feet)
+        {
+            int a = Nav.Nearest(feet);
+            if (a < 0 || _server == null || StepClear(_server.Grid, feet, Nav.Feet(a))) return a;
+            for (int k = 0; k < 8; k++)
+            {
+                double ang = k * Math.PI / 4;
+                int n = Nav.Nearest(new Vec3d(feet.X + Math.Sin(ang) * 0.75, feet.Y, feet.Z + Math.Cos(ang) * 0.75), 1);
+                if (n >= 0 && n != a && StepClear(_server.Grid, feet, Nav.Feet(n))) return n;
+            }
+            return a;
+        }
+
+        /// <summary>Nothing solid in a standing body's way (above a step) between two nearby spots.</summary>
+        private static bool StepClear(ITerrain t, Vec3d from, Vec3d to)
+        {
+            double y = Math.Max(from.Y, to.Y);
+            for (int i = 1; i <= 2; i++)
+            {
+                Vec3d p = from + (to - from).WithY(0) * (i / 2.0);
+                if (t.BoxOverlapsSolid(new Aabb(new Vec3d(p.X - 0.3, y + 0.55, p.Z - 0.3), new Vec3d(p.X + 0.3, y + 1.6, p.Z + 0.3)))) return false;
+            }
+            return true;
+        }
         private int _pathWaitSince = int.MinValue / 2, _failRun, _legNode = -1;
         private Vec3d _legGoal;
 
@@ -851,7 +886,7 @@ namespace Sculpt.Core.Net
                 // A far goal (across the battle royale map: the circle, a roam point) is reached in legs of up to
                 // LegMetres: one search over the whole map would give up before it got there (the search is capped).
                 _partial = false;
-                int a = Nav.Nearest(feet), b = -1;
+                int a = StartNode(feet), b = -1;
                 // Several searches in a row found nothing: the spot it was matched to may be a dead end (a sill, a ledge,
                 // a corner). Start from a spot a step or two away instead.
                 if (_failRun >= 3)
@@ -1181,7 +1216,8 @@ namespace Sculpt.Core.Net
             return _roamGoal;
         }
 
-        private int _holdUntil = int.MinValue / 2, _shuffleTick = int.MinValue / 2;
+        private int _holdUntil = int.MinValue / 2, _shuffleTick = int.MinValue / 2, _escapeUntil = int.MinValue / 2;
+        private Vec3d _escapeDir;
         private bool _shuffling;
         private Vec3d _shuffleGoal;
         private int _avoidRollTick = int.MinValue / 2, _avoidTick = int.MinValue / 2;
@@ -1223,6 +1259,14 @@ namespace Sculpt.Core.Net
             if (!stuck) { _stuckCount = 0; return; }
             _stuckCount++;
             _jumpUntil = tick + 2 * SimTime.Per60;
+            if (_stuckCount >= 2)
+            {
+                // Jumping didn't help: back off the way it came (turned a little either way) for most of a second, then
+                // plan again from there.
+                double ang = Math.Atan2(-wish.X, -wish.Z) + (_rng.NextDouble() - 0.5) * 2.0;
+                _escapeDir = new Vec3d(Math.Sin(ang), 0, Math.Cos(ang));
+                _escapeUntil = tick + 50 * SimTime.Per60;
+            }
             _pathTick = int.MinValue / 2; // re-plan from here
             _path.Clear();
             if (_stuckCount >= 3)

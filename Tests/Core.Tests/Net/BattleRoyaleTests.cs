@@ -290,7 +290,7 @@ namespace Sculpt.Core.Tests.Net
                 if (Items.IsHeal(g.Kind))
                 {
                     heals++;
-                    Assert.That(g.Count, Is.EqualTo(g.Kind == Item.Bandage ? 2 : 1), "2 bandages or 1 first-aid kit");
+                    Assert.That(g.Count, Is.EqualTo(g.Kind == Item.Bandage ? 3 : 1), "2 bandages or 1 first-aid kit");
                 }
             }
             Assert.That(guns, Is.EqualTo(1));

@@ -29,13 +29,17 @@ namespace Sculpt.Core.Net
 
         // ---- The circle. Phase k: wait, then shrink to Radius[k] over Shrink[k]; outside it you take Dps[k] each second.
         // The 1,306 m map (map v3, 2026-11-28; Ben's plan: 8 phases, the first about 850 m, closed at about 15 min, most
-        // games over 11-13 minutes in, in the 60 m or 25 m circle): 490 s of waits and 410 s of shrinking, so the circle
+        // games over 11-13 minutes in, in the 60 m or 25 m circle): 525 s of waits and 375 s of shrinking, so the circle
         // closes to nothing exactly 15 minutes after the start. The first circle covers the whole play area (its corners
         // are 815 m from the middle) and the first wait is long, so everyone has time to loot and get in from anywhere.
         // No shrink moves the edge faster than 2.5 m/s (tested), well under a run.
         public double StartRadius = 850;
-        public double[] WaitSeconds = { 140, 90, 70, 55, 45, 35, 30, 25 };
-        public double[] ShrinkSeconds = { 125, 85, 60, 45, 35, 25, 20, 15 };
+        // Pacing (2026-11-28, Ben: "more stacked towards the end without it feeling artificial"): the first three circles
+        // hold a little longer (525 s of waits, was 490) and the late ones close faster (375 s of shrinking, was 410), so
+        // the map stays roomy through the middle minutes and the squeeze comes at the end. Still 15:00, still at most
+        // 2.5 m/s. Old numbers: waits 140/90/70/55/45/35/30/25, shrinks 125/85/60/45/35/25/20/15.
+        public double[] WaitSeconds = { 160, 110, 80, 60, 45, 30, 25, 15 };
+        public double[] ShrinkSeconds = { 125, 80, 55, 40, 30, 20, 15, 10 };
         public double[] Radius = { 540, 340, 210, 125, 60, 25, 8, 0 };
         public int[] Dps = { 1, 2, 3, 4, 6, 8, 10, 12 };
         public int StormHurtEveryTicks = 60 * SimTime.Per60;
@@ -54,10 +58,11 @@ namespace Sculpt.Core.Net
         public Item[] ChestUtility = { Item.Grenade, Item.C4, Item.Launcher };
         public int[] ChestUtilityWeights = { 60, 25, 15 };
         /// <summary>Every chest also spills a heal (Ben 2026-11-26: heals in chest loot; odds and counts by Claude):
-        /// two bandages or one first-aid kit. None in the list = no heal.</summary>
+        /// three bandages (two until 2026-11-28: more players walk away from a fight and heal up instead of being the next
+        /// fight's easy kill) or one first-aid kit. None in the list = no heal.</summary>
         public Item[] ChestHeals = { Item.Bandage, Item.Medkit };
         public int[] ChestHealWeights = { 65, 35 };
-        public int[] ChestHealCounts = { 2, 1 };
+        public int[] ChestHealCounts = { 3, 1 };
         /// <summary>Chests spill their loot this far in front of them.</summary>
         public double ChestSpill = 0.9;
         /// <summary>Ground item cap in a battle royale (chests, spills and everything the dead drop).</summary>
