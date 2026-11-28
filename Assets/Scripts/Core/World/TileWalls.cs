@@ -76,6 +76,9 @@ namespace Sculpt.Core
         public int DoorDamageScale = 4;
         /// <summary>How far from the eye a door can be opened or shut (metres to the nearest point of a leaf).</summary>
         public double DoorReach = 2.5;
+        /// <summary>After a press opens or shuts a door, neither leaf can be toggled again for this long (seconds), so
+        /// nobody can open, shoot through and shut a door within a tick or two.</summary>
+        public double DoorToggleSeconds = 0.4;
 
         /// <summary>
         /// Wall damage per bullet (per pellet for the pump), dealt to every cell of the wall within the weapon's hit
@@ -296,6 +299,9 @@ namespace Sculpt.Core
         /// <summary>Tiles broken by a charge, and the tick (so a replay of that tick charges through the same tile).</summary>
         private readonly Dictionary<int, int> _chargedAt = new Dictionary<int, int>();
 
+        private readonly Dictionary<int, int> _doorToggledAt = new Dictionary<int, int>();
+        /// <summary>The tick a press last opened or shut this door leaf (int.MinValue if never).</summary>
+        public int DoorToggledAt(int tile) => _doorToggledAt.TryGetValue(tile, out int t) ? t : int.MinValue;
         /// <summary>The tick this tile was charged through, or int.MinValue (never, or it has been healed since).</summary>
         public int ChargedAt(int tile) => _chargedAt.TryGetValue(tile, out int t) ? t : int.MinValue;
 
@@ -482,6 +488,9 @@ namespace Sculpt.Core
             if (state == TileState.DoorOpen && !Gone(from)) _shutAs[tile] = from; // what it is again when it shuts
             else if (state != TileState.DoorOpen) _shutAs.Remove(tile);
             if (Gone(from) != Gone(state)) World.SetSolid(t.Brush, !Gone(state));
+            if (t.Kind == TileKind.Door && cause == TileCause.Door && (from == TileState.DoorOpen) != (state == TileState.DoorOpen))
+                _doorToggledAt[tile] = Math.Max(Tick, DoorToggledAt(tile));
+            else if (state == TileState.Broken) _doorToggledAt.Remove(tile);
             if (state == TileState.Broken && cause == TileCause.Charge) _chargedAt[tile] = Tick;
             else _chargedAt.Remove(tile);
             Changes.Add(new TileChange { Tick = Tick, Tile = tile, From = from, To = state, Health = health, Cause = cause, By = by });

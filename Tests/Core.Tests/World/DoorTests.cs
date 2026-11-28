@@ -97,6 +97,32 @@ namespace Sculpt.Core.Tests.World
         }
 
         [Test]
+        public void AToggledDoor_CoolsDownForDoorToggleSeconds_ThenWorksAgain()
+        {
+            // A modified client could open, shoot and shut inside one tick: after a press changes a door, neither leaf
+            // can be toggled again for DoorToggleSeconds.
+            Arena(out TileWalls w, out int left, out int right);
+            w.PairDoor(left, right);
+            var leaves = new List<int>();
+            int cd = SimTime.SecondsToTicks(w.Config.DoorToggleSeconds);
+            Assert.That(cd, Is.EqualTo(SimTime.SecondsToTicks(0.4)));
+            Assert.That(DoorRules.Cooling(w, left, 100, leaves), Is.False, "never toggled");
+            w.Tick = 100;
+            DoorRules.Set(w, left, true, TileCause.Door, 1, leaves);
+            Assert.That(DoorRules.Cooling(w, left, 100, leaves), Is.True, "same tick");
+            Assert.That(DoorRules.Cooling(w, right, 100 + cd - 1, leaves), Is.True, "the partner leaf too, to the last tick");
+            Assert.That(DoorRules.Cooling(w, left, 100 + cd, leaves), Is.False);
+            // Only a press starts it: a server copy or a build doesn't.
+            w.Tick = 500;
+            w.Set(left, TileState.Intact, w[left].Health, TileCause.Built);
+            w.Set(right, TileState.Intact, w[right].Health, TileCause.Server);
+            Assert.That(DoorRules.Cooling(w, left, 500, leaves), Is.False);
+            // A press that changes nothing (already shut) doesn't either.
+            DoorRules.Set(w, left, false, TileCause.Door, 1, leaves);
+            Assert.That(DoorRules.Cooling(w, left, 500, leaves), Is.False);
+        }
+
+        [Test]
         public void ShuttingIsRefused_WhileSomeoneStandsInTheDoorway()
         {
             Arena(out TileWalls w, out int left, out int right);
@@ -209,26 +235,102 @@ namespace Sculpt.Core.Tests.World
             Assert.That(blocker.ServerSide.State.Dead, Is.False);
         }
         [Test]
-        public void OpenThenShutQuickly_AtHighPing_TheOldOpenAnswerDoesNotReopenItInYourView()
+        public void AShutRightAfterAnOpen_IsRefusedQuietly_UntilTheCooldownEnds([Values(0, 100)] int pingMs)
         {
             SculptNetHarness h = Duel(out BreachMapInfo info);
             int door = NorthDoor(h.Server.Walls, info.Block, out Vec3d front);
-            var lag = SculptNetHarness.Lag(50);
+            int cd = SimTime.SecondsToTicks(h.Server.Walls.Config.DoorToggleSeconds);
+            var lag = SculptNetHarness.Lag(pingMs / 2.0);
             var a = h.AddClient(front, team: 1, up: lag, down: lag);
+            var watcher = h.AddClient(front + new Vec3d(0, 0, -6), team: 2, seed: 2);
             h.RunSeconds(1);
             int start = -1;
             a.Script = (p, t) =>
             {
                 if (start < 0) start = t;
                 if (t == start) return new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = true } };
-                if (t == start + 2 * SimTime.Per60) return new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = false } };
+                if (t == start + 1) return new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = false } };
+                if (t == start + cd / 2) return new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = false } };
+                return default;
+            };
+            int correctionsBefore = a.Client.Corrections;
+            h.RunMs(SculptNetHarness.TickMs * 2);
+            int shutInView = 0;
+            bool serverOpened = false;
+            for (int k = 0; k < SimTime.SecondsToTicks(1.5); k++)
+            {
+                h.RunMs(SculptNetHarness.TickMs);
+                if (a.Client.Walls[door].State != TileState.DoorOpen) shutInView++;
+                bool open = h.Server.Walls[door].State == TileState.DoorOpen;
+                if (serverOpened) Assert.That(open, Is.True, "the server refuses both shuts");
+                serverOpened |= open;
+            }
+            Assert.That(serverOpened, Is.True, "the server opened it");
+            Assert.That(shutInView, Is.Zero, "your own view never flickers shut");
+            Assert.That(a.Client.Doors.PendingCount, Is.Zero);
+            Assert.That(a.Client.Corrections, Is.EqualTo(correctionsBefore));
+            // After the cooldown a shut works as always.
+            int again = -1;
+            a.Script = (p, t) =>
+            {
+                if (again >= 0) return default;
+                again = t;
+                return new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = false } };
+            };
+            h.RunMs(SculptNetHarness.TickMs * 2);
+            Assert.That(a.Client.Walls[door].State, Is.Not.EqualTo(TileState.DoorOpen), "shut in your view at once");
+            h.RunSeconds(1);
+            Assert.That(h.Server.Walls[door].State, Is.Not.EqualTo(TileState.DoorOpen), "the server shut it");
+            Assert.That(watcher.Client.Walls[door].State, Is.Not.EqualTo(TileState.DoorOpen));
+        }
+
+        [Test]
+        public void TwoPlayers_CantShutAndOpenADoorOnTheSameTick()
+        {
+            SculptNetHarness h = Duel(out BreachMapInfo info);
+            int door = NorthDoor(h.Server.Walls, info.Block, out Vec3d front);
+            DoorRules.Set(h.Server.Walls, door, true, TileCause.Server, 0, new List<int>());
+            var a = h.AddClient(front, team: 1);
+            var b = h.AddClient(front + new Vec3d(0.8, 0, 0), team: 2, seed: 2);
+            h.RunSeconds(1);
+            int at = h.Server.Tick + 30;
+            a.Script = (p, t) => t == at ? new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = false } } : default;
+            b.Script = (p, t) => t == at ? new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = true } } : default;
+            int changes = 0;
+            TileState last = h.Server.Walls[door].State;
+            for (int k = 0; k < SimTime.SecondsToTicks(1); k++)
+            {
+                h.RunMs(SculptNetHarness.TickMs);
+                if (h.Server.Walls[door].State != last) { changes++; last = h.Server.Walls[door].State; }
+            }
+            Assert.That(h.Server.Walls[door].State, Is.Not.EqualTo(TileState.DoorOpen), "the first press (the shut) wins");
+            Assert.That(changes, Is.EqualTo(1), "one change, not a shut and an open in the same tick");
+        }
+
+        [Test]
+        public void OpenThenShutQuickly_AtHighPing_TheOldOpenAnswerDoesNotReopenItInYourView()
+        {
+            SculptNetHarness h = Duel(out BreachMapInfo info);
+            int door = NorthDoor(h.Server.Walls, info.Block, out Vec3d front);
+            // The shut comes as soon as the door's toggle cooldown allows, and the round trip is longer than that, so
+            // the server's answer to the open arrives after you pressed shut.
+            int cd = SimTime.SecondsToTicks(h.Server.Walls.Config.DoorToggleSeconds);
+            var lag = SculptNetHarness.Lag(300);
+            var a = h.AddClient(front, team: 1, up: lag, down: lag);
+            h.RunSeconds(2);
+            int start = -1;
+            a.Script = (p, t) =>
+            {
+                if (start < 0) start = t;
+                if (t == start) return new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = true } };
+                if (t == start + cd) return new SculptTickInput { Hand = new HandInput { Door = true, DoorTile = door, DoorOpen = false } };
                 return default;
             };
             // Run until just after the shut press, then watch the client's view for a round trip and more.
-            h.RunMs(SculptNetHarness.TickMs * (2 * SimTime.Per60 + 3));
+            h.RunMs(SculptNetHarness.TickMs * (cd + 3));
             Assert.That(a.Client.Walls[door].State, Is.Not.EqualTo(TileState.DoorOpen), "shut in your view at once");
             int reopened = 0;
-            for (int k = 0; k < 40 * SimTime.Per60; k++)
+            for (int k = 0; k < SimTime.SecondsToTicks(1.5); k++)
             {
                 h.RunMs(SculptNetHarness.TickMs);
                 if (a.Client.Walls[door].State == TileState.DoorOpen) reopened++;

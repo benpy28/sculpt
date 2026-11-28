@@ -27,6 +27,8 @@ namespace Sculpt.Game.Config
         [Min(1)] public int reinforcedHealth = 200;
         [Tooltip("Door leaves take this many times a wall tile's damage (4: one hit of any gun or one punch). A sprint charge always goes through a door.")]
         [Min(1)] public int doorDamageScale = 4;
+        [Tooltip("After a press opens or shuts a door, it can't be opened or shut again for this long (s): nobody can open, shoot through and shut a door in a blink.")]
+        [Min(0)] public float doorToggleSeconds = 0.4f;
 
         [Header("Walls by area (damage lands on 19 cm cells round each hit, never by tile; never a pixel hole or a sliver)")]
         [Tooltip("Off: damage is per tile and a tile that breaks goes whole (the old rule).")]
@@ -284,6 +286,7 @@ namespace Sculpt.Game.Config
             b.PatchedHealth = patchedHealth;
             b.ReinforcedHealth = reinforcedHealth;
             b.DoorDamageScale = doorDamageScale;
+            b.DoorToggleSeconds = doorToggleSeconds;
             b.PumpPelletTileDamage = pumpPelletTileDamage;
             b.SmgTileDamage = smgTileDamage;
             b.ArTileDamage = arTileDamage;
