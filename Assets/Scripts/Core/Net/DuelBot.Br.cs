@@ -45,7 +45,7 @@ namespace Sculpt.Core.Net
 
         /// <summary>
         /// Shortens the fights it starts just after the calm opening (half range, growing to full over
-        /// BrSettleSeconds): with the whole lobby still spread over the loot, every bot starting fights at once made the
+        /// BrSettleSeconds; 40% at first since 2026-11-28): with the whole lobby still spread over the loot, every bot starting fights at once made the
         /// minute after the opening the bloodiest of the match.
         /// </summary>
         private double _engageScale = 1;
@@ -53,7 +53,7 @@ namespace Sculpt.Core.Net
         private void SettleRange(NetServer server, int tick)
         {
             double since = (tick - server.Match.PhaseStartTick) / (double)SimTime.TicksPerSecond - Config.BrCalmSeconds;
-            _engageScale = since >= Config.BrSettleSeconds ? 1 : 0.5 + 0.5 * Math.Max(0, since) / Config.BrSettleSeconds;
+            _engageScale = since >= Config.BrSettleSeconds ? 1 : 0.4 + 0.6 * Math.Max(0, since) / Config.BrSettleSeconds;
         }
 
         /// <summary>Health share left (1 full).</summary>
@@ -181,6 +181,8 @@ namespace Sculpt.Core.Net
             // sensible player would, instead of trading to the death. Careful players leave sooner. Close in, running
             // is worse than fighting, so it stays.
             if (dist > 9 && theirs > mine + 0.15 && mine < 0.5 + 0.3 * (1 - Aggression)) return true;
+            // An even trade at range that has gone on a while (both hurt): careful players call it off and live.
+            if (dist > 12 && theirs >= mine - 0.05 && mine < 0.35 + 0.3 * (1 - Aggression)) return true;
             if (HasHeals(s.Hand.Bag))return mine < 0.3 + 0.25 * (1 - Aggression) && theirs >= mine - 0.1;
             return mine < 0.2 && theirs > mine + 0.25;
         }
@@ -375,7 +377,8 @@ namespace Sculpt.Core.Net
             {
                 _tpKey = key;
                 _tpRollTick = tick;
-                double chance = Config.BrThirdPartyMin + (Config.BrThirdPartyMax - Config.BrThirdPartyMin) * Aggression;
+                // Careful players (aggression under 0.4) never go looking for someone else's fight.
+                double chance = Config.BrThirdPartyMin + (Config.BrThirdPartyMax - Config.BrThirdPartyMin) * Math.Max(0, (Aggression - 0.4) / 0.6);
                 _tpGo = _tac.NextDouble() < chance && (HasLongGun(s.Hand.Bag) || (mid - s.Position).HorizontalLength < 45);
                 if (_tpGo)
                 {

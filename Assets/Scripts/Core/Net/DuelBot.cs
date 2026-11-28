@@ -38,7 +38,7 @@ namespace Sculpt.Core.Net
         /// was down to about 10 alive 10 seconds in, bots on neighbouring pads shooting each other on sight). It still
         /// fights back when hurt, and fights anyone who comes within <see cref="BrCalmCloseMetres"/>.
         /// </summary>
-        public double BrCalmSeconds = 60;
+        public double BrCalmSeconds = 75;
         public double BrCalmCloseMetres = 3;
         /// <summary>Battle royale after the opening: the farthest enemy it starts a fight with (unless hurt).</summary>
         public double BrEngageMetres = 28;
@@ -57,9 +57,9 @@ namespace Sculpt.Core.Net
         /// leaving up to the max early, pushy ones the min (seconds before the edge reaches it).</summary>
         public double BrRotateSpeed = 6.5, BrRotateMarginMin = 8, BrRotateMarginMax = 40;
         /// <summary>Battle royale: chance to go after a fight it hears (careful .. pushy), and how long it keeps at it.</summary>
-        public double BrThirdPartyMin = 0.05, BrThirdPartyMax = 0.5, BrThirdPartySeconds = 30;
+        public double BrThirdPartyMin = 0, BrThirdPartyMax = 0.4, BrThirdPartySeconds = 30;
         /// <summary>Battle royale: after the calm opening, the fights it starts grow from half range to full over this long.</summary>
-        public double BrSettleSeconds = 180;
+        public double BrSettleSeconds = 240;
 
         public static DuelBotConfig For(BotLevel level)
         {
@@ -171,6 +171,10 @@ namespace Sculpt.Core.Net
         public double WishLength { get; private set; }
         public int PathFails, PathAsks, PathNoSpot;
         public int PathAt => _pathAt;
+        /// <summary>For measuring: why and how far away it last started a fight, and what it was doing then.</summary>
+        public string EngageWhy = "";
+        public double EngageDist;
+        public GoalKind EngageGoal;
         public Vec3d GoalPos { get; private set; }
 
         public DuelBot(BotNav nav, DuelBotConfig config = null, int seed = 1)
@@ -277,7 +281,20 @@ namespace Sculpt.Core.Net
                 if (p.Heard && (p.HeardPos - s.Position).Length > (hurtLately ? EngageRange(s) : Config.BrEngageMetres)) p.Heard = false;
                 // Footsteps or shots nearby: pushy players go and look, careful ones keep to their own business unless
                 // it is right on top of them (it hunted every noise, so careful bots walked into fights too).
-                if (p.Heard && !hurtLately && Aggression < 0.5 && (p.HeardPos - s.Position).Length > 15) p.Heard = false;
+                // Only the pushiest go and look (2026-11-28: most early deaths were two bots walking to each other's
+                // noise and meeting at pump range); the rest move off the other way, which is what keeps a lobby alive.
+                if (p.Heard && !hurtLately && Aggression < 0.7)
+                {
+                    double heardAt = (p.HeardPos - s.Position).Length;
+                    if (heardAt < 30 && tick >= _avoidRollTick && Doing != Tactic.Cover && !(_rotating && _rotUrgent))
+                    {
+                        _avoidRollTick = tick + 8 * SimTime.TicksPerSecond;
+                        _avoidPos = p.HeardPos;
+                        _avoidTick = tick;
+                        _hasRoam = false;
+                    }
+                    p.Heard = false;
+                }
                 // Hit by someone it can't see or can't reach: get out of their line.
                 if (p.Hurt && !p.Seen && Doing != Tactic.Cover) StartCover(server, s.Position, p.HeardPos, tick);
             }
@@ -286,6 +303,10 @@ namespace Sculpt.Core.Net
                 if (!_engaged)
                 {
                     _engaged = true;
+                    double at = (p.Pos - s.Position).Length;
+                    EngageWhy = tick - _hurtTick <= 4 * SimTime.TicksPerSecond ? "hurt" : at < 6 ? "close" : Calm(server, me, tick) ? "calm" : "chose";
+                    EngageDist = at;
+                    EngageGoal = Goal;
                     _fireOkTick = tick + _rng.Next(Config.FirstShotDelayMaxTicks + 1);
                     _aimHead = _rng.NextDouble() < Config.HeadChance;
                     _aimHeightOffset = (_rng.NextDouble() - 0.5) * 0.35;
@@ -389,7 +410,7 @@ namespace Sculpt.Core.Net
                 // Where it last saw them: in a battle royale only pushy players, or anyone after a hurt enemy while
                 // healthy themselves, go after someone who broke off. Running after every enemy that left was how fights
                 // that had ended turned into deaths (and into third parties for everyone near).
-                else if ((!brPlay || Aggression > 0.55 || EnemyHpGuess(server, me, _targetId, tick) < 0.5 && Hp(s, mc) > 0.5)
+                else if ((!brPlay || Aggression > 0.7 || EnemyHpGuess(server, me, _targetId, tick) < 0.35 && Hp(s, mc) > 0.6)
                     && (recentlySeen || tick - _lastSeenTick < 600 * SimTime.Per60)) { goal = _lastSeenPos; Goal = GoalKind.LastSeen; }
                 // Battle royale: a fight it heard and chose to join (third-partying).
                 else if (brPlay && ThirdPartyGoal(server, s, tick, out Vec3d fight)) { goal = fight; Goal = GoalKind.ThirdParty; }

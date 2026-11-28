@@ -147,6 +147,8 @@ internal static class Program
                     }
                     Deaths.Add($"{(ticks - playStartTick) / (double)SimTime.TicksPerSecond,6:0.0}s {s.Match.Phase,-9} {ce.Source,-8} victim {ce.Victim} attacker {ce.Attacker}" +
                         (a != null && v != null ? $" dist {(a.State.Position - v.State.Position).Length:0.0} m" : "") +
+                        (a != null && s.Bots.TryGetValue(a.Id, out var ab) && ab is DuelBot adb ? $" | killer {adb.EngageWhy} at {adb.EngageDist:0} m while {adb.EngageGoal} aggr {adb.Aggression:0.00}" : "") +
+                        (v != null && s.Bots.TryGetValue(v.Id, out var vb) && vb is DuelBot vdb ? $" | victim {vdb.EngageWhy} at {vdb.EngageDist:0} m while {vdb.EngageGoal} aggr {vdb.Aggression:0.00}" : "") +
                         (v != null && (ticks - playStartTick) < 30 * SimTime.TicksPerSecond ? $" at {v.State.Position} (pad {v.Spawn}{(a != null ? $", attacker's pad {a.Spawn}" : "")})" : ""));
                 }
             if (s.Match.Phase == MatchPhase.Playing && playStartTick < 0) playStartTick = ticks;
