@@ -76,7 +76,7 @@ namespace Sculpt.Trainer
             Model.Normalize(obs, _x);
             Model.Policy.Forward(_x, _logits, _a, _b);
             Model.Value.Forward(_x, _v, _a, _b);
-            MlPolicyRunner.Sample(_logits, 1.0, _rng, action);
+            MlPolicyRunner.Sample(_logits, brain.Skill.Temperature, _rng, action); // training skills are all 1.0
             Traj.Obs.Add((float[])_x.Clone());
             Traj.Act.Add((int[])action.Clone());
             Traj.LogP.Add(LogProb(_logits, action));

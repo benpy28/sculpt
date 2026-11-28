@@ -43,6 +43,7 @@ namespace Sculpt.Trainer
                 case "ppo": Ppo(MlModel.Load(Arg(1, "bc.sbm")), Arg(2, "run"), int.Parse(Arg(3, "200")), MlModel.Load(Arg(1, "bc.sbm"))); return 0;
                 case "br": Ppo(MlModel.Load(Arg(1, "latest.sbm")), Arg(2, "run-br"), int.Parse(Arg(3, "200")), MlModel.Load(Arg(1, "latest.sbm")), br: true, brLearners: int.Parse(Arg(4, "24"))); return 0;
                 case "eval": Eval(MlModel.Load(Arg(1, "model.sbm")), D(Arg(2, "10")), Arg(3, "normal")); return 0;
+                case "ladder": Ladder(MlModel.Load(Arg(1, "model.sbm")), D(Arg(2, "30"))); return 0;
                 case "train":
                 {
                     string dir = Arg(1, "run");
@@ -283,9 +284,45 @@ namespace Sculpt.Trainer
 
         // ================================================================ Rating
 
+        /// <summary>The same model at each skill dial against the scripted bot at each level: the skill range.</summary>
+        private static void Ladder(MlModel m, double minutes)
+        {
+            Console.WriteLine($"ladder: {minutes} game minutes per pairing; rows are the learned bot's skill, columns the scripted bot's level (share of kills)");
+            Console.WriteLine("            easy   normal   hard");
+            foreach (string sk in new[] { "easy", "normal", "hard", "pro" })
+            {
+                var cells = new List<string>();
+                foreach (Opp o in new[] { Opp.ScriptEasy, Opp.ScriptNormal, Opp.ScriptHard })
+                {
+                    (int k, int d) = Play(m, minutes, Skill(sk), o);
+                    cells.Add(k + d == 0 ? "  -  " : $"{(double)k / (k + d),5:P0}");
+                }
+                Console.WriteLine($"  {sk,-8} {string.Join("  ", cells)}");
+            }
+        }
+
+        private static MlSkill Skill(string name) => name == "easy" ? MlSkill.Easy : name == "hard" ? MlSkill.Hard : name == "pro" ? MlSkill.Pro : MlSkill.Normal;
+
+        private static (int k, int d) Play(MlModel m, double minutes, MlSkill skill, Opp o)
+        {
+            int n = Threads;
+            BotNav[] navs = Navs(n);
+            int k = 0, d = 0;
+            Parallel.For(0, n, new ParallelOptions { MaxDegreeOfParallelism = n }, i =>
+            {
+                var e = new DuelEnv(navs[i], 9000 + i) { RandomSkill = false, FixedSkill = skill, ResetTicks = 180 * SimTime.TicksPerSecond };
+                e.Build(m, o);
+                e.PickOpp = () => o;
+                int ticks = (int)(minutes * 60 * SimTime.TicksPerSecond / n);
+                for (int done = 0; done < ticks; done += 1200) { e.Run(Math.Min(1200, ticks - done)); foreach (var l in e.Learners) l.actor.Traj.Clear(); }
+                lock (navs) { k += e.Kills; d += e.Deaths; }
+            });
+            return (k, d);
+        }
+
         private static void Eval(MlModel m, double minutes, string skillName)
         {
-            MlSkill skill = skillName == "easy" ? MlSkill.Easy : skillName == "hard" ? MlSkill.Hard : skillName == "pro" ? MlSkill.Pro : MlSkill.Normal;
+            MlSkill skill = Skill(skillName);
             int n = Threads;
             BotNav[] navs = Navs(n);
             Console.WriteLine($"eval: {minutes} game minutes per level, model skill {skillName}");

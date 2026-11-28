@@ -99,20 +99,7 @@ namespace Sculpt.Trainer
             }
         }
 
-        public static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
-        {
-            int n = a.Length, i = 0;
-            float s = 0;
-            if (Vector.IsHardwareAccelerated && n >= Vector<float>.Count)
-            {
-                var acc = Vector<float>.Zero;
-                int vn = n - n % Vector<float>.Count;
-                for (; i < vn; i += Vector<float>.Count) acc += new Vector<float>(a.Slice(i)) * new Vector<float>(b.Slice(i));
-                s = Vector.Dot(acc, Vector<float>.One);
-            }
-            for (; i < n; i++) s += a[i] * b[i];
-            return s;
-        }
+        public static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b) => MlMlp.Dot(a, b);
 
         public static void Axpy(float g, ReadOnlySpan<float> x, Span<float> y)
         {

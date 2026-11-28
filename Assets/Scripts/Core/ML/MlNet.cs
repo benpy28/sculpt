@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace Sculpt.Core.ML
 {
@@ -36,16 +38,32 @@ namespace Sculpt.Core.ML
                 bool last = l == W.Length - 1;
                 float[] dst = last ? output : next;
                 float[] w = W[l], b = B[l];
+                var x = new ReadOnlySpan<float>(cur, 0, nin);
                 for (int o = 0; o < nout; o++)
                 {
-                    float acc = b[o];
-                    int row = o * nin;
-                    for (int k = 0; k < nin; k++) acc += w[row + k] * cur[k];
+                    float acc = b[o] + Dot(new ReadOnlySpan<float>(w, o * nin, nin), x);
                     dst[o] = last ? acc : (float)Math.Tanh(acc);
                 }
                 cur = dst;
                 next = ReferenceEquals(dst, scratchA) ? scratchB : scratchA;
             }
+        }
+
+        /// <summary>Dot product, several numbers at a time where the processor can (the trainer uses the same one).</summary>
+        public static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
+        {
+            int n = a.Length, i = 0;
+            float s = 0;
+            if (Vector.IsHardwareAccelerated && n >= Vector<float>.Count)
+            {
+                ReadOnlySpan<Vector<float>> va = MemoryMarshal.Cast<float, Vector<float>>(a), vb = MemoryMarshal.Cast<float, Vector<float>>(b);
+                var acc = Vector<float>.Zero;
+                for (int k = 0; k < va.Length; k++) acc += va[k] * vb[k];
+                s = Vector.Dot(acc, Vector<float>.One);
+                i = va.Length * Vector<float>.Count;
+            }
+            for (; i < n; i++) s += a[i] * b[i];
+            return s;
         }
 
         public void Write(BinaryWriter w)

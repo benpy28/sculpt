@@ -136,6 +136,34 @@ namespace Sculpt.Core.Tests.ML
         }
 
         [Test]
+        public void SightGridShortcut_NeverSeesThroughWalls_AndRarelyMissesALine()
+        {
+            NetServer s = DuelServer(out BreachMapInfo info);
+            s.AddBot(new Still(), 1, info.TeamSpawns[0][0], 0).Viewer = true;
+            s.AddBot(new Still(), 2, info.TeamSpawns[1][0], 0);
+            s.Step(); s.Step(); // the server builds its sight grid
+            Assert.That(s.SightGrid, Is.Not.Null, "the duel map has a sight grid");
+            var rng = new MlRng(7);
+            int seen = 0, hidden = 0, missed = 0;
+            for (int k = 0; k < 4000; k++)
+            {
+                // Real standing spots only (a ray from inside a wall passes out of it; the grid calls that closed).
+                var af = new Vec3d(rng.NextDouble() * info.SizeX, 0, rng.NextDouble() * info.SizeZ);
+                var b = new Vec3d(af.X + (rng.NextDouble() - 0.5) * 60, 0, af.Z + (rng.NextDouble() - 0.5) * 60);
+                if (Blocked(af) || Blocked(b)) { k--; continue; }
+                var a = af + new Vec3d(0, 1.62, 0);
+                bool slow = MlSenses.CanSee(s.Grid, a, b, 1.8), fast = MlSenses.CanSee(s.Grid, s.SightGrid, a, b, 1.8);
+                if (fast) Assert.That(slow, $"never sees what a ray can't: from {a} to {b}");
+                if (slow && !fast) missed++;
+                if (slow) seen++; else hidden++;
+            }
+            Assert.That(seen, Is.GreaterThan(400)); Assert.That(hidden, Is.GreaterThan(400));
+            TestContext.WriteLine($"{seen} seen, {hidden} hidden, {missed} lines the grid closed that a ray passes");
+            Assert.That(missed, Is.LessThan(seen / 100), "the shortcut costs under 1% of sightings (grazing corners)");
+            bool Blocked(Vec3d f) => s.Grid.BoxOverlapsSolid(new Aabb(f + new Vec3d(-0.35, 0.05, -0.35), f + new Vec3d(0.35, 1.8, 0.35)));
+        }
+
+        [Test]
         public void Senses_HearGunfireThroughWalls_RoughlyWhereItCameFrom()
         {
             NetServer s = OpenField();

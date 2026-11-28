@@ -578,6 +578,8 @@ namespace Sculpt.Core.Net
         }
 
         private Audio.SoundGrid _sight;
+        /// <summary>The cheap, generous sight grid (null until built): learned bots use it to skip rays that can't pass.</summary>
+        internal Audio.SoundGrid SightGrid => _sight;
         private bool _sightTried;
 
         /// <summary>

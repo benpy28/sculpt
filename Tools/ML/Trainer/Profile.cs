@@ -41,6 +41,14 @@ namespace Sculpt.Trainer
             for (int k = 0; k < 2000; k++) run.Act(x, 1, rng, act);
             netT = Stopwatch.GetTimestamp() - t0;
             double F(long t) => t * 1000.0 / Stopwatch.Frequency / 2000;
+            Vec3d at = p.State.Position + new Vec3d(0, 1.5, 0);
+            t0 = Stopwatch.GetTimestamp();
+            for (int k = 0; k < 2000; k++) { double a = k * 0.37; e.S.Grid.Raycast(at, new Vec3d(Math.Sin(a), 0, Math.Cos(a)), 20); }
+            long rayT = Stopwatch.GetTimestamp() - t0;
+            t0 = Stopwatch.GetTimestamp();
+            for (int k = 0; k < 2000; k++) { double a = k * 0.37; e.S.Grid.Raycast(at, new Vec3d(Math.Sin(a), -0.05, Math.Cos(a)).Normalized, 60); }
+            long longT = Stopwatch.GetTimestamp() - t0;
+            Console.WriteLine($"one 20 m ray {F(rayT) * 1000:0.0} us, one 60 m ray {F(longT) * 1000:0.0} us");
             Console.WriteLine($"{ticks} ticks in {total:0} ms: {total / ticks:0.000} ms per tick (2 learning bots)");
             Console.WriteLine($"per call: senses {F(sensesT):0.000} ms (every tick), observation {F(obsT):0.000} ms (every 4 ticks, routes not re-planned), policy {F(netT):0.000} ms");
         }

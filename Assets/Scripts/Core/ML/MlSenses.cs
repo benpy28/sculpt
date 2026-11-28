@@ -94,7 +94,7 @@ namespace Sculpt.Core.ML
                     {
                         double off = Math.Abs(Wrap(Math.Atan2(to.X, to.Z) - viewYaw)) * 180 / Math.PI;
                         bool inCone = off <= skill.ViewConeDeg * 0.5 || to.HorizontalLength < 2.5;
-                        tr.SeenCarry = inCone && d < 220 && CanSee(server.Grid, eye, e.Position, h);
+                        tr.SeenCarry = inCone && d < 220 && CanSee(server.Grid, server.SightGrid, eye, e.Position, h);
                     }
                     if (tr.SeenCarry)
                     {
@@ -161,14 +161,19 @@ namespace Sculpt.Core.ML
         }
 
         /// <summary>A clear line from the eye to the target's head, chest or knees (terrain only, like bullets).</summary>
-        public static bool CanSee(ITerrain t, Vec3d eye, Vec3d feet, double height)
+        public static bool CanSee(ITerrain t, Vec3d eye, Vec3d feet, double height) => CanSee(t, null, eye, feet, height);
+
+        /// <summary>The same, first asking the server's sight grid (it never blocks a line a ray would pass, so a closed
+        /// grid line saves the ray; an open one is checked with the real ray).</summary>
+        public static bool CanSee(ITerrain t, Audio.SoundGrid grid, Vec3d eye, Vec3d feet, double height)
         {
             double a = height - 0.15, b = height * 0.6;
-            return Clear(t, eye, feet, a) || Clear(t, eye, feet, b) || Clear(t, eye, feet, 0.35);
+            return Clear(t, grid, eye, feet, a) || Clear(t, grid, eye, feet, b) || Clear(t, grid, eye, feet, 0.35);
         }
 
-        private static bool Clear(ITerrain t, Vec3d eye, Vec3d feet, double up)
+        private static bool Clear(ITerrain t, Audio.SoundGrid grid, Vec3d eye, Vec3d feet, double up)
         {
+            if (grid != null && !grid.LineOpen(eye, feet + new Vec3d(0, up, 0))) return false;
             Vec3d d = feet + new Vec3d(0, up, 0) - eye;
             double len = d.Length;
             if (len < 1e-3) return true;
