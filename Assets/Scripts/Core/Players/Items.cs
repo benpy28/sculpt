@@ -318,6 +318,9 @@ namespace Sculpt.Core
         public double AimConeDegrees = 25;
         /// <summary>The server accepts a pickup up to this much further than <see cref="Reach"/> (prediction drift).</summary>
         public double ServerReachSlack = 0.75;
+        /// <summary>The server accepts a pickup or chest open this far outside <see cref="AimConeDegrees"/> (the crosshair
+        /// is read on a drawn frame, the command's look on the tick, and the eye can drift a little; fast turning).</summary>
+        public double ServerConeSlackDegrees = 10;
         /// <summary>Hold the interact key this long (not aiming at an item) to drop the held item.</summary>
         public int DropHoldTicks = 18 * SimTime.Per60;
         /// <summary>Whoever dropped an item can't pick it back up for this long (no accidental double press).</summary>
@@ -457,6 +460,8 @@ namespace Sculpt.Core
         NotNow = 6,
         /// <summary>A chest: opened (it spills its loot on the ground).</summary>
         Opened = 7,
+        /// <summary>The server: the item was nowhere near the crosshair (outside the aim cone plus slack).</summary>
+        NotAimed = 8,
     }
 
     /// <summary>What a pickup would do (shown in the prompt, applied by the server).</summary>
@@ -651,6 +656,18 @@ namespace Sculpt.Core
                 bestCos = c;
             }
             return best;
+        }
+
+        /// <summary>The server's aim check: is <paramref name="target"/> within the aim cone plus the server's slack of
+        /// <paramref name="look"/> from <paramref name="eye"/>? <paramref name="degrees"/> gets the angle off the look.</summary>
+        public static bool InServerCone(Vec3d eye, Vec3d look, Vec3d target, ItemConfig cfg, out double degrees)
+        {
+            Vec3d to = target - eye;
+            double d = to.Length, l = look.Length;
+            if (d < 1e-6 || l < 1e-9) { degrees = 0; return true; }
+            double c = Math.Max(-1, Math.Min(1, to.Dot(look) / (d * l)));
+            degrees = Math.Acos(c) * 180 / Math.PI;
+            return degrees <= cfg.AimConeDegrees + cfg.ServerConeSlackDegrees;
         }
 
         public static bool Visible(ITerrain terrain, Vec3d from, Vec3d to)

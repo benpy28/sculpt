@@ -28,6 +28,9 @@ namespace Sculpt.Core.Net
         internal byte CarrySwapA, CarrySwapB;
         internal byte CarryWeapon;
         internal int CarryPickId, CarryHealTile, CarryHealCell, CarryDoorTile;
+        /// <summary>The look of the command a pickup press came in (a carried press keeps its own, not the next tick's).</summary>
+        internal double CarryPickYaw, PickYaw;
+        internal float CarryPickPitch, PickPitch;
         internal InputCmd CarrySculptCmd;
 
         // Sculpt confirm bookkeeping (client sequence numbers echoed in world events).
@@ -316,7 +319,7 @@ namespace Sculpt.Core.Net
                         if (c.Hand.SculptToggle) p.CarryToggle = true;
                         if (c.Hand.Reload) p.CarryReload = true;
                         if (c.Hand.WeaponKey != 0) p.CarryWeapon = c.Hand.WeaponKey;
-                        if (c.Hand.Pickup) { p.CarryPickup = true; p.CarryPickId = c.Hand.PickId; }
+                        if (c.Hand.Pickup) { p.CarryPickup = true; p.CarryPickId = c.Hand.PickId; p.CarryPickYaw = c.Move.Yaw; p.CarryPickPitch = c.Pitch; }
                         if (c.Hand.Drop) p.CarryDrop = true;
                         if (c.Hand.Door) { p.CarryDoor = true; p.CarryDoorTile = c.Hand.DoorTile; p.CarryDoorOpen = c.Hand.DoorOpen; }
                         if (c.Hand.Swap) { p.CarrySwap = true; p.CarrySwapA = c.Hand.SwapA; p.CarrySwapB = c.Hand.SwapB; }
@@ -434,7 +437,13 @@ namespace Sculpt.Core.Net
                 if (p.CarryToggle) { cmd.Hand.SculptToggle = true; p.CarryToggle = false; }
                 if (p.CarryReload) { cmd.Hand.Reload = true; p.CarryReload = false; }
                 if (p.CarryWeapon != 0) { if (cmd.Hand.WeaponKey == 0) cmd.Hand.WeaponKey = p.CarryWeapon; p.CarryWeapon = 0; }
-                if (p.CarryPickup) { if (!cmd.Hand.Pickup) { cmd.Hand.Pickup = true; cmd.Hand.PickId = p.CarryPickId; } p.CarryPickup = false; }
+                p.PickYaw = cmd.Move.Yaw;
+                p.PickPitch = cmd.Pitch;
+                if (p.CarryPickup)
+                {
+                    if (!cmd.Hand.Pickup) { cmd.Hand.Pickup = true; cmd.Hand.PickId = p.CarryPickId; p.PickYaw = p.CarryPickYaw; p.PickPitch = p.CarryPickPitch; }
+                    p.CarryPickup = false;
+                }
                 if (p.CarryDrop) { cmd.Hand.Drop = true; p.CarryDrop = false; }
                 if (p.CarryDoor) { if (!cmd.Hand.Door) { cmd.Hand.Door = true; cmd.Hand.DoorTile = p.CarryDoorTile; cmd.Hand.DoorOpen = p.CarryDoorOpen; } p.CarryDoor = false; }
                 if (p.CarrySwap) { if (!cmd.Hand.Swap) { cmd.Hand.Swap = true; cmd.Hand.SwapA = p.CarrySwapA; cmd.Hand.SwapB = p.CarrySwapB; } p.CarrySwap = false; }
@@ -540,6 +549,15 @@ namespace Sculpt.Core.Net
             if (cmd.Hand.Pickup)
             {
                 Vec3d eye = p.State.Position + new Vec3d(0, PlayerMovement.EyeOf(p.State, Movement), 0);
+                // The aim cone (the client only offers what is near the crosshair): something far off it is refused and
+                // flagged. Generous slack, so an honest press while turning fast always counts.
+                if (Items.TryGet(cmd.Hand.PickId, out GroundItem aimed) && (aimed.Centre - eye).Length <= Movement.Items.Reach + Movement.Items.ServerReachSlack
+                    && !ItemRules.InServerCone(eye, WeaponRules.AimDir(p.PickYaw, p.PickPitch, 0, 0), aimed.Centre, Movement.Items, out double off))
+                {
+                    if (!IsBotConnection(p.ConnectionId)) Flag(p, FlagKind.PickupOffAim, (int)Math.Round(off * 10));
+                    ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, PickupResult.NotAimed));
+                    return;
+                }
                 if (Br != null && Items.TryGet(cmd.Hand.PickId, out GroundItem chest) && chest.Kind == Item.Chest)
                 {
                     ItemActions.Add(new KeyValuePair<int, PickupResult>(p.Id, OpenChest(p, chest, eye)));
